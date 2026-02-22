@@ -50,7 +50,7 @@ impl Default for Settings {
             api_key: default_api_key(),
             translation: ServiceConfig::with_model("Qwen/Qwen2.5-7B-Instruct"),
             ocr: ServiceConfig::with_model("PaddlePaddle/PaddleOCR-VL-1.5"),
-            tts: ServiceConfig::with_model("FunAudioLLM/CosyVoice2-0.5B"),
+            tts: ServiceConfig::with_model("IndexTeam/IndexTTS-2"),
             source_language: "auto".to_string(),
             target_language: "zh-CN".to_string(),
             hotkey_screenshot: "Alt+A".to_string(),

@@ -133,9 +133,12 @@
 ### ActionButtons.tsx
 
 - **Copy**：`navigator.clipboard.writeText()`
-- **Speak**：`window.speechSynthesis.speak()` + `SpeechSynthesisUtterance`
+- **Speak**：调用后端 `synthesizeSpeech`（`lib/invoke.ts`）通过 OpenAI 兼容的 `/v1/audio/speech` 接口合成语音，使用设置中配置的 TTS 模型
+  - 收到 base64 音频后，构建 `data:audio/mp3;base64,...` URL，用 `new Audio(url).play()` 播放
+  - 请求中按钮 disabled，防止重复点击
+  - 错误通过 `appLog.error()` 记录
 - 14px 图标尺寸，`px-3 pb-2.5` 内边距
-- 文本为空时 disabled（opacity-25）
+- 文本为空或正在朗读时 disabled（opacity-25）
 - 悬停效果：`hover:bg-black/5`
 
 ## 依赖关系
@@ -144,7 +147,7 @@
   - `hooks/useTranslation`
   - `stores/translationStore`、`stores/settingsStore`（defaultSettings）
   - `lib/languages`（语言列表，中文名称）
-  - `lib/invoke`（getSettings、saveSettings、readClipboard）
+  - `lib/invoke`（getSettings、saveSettings、readClipboard、synthesizeSpeech）
   - `@tauri-apps/api/event`（listen、emit）
   - `@tauri-apps/api/window`（getCurrentWindow）
 - **被依赖**：`App.tsx`、`ScreenshotApp.tsx`
@@ -156,5 +159,5 @@
 - TextArea 使用透明背景，样式由外层卡片控制
 - ScreenshotOverlay 的 DPI 处理是关键：选区逻辑坐标 × DPR = 物理像素
 - TitleBar 的 Pin 功能使用 Tauri `setAlwaysOnTop()` API
-- ActionButtons 中的 TTS 依赖浏览器 speechSynthesis API，不同平台表现可能不同
+- ActionButtons 中的 TTS 通过后端 `synthesize_speech` 命令调用 OpenAI 兼容的 TTS API，使用设置中配置的模型
 - 按钮悬停统一使用 `hover:bg-black/5` 半透明效果

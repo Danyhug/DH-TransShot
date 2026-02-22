@@ -6,6 +6,7 @@ mod ocr;
 mod screenshot;
 mod translation;
 mod tray;
+mod tts;
 
 use config::{AppState, Settings};
 use log::{info, warn};
@@ -32,6 +33,7 @@ pub fn run() {
             commands::settings::save_settings,
             commands::clipboard::read_clipboard,
             commands::clipboard::copy_image_to_clipboard,
+            commands::tts::synthesize_speech,
         ])
         .setup(|app| {
             info!("[Setup] 应用启动，加载持久化配置...");

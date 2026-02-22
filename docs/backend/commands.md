@@ -8,11 +8,12 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/commands/mod.rs` | 模块声明，公开导出 5 个子模块 |
+| `src-tauri/src/commands/mod.rs` | 模块声明，公开导出 6 个子模块 |
 | `src-tauri/src/commands/screenshot.rs` | 截图相关命令（区域选择、区域裁切、获取冻结截图） |
 | `src-tauri/src/commands/ocr.rs` | OCR 识别命令 |
 | `src-tauri/src/commands/translation.rs` | LLM 翻译命令 |
 | `src-tauri/src/commands/settings.rs` | 设置读写命令 |
+| `src-tauri/src/commands/tts.rs` | TTS 语音合成命令 |
 
 ## 核心逻辑
 
@@ -56,9 +57,17 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 替换 `AppState.settings` 的内容
 - 当前仅内存持久化，重启丢失
 
+### tts.rs
+
+**`synthesize_speech(state, text) -> Result<String, String>`**
+- 从 `AppState.settings` 读取 TTS 配置（base_url、api_key、tts.model、tts.extra）
+- 调用 `tts::synthesize()` 发送请求到 `/v1/audio/speech`
+- 返回 base64 编码的 mp3 音频数据
+- Mutex 锁的作用域尽量小，取完配置即释放
+
 ## 依赖关系
 
-- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`
+- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`、`tts`
 - **被依赖**：`lib.rs` 中通过 `generate_handler!` 注册
 - **前端对应**：`src/lib/invoke.ts` 中的类型化封装函数
 

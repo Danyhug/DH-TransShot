@@ -1,26 +1,62 @@
+import { useState, useRef } from "react";
+import { synthesizeSpeech } from "../../lib/invoke";
+import { appLog } from "../../stores/logStore";
+
 interface Props {
   text: string;
 }
 
 export function ActionButtons({ text }: Props) {
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const copyToClipboard = () => {
     navigator.clipboard.writeText(text).catch(console.error);
   };
 
-  const speak = () => {
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    window.speechSynthesis.speak(utterance);
+  const speak = async () => {
+    if (!text || isSpeaking) return;
+
+    // Stop any currently playing audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    setIsSpeaking(true);
+    appLog.info("[TTS] 开始语音合成, 文本长度=" + text.length);
+
+    try {
+      const base64Audio = await synthesizeSpeech(text);
+      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsSpeaking(false);
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        appLog.error("[TTS] 音频播放失败");
+        setIsSpeaking(false);
+        audioRef.current = null;
+      };
+
+      await audio.play();
+      appLog.info("[TTS] 音频播放开始");
+    } catch (e) {
+      appLog.error("[TTS] 语音合成失败: " + String(e));
+      setIsSpeaking(false);
+    }
   };
 
   return (
     <div className="flex items-center gap-1.5" style={{ padding: "0 12px 8px" }}>
       <button
         onClick={speak}
-        disabled={!text}
+        disabled={!text || isSpeaking}
         className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-25"
         style={{ color: "var(--color-text-secondary)" }}
-        title="朗读"
+        title={isSpeaking ? "朗读中..." : "朗读"}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />

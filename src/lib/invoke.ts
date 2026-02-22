@@ -48,3 +48,7 @@ export async function readClipboard(): Promise<string> {
 export async function copyImageToClipboard(imageBase64: string): Promise<void> {
   return invoke("copy_image_to_clipboard", { imageBase64 });
 }
+
+export async function synthesizeSpeech(text: string): Promise<string> {
+  return invoke("synthesize_speech", { text });
+}
