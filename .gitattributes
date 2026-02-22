@@ -1,0 +1,11 @@
+# GitHub Linguist overrides
+# https://github.com/github-linguist/linguist/blob/main/docs/overrides.md
+
+# Mark generated files
+src-tauri/gen/** linguist-generated
+pnpm-lock.yaml linguist-generated
+src-tauri/Cargo.lock linguist-generated
+
+# Mark frontend as vendored so Rust becomes the primary language
+src/**/*.ts linguist-vendored
+src/**/*.tsx linguist-vendored
