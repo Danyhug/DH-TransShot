@@ -1,0 +1,51 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/tauri/tauri.conf.schema.json",
+  "productName": "DH-TransShot",
+  "version": "0.1.0",
+  "identifier": "com.danyhug.dh-transshot",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "DH-TransShot",
+        "width": 400,
+        "height": 420,
+        "minWidth": 320,
+        "minHeight": 320,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "center": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "DH-TransShot Dev",
+      "entitlements": null,
+      "infoPlist": "Info.plist"
+    }
+  },
+  "plugins": {}
+}

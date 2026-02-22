@@ -1,0 +1,30 @@
+[package]
+name = "dh-transshot"
+version = "0.1.0"
+description = "Screenshot + Translation desktop tool"
+authors = ["danyhug"]
+edition = "2021"
+
+[lib]
+name = "dh_transshot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-store = "2"
+reqwest = { version = "0.12", features = ["json"] }
+image = "0.25"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+log = "0.4"
+dotenvy = "0.15"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+xcap = "0.8"
