@@ -12,6 +12,12 @@ pub async fn start_region_select(
 ) -> Result<(), String> {
     info!("[Screenshot] start_region_select, mode={}", mode);
 
+    // Guard: if the overlay window already exists, skip duplicate invocation
+    if app.get_webview_window("screenshot-overlay").is_some() {
+        info!("[Screenshot] 覆盖层窗口已存在，忽略重复调用");
+        return Ok(());
+    }
+
     // 0. Read hide_on_capture setting
     let hide_on_capture = {
         let guard = state.settings.lock().map_err(|e| e.to_string())?;
