@@ -12,10 +12,12 @@ pub async fn start_region_select(
 ) -> Result<(), String> {
     info!("[Screenshot] start_region_select, mode={}", mode);
 
-    // Guard: if the overlay window already exists, skip duplicate invocation
-    if app.get_webview_window("screenshot-overlay").is_some() {
-        info!("[Screenshot] 覆盖层窗口已存在，忽略重复调用");
-        return Ok(());
+    // Guard: if the overlay window already exists, close it before proceeding
+    if let Some(existing) = app.get_webview_window("screenshot-overlay") {
+        info!("[Screenshot] 覆盖层窗口已存在，先关闭旧窗口");
+        let _ = existing.close();
+        // Wait for the window to be fully destroyed
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
     // 0. Read hide_on_capture setting
@@ -113,20 +115,34 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 创建覆盖层窗口, 显示器={}x{}, scale={}, logical={}x{}", size.width, size.height, scale, logical_width, logical_height);
 
-    // 5. Create the screenshot overlay window
-    let overlay = WebviewWindowBuilder::new(
-        &app,
-        "screenshot-overlay",
-        WebviewUrl::App("screenshot.html".into()),
-    )
-    .title("Screenshot")
-    .inner_size(logical_width, logical_height)
-    .position(0.0, 0.0)
-    .decorations(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .build()
-    .map_err(|e: tauri::Error| e.to_string())?;
+    // 5. Create the screenshot overlay window (with retry if stale window lingers)
+    let build_overlay = || {
+        WebviewWindowBuilder::new(
+            &app,
+            "screenshot-overlay",
+            WebviewUrl::App("screenshot.html".into()),
+        )
+        .title("Screenshot")
+        .inner_size(logical_width, logical_height)
+        .position(0.0, 0.0)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .build()
+    };
+
+    let overlay = match build_overlay() {
+        Ok(w) => w,
+        Err(_) => {
+            // Stale overlay may still exist — force close and retry once
+            info!("[Screenshot] 覆盖层创建失败，尝试关闭残留窗口后重试");
+            if let Some(existing) = app.get_webview_window("screenshot-overlay") {
+                let _ = existing.close();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            build_overlay().map_err(|e: tauri::Error| e.to_string())?
+        }
+    };
 
     info!("[Screenshot] 覆盖层窗口已创建");
 
