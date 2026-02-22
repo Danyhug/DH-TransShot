@@ -24,7 +24,15 @@ export interface RegionSelectEvent {
   mode: string;
 }
 
+export interface WindowRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface ScreenshotInitEvent {
   image: string;
   mode: string;
+  window_rects: WindowRect[];
 }

@@ -56,7 +56,20 @@ pub async fn start_region_select(
     // 2. Brief delay for the window move to take effect
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // 3. Capture the screen
+    // 3. Collect window rects BEFORE creating the overlay window
+    info!("[Screenshot] 采集窗口列表...");
+    let window_rects = tokio::task::spawn_blocking(|| crate::screenshot::list_window_rects())
+        .await
+        .map_err(|e| e.to_string())?;
+    info!("[Screenshot] 窗口列表采集完成, count={}", window_rects.len());
+
+    {
+        let rects_json = serde_json::to_value(&window_rects).unwrap_or(serde_json::Value::Array(vec![]));
+        let mut guard = state.frozen_window_rects.lock().map_err(|e| e.to_string())?;
+        *guard = rects_json;
+    }
+
+    // 4. Capture the screen
     info!("[Screenshot] 开始全屏截图...");
     let capture_result = tokio::task::spawn_blocking(|| crate::screenshot::capture_full())
         .await
@@ -100,7 +113,7 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 创建覆盖层窗口, 显示器={}x{}, scale={}, logical={}x{}", size.width, size.height, scale, logical_width, logical_height);
 
-    // 4. Create the screenshot overlay window
+    // 5. Create the screenshot overlay window
     let overlay = WebviewWindowBuilder::new(
         &app,
         "screenshot-overlay",
@@ -117,7 +130,7 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 覆盖层窗口已创建");
 
-    // 5. Restore main window position when overlay closes
+    // 6. Restore main window position when overlay closes
     //    - screenshot mode: restore position only (don't show/focus)
     //    - ocr_translate mode: restore position + show + focus
     let frozen_mode = mode.clone();
@@ -159,12 +172,17 @@ pub async fn get_frozen_screenshot(
         let guard = state.frozen_mode.lock().map_err(|e| e.to_string())?;
         guard.clone()
     };
+    let window_rects = {
+        let guard = state.frozen_window_rects.lock().map_err(|e| e.to_string())?;
+        guard.clone()
+    };
 
     info!("[Screenshot] get_frozen_screenshot 返回, mode={}, image size={}", mode, image.len());
 
     Ok(serde_json::json!({
         "image": image,
         "mode": mode,
+        "window_rects": window_rects,
     }))
 }
 

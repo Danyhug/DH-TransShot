@@ -3,6 +3,150 @@ use image::ImageFormat;
 use log::info;
 use std::io::Cursor;
 
+/// A visible window rectangle in logical (points) coordinates.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// List all visible normal-layer window rectangles in front-to-back order.
+/// Returns logical coordinates (points on macOS).
+/// On non-macOS platforms, returns an empty Vec.
+pub fn list_window_rects() -> Vec<WindowRect> {
+    #[cfg(target_os = "macos")]
+    {
+        list_window_rects_macos()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn list_window_rects_macos() -> Vec<WindowRect> {
+    use std::ffi::c_void;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGWindowListCopyWindowInfo(option: u32, relativeToWindow: u32) -> *const c_void;
+        fn CGRectMakeWithDictionaryRepresentation(
+            dict: *const c_void,
+            rect: *mut CGRectRaw,
+        ) -> bool;
+
+        // CFString constants exported from CoreGraphics
+        static kCGWindowLayer: *const c_void;
+        static kCGWindowBounds: *const c_void;
+        static kCGWindowIsOnscreen: *const c_void;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(array: *const c_void) -> isize;
+        fn CFArrayGetValueAtIndex(array: *const c_void, idx: isize) -> *const c_void;
+        fn CFDictionaryGetValue(dict: *const c_void, key: *const c_void) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+
+        // CFNumber
+        fn CFNumberGetValue(
+            number: *const c_void,
+            the_type: isize,
+            value_ptr: *mut c_void,
+        ) -> bool;
+
+        // CFBoolean
+        fn CFBooleanGetValue(boolean: *const c_void) -> bool;
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone, Default)]
+    struct CGRectRaw {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    }
+
+    // kCFNumberSInt32Type = 3
+    const K_CF_NUMBER_SINT32_TYPE: isize = 3;
+
+    unsafe {
+        // kCGWindowListOptionOnScreenOnly(1) | kCGWindowListExcludeDesktopElements(16) = 17
+        let window_list = CGWindowListCopyWindowInfo(17, 0);
+        if window_list.is_null() {
+            info!("[Capture] CGWindowListCopyWindowInfo returned null");
+            return Vec::new();
+        }
+
+        let count = CFArrayGetCount(window_list);
+        let mut rects = Vec::new();
+
+        for i in 0..count {
+            let dict = CFArrayGetValueAtIndex(window_list, i);
+            if dict.is_null() {
+                continue;
+            }
+
+            // Filter: only normal layer (layer == 0)
+            let layer_val = CFDictionaryGetValue(dict, kCGWindowLayer);
+            if layer_val.is_null() {
+                continue;
+            }
+            let mut layer: i32 = -1;
+            if !CFNumberGetValue(
+                layer_val,
+                K_CF_NUMBER_SINT32_TYPE,
+                &mut layer as *mut i32 as *mut c_void,
+            ) {
+                continue;
+            }
+            if layer != 0 {
+                continue;
+            }
+
+            // Filter: must be on screen
+            let on_screen_val = CFDictionaryGetValue(dict, kCGWindowIsOnscreen);
+            if !on_screen_val.is_null() {
+                if !CFBooleanGetValue(on_screen_val) {
+                    continue;
+                }
+            }
+
+            // Get bounds dictionary
+            let bounds_val = CFDictionaryGetValue(dict, kCGWindowBounds);
+            if bounds_val.is_null() {
+                continue;
+            }
+
+            let mut cg_rect = CGRectRaw::default();
+            if !CGRectMakeWithDictionaryRepresentation(bounds_val, &mut cg_rect) {
+                continue;
+            }
+
+            // Skip tiny windows (< 10x10)
+            if cg_rect.width < 10.0 || cg_rect.height < 10.0 {
+                continue;
+            }
+
+            rects.push(WindowRect {
+                x: cg_rect.x,
+                y: cg_rect.y,
+                width: cg_rect.width,
+                height: cg_rect.height,
+            });
+        }
+
+        CFRelease(window_list);
+
+        info!("[Capture] list_window_rects: found {} windows", rects.len());
+        rects
+    }
+}
+
 /// Capture the full screen of the primary monitor, return as base64 PNG.
 pub fn capture_full() -> anyhow::Result<String> {
     info!("[Capture] capture_full 开始");

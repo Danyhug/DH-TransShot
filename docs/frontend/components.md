@@ -69,21 +69,28 @@
 **状态：**
 - `backgroundImage` — 冻结截图 base64
 - `mode` — 操作模式（"screenshot" / "ocr_translate"）
-- `selection` — 选区坐标 `{ startX, startY, endX, endY }`
-- `isSelecting` — 是否正在拖拽
+- `windowRects` — 后端采集的可见窗口矩形列表（逻辑坐标）
+- `isSelecting` — 是否正在选区操作（mousedown 后）
+- `isDragging` — 是否已开始拖拽（移动距离 >= 5px）
+- `selRect` — 拖拽选区矩形
+- `hoveredRect` — 鼠标悬停时匹配到的窗口矩形
 
 **交互流程：**
-1. 监听 `"screenshot-init"` 事件获取冻结截图和 mode
-2. `mousedown` → 开始选区
-3. `mousemove` → 更新选区矩形
-4. `mouseup` → 计算选区（最小 5×5 像素），乘以 `devicePixelRatio` 转物理像素，emit `"region-selected"`，关闭窗口
-5. `ESC` → 直接关闭窗口
+1. mount 时通过 `getFrozenScreenshot()` 获取冻结截图、mode 和 `window_rects`
+2. **悬停检测**（mousedown 前的 mousemove）：遍历 `windowRects`（前到后顺序），找到第一个包含光标的窗口，设置 `hoveredRect` 显示绿色高亮
+3. **mousedown** → 记录起点，开始选区
+4. **mousemove（拖拽中）** → 若移动距离 >= 5px，切换为拖拽模式（`isDragging=true`），清除窗口高亮，更新选区矩形
+5. **mouseup 点击**（距离 < 5px）→ 使用 `hoveredRect` 作为选中区域，乘以 DPR 转物理像素，emit `"region-selected"`，关闭窗口
+6. **mouseup 拖拽**（距离 >= 5px）→ 使用拖拽选区（最小 5×5），乘以 DPR 转物理像素，emit `"region-selected"`，关闭窗口
+7. `ESC` → 直接关闭窗口
 
 **视觉效果：**
 - 30% 黑色半透明覆盖层
-- 选区用蓝色边框 + `box-shadow: 0 0 0 9999px` 实现遮罩镂空效果
+- **窗口高亮**：`border: 2px solid #22c55e`（绿色边框）+ `background: rgba(34,197,94,0.08)`（淡绿色填充）+ `box-shadow: 0 0 0 9999px` 镂空效果
+- **拖拽选区**：蓝色边框 + `box-shadow: 0 0 0 9999px` 遮罩镂空效果
 - 选区上方显示物理像素尺寸
-- 无选区时显示操作提示
+- 开始拖拽后窗口高亮消失
+- 无选区且无悬停窗口时显示操作提示
 
 ### SettingsPanel.tsx
 

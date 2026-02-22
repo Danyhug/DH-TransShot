@@ -89,6 +89,7 @@ pub struct AppState {
     pub settings: Mutex<Settings>,
     pub frozen_screenshot: Mutex<Option<String>>,
     pub frozen_mode: Mutex<String>,
+    pub frozen_window_rects: Mutex<serde_json::Value>,
     pub http_client: reqwest::Client,
 }
 
@@ -98,6 +99,7 @@ impl Default for AppState {
             settings: Mutex::new(Settings::default()),
             frozen_screenshot: Mutex::new(None),
             frozen_mode: Mutex::new(String::new()),
+            frozen_window_rects: Mutex::new(serde_json::Value::Array(vec![])),
             http_client: reqwest::Client::new(),
         }
     }
