@@ -63,8 +63,14 @@ export function setupMainWindowLogListeners(): () => void {
     emitTo("debug-log", "debug-log-init", logs).catch(() => {});
   });
 
+  // When debug window requests clear, clear the main store
+  const unlistenClearReq = listen("debug-log-clear-request", () => {
+    useLogStore.getState().clear();
+  });
+
   return () => {
     unlistenReady.then((fn) => fn());
+    unlistenClearReq.then((fn) => fn());
   };
 }
 

@@ -67,6 +67,8 @@ export function LogPanel() {
 
   const clearLogs = () => {
     setLogs([]);
+    // Notify main window to clear log store as well
+    emit("debug-log-clear-request");
   };
 
   const close = () => {
