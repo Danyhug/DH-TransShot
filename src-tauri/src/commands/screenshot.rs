@@ -116,6 +116,7 @@ pub async fn start_region_select(
     info!("[Screenshot] 创建覆盖层窗口, 显示器={}x{}, scale={}, logical={}x{}", size.width, size.height, scale, logical_width, logical_height);
 
     // 5. Create the screenshot overlay window (with retry if stale window lingers)
+    //    Start hidden — the frontend will call show() after the image is loaded
     let build_overlay = || {
         WebviewWindowBuilder::new(
             &app,
@@ -128,6 +129,7 @@ pub async fn start_region_select(
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
+        .visible(false)
         .build()
     };
 

@@ -13,7 +13,7 @@ interface Selection {
 }
 
 export function ScreenshotOverlay() {
-  const [backgroundImage, setBackgroundImage] = useState<string>("");
+  const [backgroundUrl, setBackgroundUrl] = useState<string>("");
   const [mode, setMode] = useState<string>("region");
   const [windowRects, setWindowRects] = useState<WindowRect[]>([]);
   const [selRect, setSelRect] = useState<{
@@ -32,6 +32,7 @@ export function ScreenshotOverlay() {
   const windowRectsRef = useRef<WindowRect[]>([]);
   const hoveredRectRef = useRef<WindowRect | null>(null);
   const modeRef = useRef(mode);
+  const blobUrlRef = useRef<string | null>(null);
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -47,23 +48,74 @@ export function ScreenshotOverlay() {
   useEffect(() => {
     // Pull frozen screenshot data from backend on mount
     appLog.info("[Overlay] 截图覆盖层已挂载，获取冻结截图...");
-    getFrozenScreenshot()
-      .then((data) => {
-        appLog.info(
-          "[Overlay] 冻结截图获取成功, mode=" +
-            data.mode +
-            ", image size=" +
-            data.image.length +
-            ", window_rects=" +
-            (data.window_rects?.length ?? 0)
-        );
-        setBackgroundImage(data.image);
-        setMode(data.mode);
-        setWindowRects(data.window_rects ?? []);
-      })
-      .catch((e) => {
-        appLog.error("[Overlay] 获取冻结截图失败: " + String(e));
-      });
+
+    let cancelled = false;
+
+    const loadScreenshot = async () => {
+      const maxRetries = 3;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (cancelled) return;
+        try {
+          const data = await getFrozenScreenshot();
+          if (cancelled) return;
+
+          appLog.info(
+            "[Overlay] 冻结截图获取成功, attempt=" +
+              attempt +
+              ", mode=" +
+              data.mode +
+              ", image size=" +
+              data.image.length +
+              ", window_rects=" +
+              (data.window_rects?.length ?? 0)
+          );
+
+          // Convert base64 to Blob URL — avoids WebKit issues with huge inline data URLs
+          const binaryStr = atob(data.image);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: "image/png" });
+          const url = URL.createObjectURL(blob);
+
+          // Preload: ensure image is fully decoded before displaying
+          await new Promise<void>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error("Image decode failed"));
+            img.src = url;
+          });
+
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+
+          blobUrlRef.current = url;
+          setBackgroundUrl(url);
+          setMode(data.mode);
+          setWindowRects(data.window_rects ?? []);
+
+          // Image is ready — now show the overlay window
+          await getCurrentWindow().show();
+          await getCurrentWindow().setFocus();
+          appLog.info("[Overlay] 覆盖层窗口已显示");
+          return; // success
+        } catch (e) {
+          appLog.warn(
+            "[Overlay] 获取冻结截图失败 (attempt " + attempt + "/" + maxRetries + "): " + String(e)
+          );
+          if (attempt < maxRetries) {
+            await new Promise((r) => setTimeout(r, 150));
+          }
+        }
+      }
+      appLog.error("[Overlay] 获取冻结截图最终失败，关闭覆盖层");
+      getCurrentWindow().close();
+    };
+
+    loadScreenshot();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -73,7 +125,11 @@ export function ScreenshotOverlay() {
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
+      cancelled = true;
       window.removeEventListener("keydown", handleKeyDown);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+      }
     };
   }, []);
 
@@ -235,9 +291,7 @@ export function ScreenshotOverlay() {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       style={{
-        backgroundImage: backgroundImage
-          ? `url(data:image/png;base64,${backgroundImage})`
-          : undefined,
+        backgroundImage: backgroundUrl ? `url(${backgroundUrl})` : undefined,
         backgroundSize: "cover",
         backgroundPosition: "center",
       }}
