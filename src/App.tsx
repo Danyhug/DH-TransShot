@@ -43,6 +43,9 @@ export default function App() {
         if (!isOnTop) {
           // Small delay to let the OS settle focus on the target window
           await new Promise((r) => setTimeout(r, 80));
+          // Don't hide if screenshot overlay is active (main window will be restored when overlay closes)
+          const overlayWin = await WebviewWindow.getByLabel("screenshot-overlay");
+          if (overlayWin) return;
           // Don't hide if focus went to our debug-log or settings window
           const debugWin = await WebviewWindow.getByLabel("debug-log");
           const settingsWin = await WebviewWindow.getByLabel("settings");
