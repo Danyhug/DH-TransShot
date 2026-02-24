@@ -4,6 +4,15 @@ import { useSettingsStore } from "../stores/settingsStore";
 import { translateText } from "../lib/invoke";
 import { appLog } from "../stores/logStore";
 
+// Generation counter: incremented on each translate call or explicit cancel.
+// Stale calls (whose captured generation no longer matches) silently discard results.
+let translateGeneration = 0;
+
+/** Invalidate any in-flight translate call so its result will be discarded. */
+export function cancelPendingTranslation() {
+  translateGeneration++;
+}
+
 export function useTranslation() {
   const {
     sourceText,
@@ -11,6 +20,7 @@ export function useTranslation() {
     sourceLang,
     targetLang,
     isTranslating,
+    isOcrProcessing,
     error,
     setSourceText,
     setTranslatedText,
@@ -36,18 +46,29 @@ export function useTranslation() {
       }
 
       appLog.info("[Translate] 手动翻译: " + sourceLang + " → " + targetLang + ", 文本长度=" + input.length);
+      const generation = ++translateGeneration;
       setIsTranslating(true);
       setError(null);
 
       try {
         const result = await translateText(input, sourceLang, targetLang);
+        if (generation !== translateGeneration) {
+          appLog.info("[Translate] 翻译结果已过期, 丢弃");
+          return;
+        }
         appLog.info("[Translate] 翻译完成, 结果长度=" + result.length);
         setTranslatedText(result);
       } catch (e) {
+        if (generation !== translateGeneration) {
+          appLog.info("[Translate] 错误已过期, 忽略");
+          return;
+        }
         appLog.error("[Translate] 翻译失败: " + String(e));
         setError(String(e));
       } finally {
-        setIsTranslating(false);
+        if (generation === translateGeneration) {
+          setIsTranslating(false);
+        }
       }
     },
     [sourceText, sourceLang, targetLang, setTranslatedText, setIsTranslating, setError]
@@ -59,6 +80,7 @@ export function useTranslation() {
     sourceLang,
     targetLang,
     isTranslating,
+    isOcrProcessing,
     error,
     setSourceText,
     translate,

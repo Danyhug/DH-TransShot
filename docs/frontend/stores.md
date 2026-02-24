@@ -25,12 +25,14 @@
 | `sourceLang` | string | `"auto"` | 源语言代码 |
 | `targetLang` | string | `"zh-CN"` | 目标语言代码 |
 | `isTranslating` | boolean | `false` | 翻译进行中标志 |
+| `isOcrProcessing` | boolean | `false` | OCR 识别进行中标志 |
 | `error` | string \| null | `null` | 错误信息 |
 
 **Actions：**
 - `setSourceText(text)` / `setTranslatedText(text)` — 更新文本
 - `setSourceLang(lang)` / `setTargetLang(lang)` — 更新语言
 - `setIsTranslating(v)` — 切换翻译状态
+- `setIsOcrProcessing(v)` — 切换 OCR 识别状态
 - `setError(error)` — 设置错误信息
 - **`swapLanguages()`** — 交换源/目标语言和源/目标文本
   - 若 `sourceLang === "auto"` 则直接 return（不可交换）

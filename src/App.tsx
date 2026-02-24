@@ -9,7 +9,7 @@ import { openSettingsWindow } from "./stores/settingsStore";
 import { useTranslationStore } from "./stores/translationStore";
 import { appLog, openDebugWindow, setupMainWindowLogListeners } from "./stores/logStore";
 import { useScreenshot } from "./hooks/useScreenshot";
-import { useTranslation } from "./hooks/useTranslation";
+import { useTranslation, cancelPendingTranslation } from "./hooks/useTranslation";
 import { captureRegion, recognizeText, copyImageToClipboard, getSettings } from "./lib/invoke";
 import type { RegionSelectEvent } from "./types";
 
@@ -22,6 +22,9 @@ export default function App() {
   // Keep a ref to latest sourceLang to avoid stale closure in event listener
   const sourceLangRef = useRef(sourceLang);
   sourceLangRef.current = sourceLang;
+
+  // Generation counter for OCR sessions; stale sessions discard their results
+  const ocrSessionRef = useRef(0);
 
   useEffect(() => {
     appLog.info("[App] 主窗口初始化");
@@ -75,17 +78,41 @@ export default function App() {
           appLog.info("[App] 图片已复制到剪贴板");
         } else if (mode === "ocr_translate") {
           // OCR + Translate mode: OCR → set source text → translate → show window
-          appLog.info("[App] ocr_translate 模式，开始 OCR...");
-          const ocrText = await recognizeText(imageBase64, sourceLangRef.current);
-          appLog.info("[App] OCR 完成, 文本长度=" + ocrText.length);
+          const sessionId = ++ocrSessionRef.current;
+          cancelPendingTranslation();
+          appLog.info("[App] ocr_translate 模式，开始 OCR... (session=" + sessionId + ")");
+          const store = useTranslationStore.getState();
+          store.setSourceText("");
+          store.setTranslatedText("");
+          store.setError(null);
+          store.setIsTranslating(false);
+          store.setIsOcrProcessing(true);
 
-          if (ocrText.trim()) {
-            setSourceText(ocrText);
-            appLog.info("[App] 源文本已设置，开始翻译...");
-            await translate(ocrText);
-            appLog.info("[App] 翻译完成");
-          } else {
-            appLog.warn("[App] OCR 结果为空，跳过翻译");
+          try {
+            const ocrText = await recognizeText(imageBase64, sourceLangRef.current);
+            if (sessionId !== ocrSessionRef.current) {
+              appLog.info("[App] OCR 结果已过期 (session=" + sessionId + "), 丢弃");
+              return;
+            }
+            appLog.info("[App] OCR 完成, 文本长度=" + ocrText.length);
+            store.setIsOcrProcessing(false);
+
+            if (ocrText.trim()) {
+              setSourceText(ocrText);
+              appLog.info("[App] 源文本已设置，开始翻译...");
+              await translate(ocrText);
+              appLog.info("[App] 翻译完成");
+            } else {
+              appLog.warn("[App] OCR 结果为空，跳过翻译");
+            }
+          } catch (e) {
+            if (sessionId !== ocrSessionRef.current) {
+              appLog.info("[App] OCR 错误已过期 (session=" + sessionId + "), 忽略");
+              return;
+            }
+            store.setIsOcrProcessing(false);
+            store.setError("OCR 识别失败: " + String(e));
+            appLog.error("[App] OCR 失败: " + String(e));
           }
         }
       } catch (e) {

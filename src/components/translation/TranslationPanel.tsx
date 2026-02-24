@@ -10,6 +10,7 @@ export function TranslationPanel() {
     sourceText,
     translatedText,
     isTranslating,
+    isOcrProcessing,
     error,
     setSourceText,
     translate,
@@ -33,9 +34,10 @@ export function TranslationPanel() {
         style={{ backgroundColor: "var(--color-surface)" }}
       >
         <TextArea
-          value={sourceText}
+          value={isOcrProcessing ? "识别中..." : sourceText}
           onChange={setSourceText}
           placeholder="输入要翻译的文本... (Ctrl+Enter)"
+          readOnly={isOcrProcessing}
         />
         <ActionButtons text={sourceText} />
       </div>
@@ -55,7 +57,7 @@ export function TranslationPanel() {
         style={{ backgroundColor: "var(--color-surface)" }}
       >
         <TextArea
-          value={isTranslating ? "翻译中..." : translatedText}
+          value={isOcrProcessing ? "" : isTranslating ? "翻译中..." : translatedText}
           readOnly
           placeholder="翻译结果将显示在这里..."
         />

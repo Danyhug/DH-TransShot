@@ -24,17 +24,23 @@
 
 ### useTranslation.ts
 
-**返回值：** `{ sourceText, translatedText, sourceLang, targetLang, isTranslating, error, setSourceText, translate }`
+**返回值：** `{ sourceText, translatedText, sourceLang, targetLang, isTranslating, isOcrProcessing, error, setSourceText, translate }`
 
 **`translate(text?)`**
 1. 取 `text` 参数或 store 中的 `sourceText`
 2. 验证文本非空
 3. 验证 API key 已配置（base_url 含 localhost 时可跳过，适配 Ollama）
-4. `setIsTranslating(true)` + `setError(null)`
-5. 调用 `translateText(input, sourceLang, targetLang)`
-6. 成功 → `setTranslatedText(result)`
-7. 失败 → `setError(String(e))`
-8. finally → `setIsTranslating(false)`
+4. 递增 `translateGeneration` 计数器，捕获当前 generation
+5. `setIsTranslating(true)` + `setError(null)`
+6. 调用 `translateText(input, sourceLang, targetLang)`
+7. 若 generation 已过期（被新调用或 `cancelPendingTranslation()` 覆盖），丢弃结果并返回
+8. 成功 → `setTranslatedText(result)`
+9. 失败 → `setError(String(e))`
+10. finally → 仅当 generation 仍有效时 `setIsTranslating(false)`
+
+**`cancelPendingTranslation()`**（模块级导出函数）
+- 递增 `translateGeneration`，使当前正在进行的翻译请求结果被丢弃
+- 由 `App.tsx` 在新 OCR 会话开始时调用，避免旧翻译结果覆盖新状态
 
 **状态来源：**
 - `useTranslationStore` — 翻译相关状态
