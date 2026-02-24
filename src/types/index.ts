@@ -8,7 +8,6 @@ export interface Settings {
   target_language: string;
   hotkey_screenshot: string;
   hotkey_region: string;
-  hide_on_capture: boolean;
 }
 
 export interface ServiceConfig {

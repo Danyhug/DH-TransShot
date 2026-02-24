@@ -25,7 +25,6 @@ export const defaultSettings: Settings = {
   target_language: "zh-CN",
   hotkey_screenshot: "Alt+A",
   hotkey_region: "Alt+S",
-  hide_on_capture: true,
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({

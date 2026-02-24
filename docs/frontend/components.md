@@ -97,7 +97,6 @@
 - 独立设置窗口（非模态弹窗）
 - 标签页切换：翻译 / OCR / TTS 服务配置
 - 表单字段：API 地址、API 密钥（password）、模型、自定义参数
-- "截图时隐藏主界面" toggle 开关（`hide_on_capture`）
 - 快捷键参考区（只读展示）
 - 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置
 

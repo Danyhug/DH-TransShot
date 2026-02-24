@@ -2,8 +2,8 @@ use crate::config::AppState;
 use log::{info, error};
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
-/// Start region selection: move main window off-screen, capture full screen,
-/// store it in AppState, then create the screenshot overlay window.
+/// Start region selection: capture full screen, store it in AppState,
+/// then create the screenshot overlay window.
 #[tauri::command]
 pub async fn start_region_select(
     app: tauri::AppHandle,
@@ -20,14 +20,7 @@ pub async fn start_region_select(
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 
-    // 0. Read hide_on_capture setting
-    let hide_on_capture = {
-        let guard = state.settings.lock().map_err(|e| e.to_string())?;
-        guard.hide_on_capture
-    };
-    info!("[Screenshot] hide_on_capture={}", hide_on_capture);
-
-    // 0.5 Close settings and debug-log windows (they would obscure the overlay)
+    // 0. Close settings and debug-log windows (they would obscure the overlay)
     if let Some(w) = app.get_webview_window("settings") {
         info!("[Screenshot] 关闭 settings 窗口");
         let _ = w.close();
@@ -37,28 +30,10 @@ pub async fn start_region_select(
         let _ = w.close();
     }
 
-    // 1. Move main window off-screen instead of hide/minimize (only if hide_on_capture).
-    let saved_pos = if hide_on_capture {
-        if let Some(main_win) = app.get_webview_window("main") {
-            let pos = main_win.outer_position().unwrap_or(tauri::PhysicalPosition::new(100, 100));
-            info!("[Screenshot] 主窗口移至屏幕外, 原位置=({}, {})", pos.x, pos.y);
-            let _ = main_win.set_position(tauri::Position::Physical(
-                tauri::PhysicalPosition::new(-20000, -20000),
-            ));
-            Some(pos)
-        } else {
-            error!("[Screenshot] 找不到主窗口");
-            None
-        }
-    } else {
-        info!("[Screenshot] hide_on_capture=false, 不移动主窗口");
-        None
-    };
-
-    // 2. Brief delay for the window move to take effect
+    // 1. Brief delay before capture
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // 3. Collect window rects BEFORE creating the overlay window
+    // 2. Collect window rects BEFORE creating the overlay window
     info!("[Screenshot] 采集窗口列表...");
     let window_rects = tokio::task::spawn_blocking(|| crate::screenshot::list_window_rects())
         .await
@@ -71,13 +46,12 @@ pub async fn start_region_select(
         *guard = rects_json;
     }
 
-    // 4. Capture the screen
+    // 3. Capture the screen
     info!("[Screenshot] 开始全屏截图...");
     let capture_result = tokio::task::spawn_blocking(|| crate::screenshot::capture_full())
         .await
         .map_err(|e| e.to_string())?;
 
-    // If capture fails, restore the window position before returning error
     let full_base64 = match capture_result {
         Ok(data) => {
             info!("[Screenshot] 全屏截图完成, base64 size={}", data.len());
@@ -85,11 +59,6 @@ pub async fn start_region_select(
         }
         Err(e) => {
             error!("[Screenshot] 全屏截图失败: {}", e);
-            if let (Some(main_win), Some(pos)) =
-                (app.get_webview_window("main"), saved_pos)
-            {
-                let _ = main_win.set_position(tauri::Position::Physical(pos));
-            }
             return Err(e.to_string());
         }
     };
@@ -115,7 +84,7 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 创建覆盖层窗口, 显示器={}x{}, scale={}, logical={}x{}", size.width, size.height, scale, logical_width, logical_height);
 
-    // 5. Create the screenshot overlay window (with retry if stale window lingers)
+    // 4. Create the screenshot overlay window (with retry if stale window lingers)
     //    Start hidden — the frontend will call show() after the image is loaded
     let build_overlay = || {
         WebviewWindowBuilder::new(
@@ -148,25 +117,20 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 覆盖层窗口已创建");
 
-    // 6. Restore main window position when overlay closes
-    //    - screenshot mode: restore position only (don't show/focus)
-    //    - ocr_translate mode: restore position + show + focus
+    // 5. Show main window when overlay closes (ocr_translate mode)
     let frozen_mode = mode.clone();
     let app_clone = app.clone();
     overlay.on_window_event(move |event| {
         if let tauri::WindowEvent::Destroyed = event {
             info!("[Screenshot] 覆盖层窗口关闭, mode={}", frozen_mode);
-            if let Some(main_win) = app_clone.get_webview_window("main") {
-                if let Some(pos) = saved_pos {
-                    let _ = main_win.set_position(tauri::Position::Physical(pos));
-                }
-                if frozen_mode == "ocr_translate" {
+            if frozen_mode == "ocr_translate" {
+                if let Some(main_win) = app_clone.get_webview_window("main") {
                     info!("[Screenshot] ocr_translate 模式，显示主窗口");
                     let _ = main_win.show();
                     let _ = main_win.set_focus();
-                } else {
-                    info!("[Screenshot] screenshot 模式，不显示主窗口");
                 }
+            } else {
+                info!("[Screenshot] screenshot 模式，不显示主窗口");
             }
         }
     });

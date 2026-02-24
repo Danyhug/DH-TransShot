@@ -31,7 +31,6 @@ pub struct Settings {
     pub target_language: String,
     pub hotkey_screenshot: String,
     pub hotkey_region: String,
-    pub hide_on_capture: bool,
 }
 
 fn default_base_url() -> String {
@@ -55,7 +54,6 @@ impl Default for Settings {
             target_language: "zh-CN".to_string(),
             hotkey_screenshot: "Alt+A".to_string(),
             hotkey_region: "Alt+S".to_string(),
-            hide_on_capture: true,
         }
     }
 }

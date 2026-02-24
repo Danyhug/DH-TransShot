@@ -20,15 +20,13 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 ### screenshot.rs
 
 **`start_region_select(app, state, mode) -> Result<(), String>`**
-- 读取 `hide_on_capture` 设置
 - 关闭 settings 和 debug-log 子窗口（避免遮挡覆盖层）
-- 仅 `hide_on_capture == true` 时将主窗口移至屏幕外
 - 捕获全屏截图并存入 `AppState.frozen_screenshot`
 - 获取主显示器物理尺寸和缩放因子，计算逻辑尺寸
 - 创建覆盖层窗口（`screenshot.html`）：全屏、无边框、置顶、跳过任务栏
-- 覆盖层关闭时根据 mode 和是否移走了主窗口决定恢复行为：
-  - `screenshot` 模式：仅恢复主窗口位置（如果之前移走了）
-  - `ocr_translate` 模式：恢复位置 + show + focus
+- 覆盖层关闭时根据 mode 决定行为：
+  - `screenshot` 模式：不做额外操作
+  - `ocr_translate` 模式：show + focus 主窗口
 
 **`capture_region(state, x, y, width, height) -> Result<String, String>`**
 - 从 `AppState.frozen_screenshot` 取出冻结截图

@@ -206,22 +206,6 @@ export function SettingsPanel() {
           onChange={(key, value) => updateService(activeTab, key, value)}
         />
 
-        {/* Hide on capture toggle */}
-        <div style={{ marginTop: "14px" }}>
-          <label className="flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              截图时隐藏主界面
-            </span>
-            <input
-              type="checkbox"
-              checked={settings.hide_on_capture}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, hide_on_capture: e.target.checked }))
-              }
-            />
-          </label>
-        </div>
-
         {/* Hotkeys info */}
         <div style={{ marginTop: "14px" }}>
           <h3 className="text-xs font-medium" style={{ color: "var(--color-text-secondary)", marginBottom: "6px" }}>
