@@ -13,7 +13,7 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 | 样式 | Tailwind CSS v4 + CSS 变量主题 |
 | 状态管理 | Zustand（前端）/ Mutex\<T\>（后端） |
 | 截图 | xcap crate |
-| OCR | macOS Vision / Windows Media.Ocr（系统原生） |
+| OCR | 视觉大模型（OpenAI 兼容 API） |
 | 翻译 | OpenAI 兼容 Chat Completions API |
 | 构建 | Vite 多入口 + Cargo |
 | 包管理 | pnpm |

@@ -8,7 +8,7 @@
 - **前端**: React 19 + TypeScript + Tailwind CSS v4
 - **状态管理**: Zustand
 - **截图**: xcap
-- **OCR**: 系统原生（macOS Vision / Windows Media.Ocr）
+- **OCR**: 视觉大模型（OpenAI 兼容接口）
 - **翻译**: OpenAI 兼容接口（支持 OpenAI、DeepSeek、Ollama 等）
 - **包管理**: pnpm
 
@@ -108,7 +108,7 @@ error!("[OCR] API 错误 ({}): {}", status, body);
 | [docs/backend/entry.md](docs/backend/entry.md) | `lib.rs` + `main.rs` | Tauri Builder 入口、插件注册、命令注册 |
 | [docs/backend/commands.md](docs/backend/commands.md) | `commands/` | Tauri 命令层（前后端 RPC 接口） |
 | [docs/backend/screenshot.md](docs/backend/screenshot.md) | `screenshot/` | xcap 截图捕获、base64 编码、区域裁切 |
-| [docs/backend/ocr.md](docs/backend/ocr.md) | `ocr/` | OCR 识别（macOS Vision FFI / Windows Media.Ocr） |
+| [docs/backend/ocr.md](docs/backend/ocr.md) | `ocr/` | OCR 识别（视觉大模型，OpenAI 兼容 API） |
 | [docs/backend/translation.md](docs/backend/translation.md) | `translation/` | OpenAI 兼容 Chat Completions 翻译客户端 |
 | [docs/backend/config.md](docs/backend/config.md) | `config/` | Settings 结构体、AppState 全局状态 |
 | [docs/backend/tray.md](docs/backend/tray.md) | `tray.rs` | 系统托盘菜单与事件路由 |

@@ -30,8 +30,6 @@ OCR 文字识别模块，通过 OpenAI 兼容的视觉语言模型 API 实现。
 
 ## 修改指南
 
-- macOS FFI 代码全部 `unsafe`，修改时需特别注意内存管理（`CFRelease`）
-- 新增识别语言需修改 `apple_vision.rs` 中 `lang_strs` 数组和 Windows 的语言参数
-- `perform_ocr` 在独立线程运行（非 tokio 线程），因为 Vision 框架需要在非异步上下文中同步执行
+- 修改提示词（prompt）会影响识别效果，当前固定为中文提示词
 - 修改图像预处理（如格式、尺寸）需同步修改 `mod.rs` 中的验证逻辑
-- Windows OCR 的语言可用性取决于系统安装的 OCR 语言包
+- OCR 服务的 base_url / api_key / model / extra 由 `Settings` 中的 `ocr` ServiceConfig 管理
