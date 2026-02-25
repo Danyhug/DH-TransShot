@@ -20,6 +20,12 @@ pub fn run() {
     let app_state = AppState::default();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new()
+            .targets([
+                Target::new(TargetKind::Stdout),
+                Target::new(TargetKind::LogDir { file_name: None }),
+            ])
+            .build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(app_state)
@@ -36,10 +42,17 @@ pub fn run() {
 
 **初始化顺序：**
 1. 创建 `AppState`（默认配置 + 空冻结截图）
-2. 注册插件：`tauri_plugin_global_shortcut`、`tauri_plugin_store`
+2. 注册插件：`tauri_plugin_log`（日志持久化，必须第一个注册）、`tauri_plugin_global_shortcut`、`tauri_plugin_store`
 3. 注册全局状态：`app_state`
 4. 注册 Tauri 命令（截图 3 个 + OCR 1 个 + 翻译 1 个 + 设置 2 个 + 剪贴板 2 个）
 5. setup 阶段：加载持久化配置 → 初始化系统托盘 → 注册全局快捷键
+
+**日志插件（tauri-plugin-log）：**
+- 必须作为第一个插件注册，确保 setup 阶段的 `info!`/`warn!` 调用已有日志后端
+- `Stdout` target — 保留终端输出（`pnpm tauri dev` 可见）
+- `LogDir { file_name: None }` — 写入系统日志目录（macOS: `~/Library/Logs/com.danyhug.dh-transshot/`）
+- 后端所有现有 `info!`/`warn!`/`error!` 调用自动写入文件，无需修改
+- 前端通过 `@tauri-apps/plugin-log` 的 `info`/`warn`/`error` 函数写入同一文件
 
 **注册的命令：**
 - `start_region_select`、`capture_region`、`get_frozen_screenshot`

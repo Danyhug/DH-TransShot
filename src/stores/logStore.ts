@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openDockedWindow } from "../lib/windowUtils";
+import { info as logInfo, warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
 
 export interface LogEntry {
   id: number;
@@ -78,13 +79,16 @@ export const appLog = {
   info: (msg: string) => {
     console.log(msg);
     useLogStore.getState().addLog("info", msg);
+    logInfo(msg).catch(() => {});
   },
   warn: (msg: string) => {
     console.warn(msg);
     useLogStore.getState().addLog("warn", msg);
+    logWarn(msg).catch(() => {});
   },
   error: (msg: string) => {
     console.error(msg);
     useLogStore.getState().addLog("error", msg);
+    logError(msg).catch(() => {});
   },
 };

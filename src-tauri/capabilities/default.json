@@ -41,6 +41,7 @@
     "store:allow-set",
     "store:allow-save",
     "store:allow-load",
-    "store:allow-clear"
+    "store:allow-clear",
+    "log:default"
   ]
 }

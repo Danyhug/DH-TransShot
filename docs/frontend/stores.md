@@ -116,5 +116,7 @@
 
 **全局辅助函数 `appLog`：**
 - `appLog.info(msg)` / `appLog.warn(msg)` / `appLog.error(msg)`
-- 同时调用 `console.*` 和 `addLog()`，可在任何文件中直接 import 使用
+- 同时调用 `console.*`、`addLog()`（内存缓冲 + 调试窗口推送）、以及 `@tauri-apps/plugin-log` 的对应函数（写入日志文件）
+- 插件调用为 fire-and-forget（`.catch(() => {})`），不阻塞主逻辑
+- 可在任何文件中直接 import 使用
 - 通过 `useLogStore.getState()` 访问 store，无需在 React 组件内使用
