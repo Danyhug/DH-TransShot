@@ -85,9 +85,10 @@ pub fn merge_extra(body: &mut Value, extra: &str, tag: &str) {
 
 pub struct AppState {
     pub settings: Mutex<Settings>,
-    pub frozen_screenshot: Mutex<Option<String>>,
+    pub frozen_screenshots: Mutex<Vec<String>>,
     pub frozen_mode: Mutex<String>,
     pub frozen_window_rects: Mutex<serde_json::Value>,
+    pub frozen_monitors: Mutex<Vec<serde_json::Value>>,
     pub http_client: reqwest::Client,
 }
 
@@ -95,9 +96,10 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             settings: Mutex::new(Settings::default()),
-            frozen_screenshot: Mutex::new(None),
+            frozen_screenshots: Mutex::new(Vec::new()),
             frozen_mode: Mutex::new(String::new()),
             frozen_window_rects: Mutex::new(serde_json::Value::Array(vec![])),
+            frozen_monitors: Mutex::new(Vec::new()),
             http_client: reqwest::Client::new(),
         }
     }

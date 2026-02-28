@@ -147,38 +147,83 @@ fn list_window_rects_macos() -> Vec<WindowRect> {
     }
 }
 
-/// Capture the full screen of the primary monitor, return as base64 PNG.
-pub fn capture_full() -> anyhow::Result<String> {
-    info!("[Capture] capture_full 开始");
+/// Capture each monitor individually, returning one base64 PNG per monitor.
+/// `monitors` is a list of (logical_x, logical_y, logical_w, logical_h) for each monitor.
+pub fn capture_monitors(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>> {
+    info!("[Capture] capture_monitors, count={}", monitors.len());
     #[cfg(target_os = "macos")]
     {
-        return capture_full_macos();
+        capture_monitors_macos(monitors)
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        capture_full_xcap()
+        capture_monitors_xcap()
     }
 }
 
-/// macOS: Use Core Graphics CGWindowListCreateImage directly.
-/// This avoids xcap's ObjC exception issues with IMK.
+/// macOS: Capture each monitor individually using its logical rect.
+/// Each image is at the monitor's native resolution (no mixed-DPI issues).
 #[cfg(target_os = "macos")]
-fn capture_full_macos() -> anyhow::Result<String> {
+fn capture_monitors_macos(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>> {
     use std::ffi::c_void;
 
-    // Core Graphics FFI
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
-        fn CGMainDisplayID() -> u32;
-        fn CGDisplayPixelsWide(display: u32) -> usize;
-        fn CGDisplayPixelsHigh(display: u32) -> usize;
         fn CGWindowListCreateImage(
             rect: CGRect,
             option: u32,
             window_id: u32,
             image_option: u32,
         ) -> *const c_void;
+        fn CFRelease(cf: *const c_void);
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGPoint { x: f64, y: f64 }
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGSize { width: f64, height: f64 }
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    struct CGRect { origin: CGPoint, size: CGSize }
+
+    let mut results = Vec::with_capacity(monitors.len());
+
+    for (i, &(lx, ly, lw, lh)) in monitors.iter().enumerate() {
+        info!("[Capture] macOS 截取显示器[{}]: logical=({},{},{}x{})", i, lx, ly, lw, lh);
+
+        let rect = CGRect {
+            origin: CGPoint { x: lx, y: ly },
+            size: CGSize { width: lw, height: lh },
+        };
+
+        unsafe {
+            // kCGWindowListOptionOnScreenOnly = 1, kCGNullWindowID = 0
+            // kCGWindowImageDefault = 0 → native resolution for this display
+            let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
+            if cg_image.is_null() {
+                anyhow::bail!("CGWindowListCreateImage returned null for monitor {} - check screen recording permission", i);
+            }
+
+            let base64 = cgimage_to_base64(cg_image)?;
+            CFRelease(cg_image);
+            info!("[Capture] 显示器[{}] 截图完成, base64 size={}", i, base64.len());
+            results.push(base64);
+        }
+    }
+
+    Ok(results)
+}
+
+/// Convert a CGImage to base64 PNG.
+#[cfg(target_os = "macos")]
+fn cgimage_to_base64(cg_image: *const std::ffi::c_void) -> anyhow::Result<String> {
+    use std::ffi::c_void;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
         fn CGImageGetWidth(image: *const c_void) -> usize;
         fn CGImageGetHeight(image: *const c_void) -> usize;
         fn CGImageGetBitsPerPixel(image: *const c_void) -> usize;
@@ -190,48 +235,7 @@ fn capture_full_macos() -> anyhow::Result<String> {
         fn CFRelease(cf: *const c_void);
     }
 
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    struct CGPoint {
-        x: f64,
-        y: f64,
-    }
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    struct CGSize {
-        width: f64,
-        height: f64,
-    }
-    #[repr(C)]
-    #[derive(Copy, Clone)]
-    struct CGRect {
-        origin: CGPoint,
-        size: CGSize,
-    }
-
     unsafe {
-        let display = CGMainDisplayID();
-        let width = CGDisplayPixelsWide(display);
-        let height = CGDisplayPixelsHigh(display);
-
-        info!("[Capture] macOS CG 截图, display={}, 分辨率={}x{}", display, width, height);
-
-        // CGRectInfinite captures all displays; use explicit rect for primary
-        let rect = CGRect {
-            origin: CGPoint { x: 0.0, y: 0.0 },
-            size: CGSize {
-                width: width as f64,
-                height: height as f64,
-            },
-        };
-
-        // kCGWindowListOptionOnScreenOnly = 1, kCGNullWindowID = 0
-        // kCGWindowImageDefault = 0
-        let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
-        if cg_image.is_null() {
-            anyhow::bail!("CGWindowListCreateImage returned null - check screen recording permission");
-        }
-
         let img_width = CGImageGetWidth(cg_image);
         let img_height = CGImageGetHeight(cg_image);
         let bytes_per_row = CGImageGetBytesPerRow(cg_image);
@@ -241,13 +245,11 @@ fn capture_full_macos() -> anyhow::Result<String> {
 
         let provider = CGImageGetDataProvider(cg_image);
         if provider.is_null() {
-            CFRelease(cg_image);
             anyhow::bail!("CGImageGetDataProvider returned null");
         }
 
         let cf_data = CGDataProviderCopyData(provider);
         if cf_data.is_null() {
-            CFRelease(cg_image);
             anyhow::bail!("CGDataProviderCopyData returned null");
         }
 
@@ -277,7 +279,6 @@ fn capture_full_macos() -> anyhow::Result<String> {
         }
 
         CFRelease(cf_data);
-        CFRelease(cg_image);
 
         let img = image::RgbaImage::from_raw(img_width as u32, img_height as u32, rgba_buf)
             .ok_or_else(|| anyhow::anyhow!("Failed to create image from raw data"))?;
@@ -286,19 +287,27 @@ fn capture_full_macos() -> anyhow::Result<String> {
     }
 }
 
-/// Fallback: Use xcap for non-macOS platforms.
+/// Non-macOS: Capture each monitor individually using xcap.
 #[cfg(not(target_os = "macos"))]
-fn capture_full_xcap() -> anyhow::Result<String> {
+fn capture_monitors_xcap() -> anyhow::Result<Vec<String>> {
     use xcap::Monitor;
 
     let monitors = Monitor::all()?;
-    let monitor = monitors
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("No monitor found"))?;
+    if monitors.is_empty() {
+        anyhow::bail!("No monitor found");
+    }
 
-    let img = monitor.capture_image()?;
-    image_to_base64(&img)
+    info!("[Capture] xcap per-monitor 截图, 显示器数量={}", monitors.len());
+
+    let mut results = Vec::with_capacity(monitors.len());
+    for (i, mon) in monitors.iter().enumerate() {
+        let img = mon.capture_image()?;
+        info!("[Capture] xcap 显示器[{}]: size={}x{}", i, img.width(), img.height());
+        let base64 = image_to_base64(&img)?;
+        results.push(base64);
+    }
+
+    Ok(results)
 }
 
 /// Given a full-screen image as base64 PNG, crop the specified region.

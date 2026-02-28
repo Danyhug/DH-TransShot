@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, getAllWindows } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { TitleBar } from "./components/common/TitleBar";
 import { TranslationPanel } from "./components/translation/TranslationPanel";
@@ -46,9 +46,10 @@ export default function App() {
         if (!isOnTop) {
           // Small delay to let the OS settle focus on the target window
           await new Promise((r) => setTimeout(r, 80));
-          // Don't hide if screenshot overlay is active (main window will be restored when overlay closes)
-          const overlayWin = await WebviewWindow.getByLabel("screenshot-overlay");
-          if (overlayWin) return;
+          // Don't hide if any screenshot overlay is active (main window will be restored when overlay closes)
+          const allWindows = await getAllWindows();
+          const hasOverlay = allWindows.some((w) => w.label.startsWith("screenshot-overlay"));
+          if (hasOverlay) return;
           // Don't hide if focus went to our debug-log or settings window
           const debugWin = await WebviewWindow.getByLabel("debug-log");
           const settingsWin = await WebviewWindow.getByLabel("settings");
@@ -64,11 +65,11 @@ export default function App() {
 
     // Listen for region selection events from overlay
     const unlistenRegion = listen<RegionSelectEvent>("region-selected", async (event) => {
-      const { x, y, width, height, mode } = event.payload;
-      appLog.info(`[App] 收到区域选择事件: region=(${x},${y},${width}x${height}), mode=${mode}`);
+      const { x, y, width, height, mode, monitor_index } = event.payload;
+      appLog.info(`[App] 收到区域选择事件: monitor=${monitor_index}, region=(${x},${y},${width}x${height}), mode=${mode}`);
 
       try {
-        const imageBase64 = await captureRegion(x, y, width, height);
+        const imageBase64 = await captureRegion(monitor_index, x, y, width, height);
         appLog.info("[App] 区域裁切完成, base64 size=" + imageBase64.length);
 
         if (mode === "screenshot") {

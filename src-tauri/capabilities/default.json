@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/tauri/capabilities.schema.json",
   "identifier": "default",
   "description": "Default capabilities for DH-TransShot",
-  "windows": ["main", "screenshot-overlay", "debug-log", "settings"],
+  "windows": ["main", "screenshot-overlay-*", "debug-log", "settings"],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -25,6 +25,7 @@
     "core:window:allow-outer-position",
     "core:window:allow-is-visible",
     "core:window:allow-is-focused",
+    "core:window:allow-get-all-windows",
     "core:webview:default",
     "core:webview:allow-create-webview-window",
     "core:event:default",

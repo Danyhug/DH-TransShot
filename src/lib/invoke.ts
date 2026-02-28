@@ -6,16 +6,17 @@ export async function startRegionSelect(mode: string): Promise<void> {
 }
 
 export async function captureRegion(
+  monitorIndex: number,
   x: number,
   y: number,
   width: number,
   height: number
 ): Promise<string> {
-  return invoke("capture_region", { x, y, width, height });
+  return invoke("capture_region", { monitorIndex, x, y, width, height });
 }
 
-export async function getFrozenScreenshot(): Promise<ScreenshotInitEvent> {
-  return invoke("get_frozen_screenshot");
+export async function getFrozenScreenshot(monitorIndex: number): Promise<ScreenshotInitEvent> {
+  return invoke("get_frozen_screenshot", { monitorIndex });
 }
 
 export async function recognizeText(

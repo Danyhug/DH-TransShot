@@ -54,8 +54,10 @@
 ```rust
 pub struct AppState {
     pub settings: Mutex<Settings>,
-    pub frozen_screenshot: Mutex<Option<String>>,
+    pub frozen_screenshots: Mutex<Vec<String>>,
     pub frozen_mode: Mutex<String>,
+    pub frozen_window_rects: Mutex<serde_json::Value>,
+    pub frozen_monitors: Mutex<Vec<serde_json::Value>>,
     pub http_client: reqwest::Client,
 }
 ```
@@ -63,8 +65,10 @@ pub struct AppState {
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `settings` | `Mutex<Settings>` | 用户配置，所有命令共享读写 |
-| `frozen_screenshot` | `Mutex<Option<String>>` | 区域选择流程中冻结的全屏截图（base64） |
+| `frozen_screenshots` | `Mutex<Vec<String>>` | 区域选择流程中逐显示器冻结的截图（每个元素为该显示器的 base64 PNG） |
 | `frozen_mode` | `Mutex<String>` | 区域选择模式（`"screenshot"` / `"ocr_translate"`） |
+| `frozen_window_rects` | `Mutex<serde_json::Value>` | 冻结的窗口矩形列表（JSON 数组） |
+| `frozen_monitors` | `Mutex<Vec<serde_json::Value>>` | 冻结的显示器信息列表（MonitorInfo JSON） |
 | `http_client` | `reqwest::Client` | 共享 HTTP 客户端（连接池复用），供 OCR 和翻译模块使用 |
 
 ## 环境变量配置
@@ -88,7 +92,7 @@ DEFAULT_API_KEY=sk-your-api-key
 - **外部依赖**：`serde`（序列化/反序列化）、`serde_json`（JSON 操作）、`std::sync::Mutex`、`reqwest`（HTTP 客户端）、`dotenvy`（.env 加载）、`log`（日志）
 - **被依赖**：
   - `lib.rs` 创建并注册 `AppState`
-  - `commands/screenshot.rs` 读写 `frozen_screenshot`、`frozen_mode`
+  - `commands/screenshot.rs` 读写 `frozen_screenshots`、`frozen_mode`、`frozen_window_rects`、`frozen_monitors`
   - `commands/translation.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.translation`、`http_client`
   - `commands/ocr.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.ocr`、`http_client`
   - `commands/settings.rs` 读写 `settings`
@@ -104,6 +108,6 @@ DEFAULT_API_KEY=sk-your-api-key
   - `save_settings` 命令在更新内存状态后同步写入 store 文件
   - 旧版 settings.json（含 `llm` 字段）无法反序列化，会自动回退到默认配置
 - 新增全局共享状态字段需添加到 `AppState`，并在 `Default` impl 中初始化
-- `frozen_screenshot` 存储完整 base64 字符串，大截图可能占用大量内存
+- `frozen_screenshots` 存储每个显示器的完整 base64 字符串，多显示器时占用大量内存
 - **禁止将 API Key 硬编码到源码中**，必须通过 `.env` 文件或用户设置界面配置
 - 新增服务类型时，在 `Settings` 中添加对应的 `ServiceConfig` 字段，并更新前端类型和 UI

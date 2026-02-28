@@ -3,7 +3,7 @@ import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getFrozenScreenshot } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
-import type { WindowRect } from "../../types";
+import type { WindowRect, MonitorInfo } from "../../types";
 
 interface Selection {
   startX: number;
@@ -16,6 +16,8 @@ export function ScreenshotOverlay() {
   const [backgroundUrl, setBackgroundUrl] = useState<string>("");
   const [mode, setMode] = useState<string>("region");
   const [windowRects, setWindowRects] = useState<WindowRect[]>([]);
+  const [monitor, setMonitor] = useState<MonitorInfo | null>(null);
+  const [monitorIndex, setMonitorIndex] = useState<number>(0);
   const [selRect, setSelRect] = useState<{
     left: number;
     top: number;
@@ -32,6 +34,8 @@ export function ScreenshotOverlay() {
   const windowRectsRef = useRef<WindowRect[]>([]);
   const hoveredRectRef = useRef<WindowRect | null>(null);
   const modeRef = useRef(mode);
+  const monitorRef = useRef<MonitorInfo | null>(null);
+  const monitorIndexRef = useRef(0);
   const blobUrlRef = useRef<string | null>(null);
 
   // Keep refs in sync with state
@@ -44,6 +48,12 @@ export function ScreenshotOverlay() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+  useEffect(() => {
+    monitorRef.current = monitor;
+  }, [monitor]);
+  useEffect(() => {
+    monitorIndexRef.current = monitorIndex;
+  }, [monitorIndex]);
 
   useEffect(() => {
     // Pull frozen screenshot data from backend on mount
@@ -52,22 +62,34 @@ export function ScreenshotOverlay() {
     let cancelled = false;
 
     const loadScreenshot = async () => {
+      // Determine which monitor this overlay corresponds to
+      const currentWindow = getCurrentWindow();
+      const label = currentWindow.label;
+      const myMonitorIndex = parseInt(label.split("-").pop() || "0");
+
       const maxRetries = 3;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (cancelled) return;
         try {
-          const data = await getFrozenScreenshot();
+          const data = await getFrozenScreenshot(myMonitorIndex);
           if (cancelled) return;
+
+          const monitors: MonitorInfo[] = data.monitors ?? [];
+          const myMonitor = monitors[myMonitorIndex] ?? null;
 
           appLog.info(
             "[Overlay] 冻结截图获取成功, attempt=" +
               attempt +
+              ", monitor_index=" +
+              myMonitorIndex +
               ", mode=" +
               data.mode +
               ", image size=" +
               data.image.length +
               ", window_rects=" +
-              (data.window_rects?.length ?? 0)
+              (data.window_rects?.length ?? 0) +
+              ", monitor=" +
+              (myMonitor?.name ?? "unknown")
           );
 
           // Convert base64 to Blob URL — avoids WebKit issues with huge inline data URLs
@@ -80,9 +102,9 @@ export function ScreenshotOverlay() {
           const url = URL.createObjectURL(blob);
 
           // Preload: ensure image is fully decoded before displaying
-          await new Promise<void>((resolve, reject) => {
+          const imgEl = await new Promise<HTMLImageElement>((resolve, reject) => {
             const img = new Image();
-            img.onload = () => resolve();
+            img.onload = () => resolve(img);
             img.onerror = () => reject(new Error("Image decode failed"));
             img.src = url;
           });
@@ -92,15 +114,23 @@ export function ScreenshotOverlay() {
             return;
           }
 
+          appLog.info(
+            "[Overlay] 图片已加载, monitor_index=" + myMonitorIndex +
+              ", image=" + imgEl.naturalWidth + "x" + imgEl.naturalHeight +
+              ", dpr=" + window.devicePixelRatio
+          );
+
           blobUrlRef.current = url;
           setBackgroundUrl(url);
           setMode(data.mode);
           setWindowRects(data.window_rects ?? []);
+          setMonitor(myMonitor);
+          setMonitorIndex(myMonitorIndex);
 
           // Image is ready — now show the overlay window
           await getCurrentWindow().show();
           await getCurrentWindow().setFocus();
-          appLog.info("[Overlay] 覆盖层窗口已显示");
+          appLog.info("[Overlay] 覆盖层窗口已显示, label=" + label);
           return; // success
         } catch (e) {
           appLog.warn(
@@ -119,6 +149,8 @@ export function ScreenshotOverlay() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Close ALL overlay windows via event, then close self
+        emit("close-all-overlays");
         getCurrentWindow().close();
       }
     };
@@ -133,20 +165,44 @@ export function ScreenshotOverlay() {
     };
   }, []);
 
-  // Find the topmost window rect that contains the given point
+  // Find the topmost window rect that contains the given point.
+  // Converts local window coordinates to global logical coordinates for comparison.
   const findWindowAtPoint = useCallback(
-    (x: number, y: number): WindowRect | null => {
+    (localX: number, localY: number): WindowRect | null => {
+      const mon = monitorRef.current;
+      if (!mon) return null;
+      // Convert local CSS coords to global logical coords
+      const globalX = localX + mon.x / mon.scale_factor;
+      const globalY = localY + mon.y / mon.scale_factor;
+
       for (const rect of windowRectsRef.current) {
         if (
-          x >= rect.x &&
-          x <= rect.x + rect.width &&
-          y >= rect.y &&
-          y <= rect.y + rect.height
+          globalX >= rect.x &&
+          globalX <= rect.x + rect.width &&
+          globalY >= rect.y &&
+          globalY <= rect.y + rect.height
         ) {
           return rect;
         }
       }
       return null;
+    },
+    []
+  );
+
+  // Convert a global logical WindowRect to local coordinates for this monitor's overlay
+  const toLocalRect = useCallback(
+    (rect: WindowRect): { x: number; y: number; width: number; height: number } | null => {
+      const mon = monitorRef.current;
+      if (!mon) return null;
+      const monLogicalX = mon.x / mon.scale_factor;
+      const monLogicalY = mon.y / mon.scale_factor;
+      return {
+        x: rect.x - monLogicalX,
+        y: rect.y - monLogicalY,
+        width: rect.width,
+        height: rect.height,
+      };
     },
     []
   );
@@ -211,34 +267,48 @@ export function ScreenshotOverlay() {
 
     const downPos = mouseDownPosRef.current;
     const selection = selectionRef.current;
+    const mon = monitorRef.current;
 
-    if (!downPos || !selection) {
+    if (!downPos || !selection || !mon) {
       isDraggingRef.current = false;
       return;
     }
 
     const currentMode = modeRef.current;
+    const currentMonitorIndex = monitorIndexRef.current;
+    const dpr = window.devicePixelRatio || 1;
     const dx = selection.endX - downPos.x;
     const dy = selection.endY - downPos.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
 
+    // Monitor logical origin for coordinate conversion
+    const monLogicalX = mon.x / mon.scale_factor;
+    const monLogicalY = mon.y / mon.scale_factor;
+
     if (distance < 5) {
-      // Click (not drag) — use hovered window rect
+      // Click (not drag) — use hovered window rect (global logical coords)
       const currentHovered = hoveredRectRef.current;
       if (currentHovered) {
-        const dpr = window.devicePixelRatio || 1;
+        // Convert global logical rect to local image pixel coords
+        const imgX = Math.round((currentHovered.x - monLogicalX) * dpr);
+        const imgY = Math.round((currentHovered.y - monLogicalY) * dpr);
+        const imgW = Math.round(currentHovered.width * dpr);
+        const imgH = Math.round(currentHovered.height * dpr);
+
         appLog.info(
-          `[Overlay] 窗口点击选中: logical=(${currentHovered.x},${currentHovered.y},${currentHovered.width}x${currentHovered.height}), dpr=${dpr}, mode=${currentMode}`
+          `[Overlay] 窗口点击选中: monitor=${currentMonitorIndex}, global_logical=(${currentHovered.x},${currentHovered.y},${currentHovered.width}x${currentHovered.height}), image=(${imgX},${imgY},${imgW}x${imgH}), mode=${currentMode}`
         );
 
         await emit("region-selected", {
-          x: Math.round(currentHovered.x * dpr),
-          y: Math.round(currentHovered.y * dpr),
-          width: Math.round(currentHovered.width * dpr),
-          height: Math.round(currentHovered.height * dpr),
+          x: imgX,
+          y: imgY,
+          width: imgW,
+          height: imgH,
           mode: currentMode,
+          monitor_index: currentMonitorIndex,
         });
 
+        await emit("close-all-overlays");
         getCurrentWindow().close();
       } else {
         appLog.warn("[Overlay] 点击位置无窗口，已忽略");
@@ -250,7 +320,7 @@ export function ScreenshotOverlay() {
       return;
     }
 
-    // Drag selection
+    // Drag selection (local CSS coordinates)
     const x = Math.min(selection.startX, selection.endX);
     const y = Math.min(selection.startY, selection.endY);
     const width = Math.abs(selection.endX - selection.startX);
@@ -267,20 +337,26 @@ export function ScreenshotOverlay() {
       return;
     }
 
-    // Scale by devicePixelRatio for physical pixels
-    const dpr = window.devicePixelRatio || 1;
+    // Convert local CSS coords to image pixel coords (per-monitor native resolution)
+    const imgX = Math.round(x * dpr);
+    const imgY = Math.round(y * dpr);
+    const imgW = Math.round(width * dpr);
+    const imgH = Math.round(height * dpr);
+
     appLog.info(
-      `[Overlay] 选区完成: logical=(${x},${y},${width}x${height}), dpr=${dpr}, physical=(${Math.round(x * dpr)},${Math.round(y * dpr)},${Math.round(width * dpr)}x${Math.round(height * dpr)}), mode=${currentMode}`
+      `[Overlay] 选区完成: monitor=${currentMonitorIndex}, local_css=(${x},${y},${width}x${height}), image=(${imgX},${imgY},${imgW}x${imgH}), dpr=${dpr}, mode=${currentMode}`
     );
 
     await emit("region-selected", {
-      x: Math.round(x * dpr),
-      y: Math.round(y * dpr),
-      width: Math.round(width * dpr),
-      height: Math.round(height * dpr),
+      x: imgX,
+      y: imgY,
+      width: imgW,
+      height: imgH,
       mode: currentMode,
+      monitor_index: currentMonitorIndex,
     });
 
+    await emit("close-all-overlays");
     getCurrentWindow().close();
   }, []);
 
@@ -300,21 +376,25 @@ export function ScreenshotOverlay() {
       <div className="absolute inset-0 bg-black/30" />
 
       {/* Window hover highlight */}
-      {hoveredRect && !selRect && (
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            left: hoveredRect.x,
-            top: hoveredRect.y,
-            width: hoveredRect.width,
-            height: hoveredRect.height,
-            border: "2px solid #22c55e",
-            background: "rgba(34, 197, 94, 0.08)",
-            boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.3)",
-            zIndex: 10,
-          }}
-        />
-      )}
+      {hoveredRect && !selRect && (() => {
+        const local = toLocalRect(hoveredRect);
+        if (!local) return null;
+        return (
+          <div
+            className="absolute pointer-events-none"
+            style={{
+              left: local.x,
+              top: local.y,
+              width: local.width,
+              height: local.height,
+              border: "2px solid #22c55e",
+              background: "rgba(34, 197, 94, 0.08)",
+              boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.3)",
+              zIndex: 10,
+            }}
+          />
+        );
+      })()}
 
       {/* Selection rectangle */}
       {selRect && selRect.width > 0 && selRect.height > 0 && (
@@ -330,7 +410,7 @@ export function ScreenshotOverlay() {
               boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.3)",
             }}
           />
-          {/* Size indicator */}
+          {/* Size indicator — show image pixel dimensions */}
           <div
             className="absolute text-xs text-white bg-blue-500 px-2 py-0.5 rounded"
             style={{

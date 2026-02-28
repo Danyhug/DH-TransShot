@@ -67,22 +67,35 @@
 ### ScreenshotOverlay.tsx
 
 **状态：**
-- `backgroundImage` — 冻结截图 base64
+- `backgroundImage` — 当前显示器的冻结截图 base64
 - `mode` — 操作模式（"screenshot" / "ocr_translate"）
-- `windowRects` — 后端采集的可见窗口矩形列表（逻辑坐标）
+- `windowRects` — 后端采集的可见窗口矩形列表（全局逻辑坐标）
+- `monitor` — 当前覆盖层对应的显示器信息（`MonitorInfo`，含物理坐标、尺寸、scale_factor）
+- `monitorIndex` — 当前覆盖层对应的显示器索引
 - `isSelecting` — 是否正在选区操作（mousedown 后）
 - `isDragging` — 是否已开始拖拽（移动距离 >= 5px）
 - `selRect` — 拖拽选区矩形
-- `hoveredRect` — 鼠标悬停时匹配到的窗口矩形
+- `hoveredRect` — 鼠标悬停时匹配到的窗口矩形（全局逻辑坐标）
+
+**多显示器架构：**
+- 后端为每个显示器创建一个覆盖层窗口（label: `screenshot-overlay-0`, `screenshot-overlay-1`, ...）
+- 每个覆盖层窗口根据自身 label 的索引确定对应的显示器
+- 通过 `getFrozenScreenshot(monitorIndex)` 获取该显示器自己的原生分辨率截图
+- 背景图使用 `backgroundSize: cover` 显示（因为图像是该显示器的原生分辨率，与窗口大小完美匹配）
+- 避免了混合 DPI 时的坐标映射问题
+- 窗口矩形坐标（`windowRects`）是全局逻辑坐标，渲染时转换为当前覆盖层的局部坐标
+- 选区提交时将局部 CSS 坐标乘以 `devicePixelRatio` 得到图像像素坐标
+- ESC 或选区完成时，通过 `emit("close-all-overlays")` 通知后端关闭所有覆盖层
 
 **交互流程：**
-1. mount 时通过 `getFrozenScreenshot()` 获取冻结截图、mode 和 `window_rects`
-2. **悬停检测**（mousedown 前的 mousemove）：遍历 `windowRects`（前到后顺序），找到第一个包含光标的窗口，设置 `hoveredRect` 显示绿色高亮
-3. **mousedown** → 记录起点，开始选区
-4. **mousemove（拖拽中）** → 若移动距离 >= 5px，切换为拖拽模式（`isDragging=true`），清除窗口高亮，更新选区矩形
-5. **mouseup 点击**（距离 < 5px）→ 使用 `hoveredRect` 作为选中区域，乘以 DPR 转物理像素，emit `"region-selected"`，关闭窗口
-6. **mouseup 拖拽**（距离 >= 5px）→ 使用拖拽选区（最小 5×5），乘以 DPR 转物理像素，emit `"region-selected"`，关闭窗口
-7. `ESC` → 直接关闭窗口
+1. mount 时通过 `getFrozenScreenshot(monitorIndex)` 获取该显示器的截图、mode、`window_rects` 和 `monitors`
+2. 根据窗口 label 确定对应的 `MonitorInfo`
+3. **悬停检测**（mousedown 前的 mousemove）：将局部坐标转为全局逻辑坐标，遍历 `windowRects`（前到后顺序），找到第一个包含光标的窗口，设置 `hoveredRect` 显示绿色高亮（转换回局部坐标渲染）
+4. **mousedown** → 记录起点，开始选区
+5. **mousemove（拖拽中）** → 若移动距离 >= 5px，切换为拖拽模式（`isDragging=true`），清除窗口高亮，更新选区矩形
+6. **mouseup 点击**（距离 < 5px）→ 使用 `hoveredRect`（全局逻辑坐标），转换为局部坐标后乘以 DPR 得图像像素坐标，emit `"region-selected"`（含 `monitor_index`），关闭所有覆盖层
+7. **mouseup 拖拽**（距离 >= 5px）→ 使用拖拽选区（最小 5×5），CSS 坐标乘以 DPR 得图像像素坐标，emit `"region-selected"`（含 `monitor_index`），关闭所有覆盖层
+8. `ESC` → emit `"close-all-overlays"` 并关闭当前窗口
 
 **视觉效果：**
 - 30% 黑色半透明覆盖层

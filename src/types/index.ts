@@ -21,6 +21,7 @@ export interface RegionSelectEvent {
   width: number;
   height: number;
   mode: string;
+  monitor_index: number;
 }
 
 export interface WindowRect {
@@ -30,8 +31,18 @@ export interface WindowRect {
   height: number;
 }
 
+export interface MonitorInfo {
+  name: string;
+  x: number;      // physical pixel position
+  y: number;       // physical pixel position
+  width: number;   // physical pixel size
+  height: number;  // physical pixel size
+  scale_factor: number;
+}
+
 export interface ScreenshotInitEvent {
   image: string;
   mode: string;
   window_rects: WindowRect[];
+  monitors: MonitorInfo[];
 }

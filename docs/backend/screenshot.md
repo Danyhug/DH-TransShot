@@ -2,13 +2,13 @@
 
 ## 概述
 
-封装屏幕截图功能，提供全屏捕获、区域裁切和窗口矩形列表采集，输出 base64 编码的 PNG 图片。macOS 使用 Core Graphics FFI 直接调用系统 API。
+封装屏幕截图功能，提供逐显示器捕获、区域裁切和窗口矩形列表采集，输出 base64 编码的 PNG 图片。macOS 使用 Core Graphics FFI 直接调用系统 API。
 
 ## 文件清单
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/screenshot/mod.rs` | 模块声明，公开导出 `capture_full`、`capture_region_from_full`、`list_window_rects`、`WindowRect` |
+| `src-tauri/src/screenshot/mod.rs` | 模块声明，公开导出 `capture_monitors`、`capture_region_from_full`、`list_window_rects`、`WindowRect` |
 | `src-tauri/src/screenshot/capture.rs` | 截图逻辑实现 + 窗口矩形列表采集 |
 
 ## 核心逻辑
@@ -31,16 +31,24 @@
 - 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
 - **必须在覆盖层窗口创建前调用**，否则会包含覆盖层自身
 
-**`capture_full() -> anyhow::Result<String>`**
-- macOS：通过 `CGWindowListCreateImage` FFI 直接截图
-- 非 macOS：通过 `xcap::Monitor` 获取主显示器并执行 `capture_image()`
-- 返回 base64 编码的 PNG
-- 这是阻塞操作，调用方（commands）通过 `tokio::task::spawn_blocking` 包装
+**`capture_monitors(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>>`**
+- 逐显示器捕获截图，每个显示器返回一张独立的 base64 PNG
+- 参数为每个显示器的逻辑坐标 `(x, y, width, height)`
+- macOS：通过 `CGWindowListCreateImage` FFI，使用每个显示器的逻辑矩形截取
+  - 每张图像为该显示器的原生分辨率（2x Retina 显示器返回 2x 图像）
+  - 避免了混合 DPI 时单张合成图像的非均匀缩放问题
+- 非 macOS：通过 `xcap::Monitor::all()` 逐个捕获
+- 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
+
+**`cgimage_to_base64(cg_image) -> anyhow::Result<String>`**（macOS 内部函数）
+- 将 CGImage 转换为 base64 PNG
+- CG 返回 BGRA 格式，转换为 RGBA
+- 按行处理，正确处理 `bytes_per_row` 对齐
 
 **`capture_region_from_full(full_base64, x, y, width, height) -> anyhow::Result<String>`**
 - 解码 base64 PNG 为内存图像
 - 使用 `image::crop_imm()` 裁切指定矩形区域
-- 坐标和尺寸为物理像素
+- 坐标和尺寸为图像像素坐标（对应该显示器的原生分辨率）
 - 转换为 RGBA8 后重新编码为 base64 PNG
 
 **`image_to_base64(img: &RgbaImage) -> anyhow::Result<String>`**（内部函数）
@@ -50,9 +58,11 @@
 ### 数据流
 
 ```
-xcap 捕获 → RgbaImage → PNG 编码 → base64 字符串
-                          ↑
-base64 输入 → 解码 → DynamicImage → crop_imm → RgbaImage → PNG → base64
+capture_monitors() → 逐显示器截图 → Vec<base64 PNG>
+                                      ↓
+                     每个覆盖层窗口获取自己对应显示器的图像
+                                      ↓
+       base64 输入 → 解码 → DynamicImage → crop_imm → RgbaImage → PNG → base64
 
 CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → 前端
 ```
@@ -61,14 +71,14 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 
 - **外部依赖**：`image`（图像处理）、`base64`（编码）、`core-foundation`（macOS CF 类型）、`xcap`（非 macOS 截图）
 - **系统框架**：`CoreGraphics.framework`（macOS 截图 + 窗口列表）
-- **被依赖**：`commands/screenshot.rs` 调用 `capture_full()`、`capture_region_from_full()`、`list_window_rects()`
+- **被依赖**：`commands/screenshot.rs` 调用 `capture_monitors()`、`capture_region_from_full()`、`list_window_rects()`
 
 ## 修改指南
 
-- `capture_full()` 和 `list_window_rects()` 都是**阻塞调用**，必须通过 `spawn_blocking` 在异步上下文中调用
-- xcap 返回的截图使用**物理像素**坐标，与前端逻辑像素不同
+- `capture_monitors()` 和 `list_window_rects()` 都是**阻塞调用**，必须通过 `spawn_blocking` 在异步上下文中调用
+- 每个显示器的截图为该显示器的**原生分辨率**（如 2x Retina 返回 2× 物理像素图像）
 - `list_window_rects()` 返回的是**逻辑坐标**（points），与前端 CSS 坐标一致
-- 当前仅使用第一个显示器，多显示器支持需修改 monitor 选择逻辑
+- `capture_monitors()` 传入的坐标为逻辑坐标（`Tauri PhysicalPosition / scale_factor`）
 - base64 编解码使用 `base64::engine::general_purpose::STANDARD`，不带 URL safe
 - 图像格式固定为 PNG，如需更改需同步修改 OCR 模块对图像格式的验证
 - 窗口列表数据通过 `AppState.frozen_window_rects`（`serde_json::Value`）传递，避免 config 模块对 screenshot 模块的类型依赖

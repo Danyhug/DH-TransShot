@@ -20,18 +20,29 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 ### screenshot.rs
 
 **`start_region_select(app, state, mode) -> Result<(), String>`**
+- 关闭所有已有的 `screenshot-overlay-*` 覆盖层窗口
 - 关闭 settings 和 debug-log 子窗口（避免遮挡覆盖层）
-- 捕获全屏截图并存入 `AppState.frozen_screenshot`
-- 获取主显示器物理尺寸和缩放因子，计算逻辑尺寸
-- 创建覆盖层窗口（`screenshot.html`）：全屏、无边框、置顶、跳过任务栏
-- 覆盖层关闭时根据 mode 决定行为：
+- 采集窗口矩形列表（`list_window_rects()`），存入 `AppState.frozen_window_rects`
+- 收集所有显示器信息（`MonitorInfo`：名称、物理坐标、物理尺寸、scale_factor）
+- 计算每个显示器的逻辑矩形，调用 `capture_monitors()` 逐显示器截图
+- 将逐显示器截图（`Vec<String>`）存入 `AppState.frozen_screenshots`
+- 将显示器信息列表存入 `AppState.frozen_monitors`
+- 为每个显示器创建一个覆盖层窗口（label: `screenshot-overlay-0`, `screenshot-overlay-1`, ...）：
+  - 位置和尺寸对应该显示器
+  - 无边框、置顶、跳过任务栏、初始隐藏（前端加载完成后显示）
+- 主覆盖层（overlay-0）关闭时根据 mode 决定行为：
   - `screenshot` 模式：不做额外操作
   - `ocr_translate` 模式：show + focus 主窗口
+- 监听 `close-all-overlays` 事件，关闭所有覆盖层窗口
 
-**`capture_region(state, x, y, width, height) -> Result<String, String>`**
-- 从 `AppState.frozen_screenshot` 取出冻结截图
+**`get_frozen_screenshot(state, monitor_index) -> Result<serde_json::Value, String>`**
+- 参数 `monitor_index` 指定要获取哪个显示器的截图
+- 返回 JSON 对象含：`image`（该显示器的 base64 PNG）、`mode`、`window_rects`、`monitors`（显示器信息列表）
+
+**`capture_region(state, monitor_index, x, y, width, height) -> Result<String, String>`**
+- 从 `AppState.frozen_screenshots[monitor_index]` 取出该显示器的冻结截图
 - 调用 `screenshot::capture_region_from_full()` 裁切指定区域
-- 坐标为物理像素（前端已乘以 DPR）
+- 坐标为该显示器图像的像素坐标（前端已将 CSS 坐标 × DPR 转换为图像像素）
 
 ### ocr.rs
 
@@ -75,3 +86,4 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 新增命令后需在 `lib.rs` 的 `generate_handler!` 中注册，同时在前端 `invoke.ts` 添加对应封装
 - `AppState` 的 Mutex 锁应尽量缩小作用域，避免跨 await 持锁
 - `start_region_select` 中的窗口创建逻辑涉及 DPI 转换，修改时参考 `docs/architecture.md` 的 DPI 处理说明
+- `get_frozen_screenshot` 和 `capture_region` 均需要 `monitor_index` 参数来定位显示器
