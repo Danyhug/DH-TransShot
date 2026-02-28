@@ -1,17 +1,7 @@
 use crate::config::AppState;
+use crate::config::MonitorInfo;
 use log::{info, error};
 use tauri::{Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
-
-/// Monitor information passed to the frontend.
-#[derive(Debug, Clone, serde::Serialize)]
-struct MonitorInfo {
-    name: String,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    scale_factor: f64,
-}
 
 /// Close all existing screenshot overlay windows (labels matching "screenshot-overlay-*").
 fn close_all_overlays(app: &tauri::AppHandle) {
@@ -104,9 +94,8 @@ pub async fn start_region_select(
 
     // 4. Capture each monitor individually (native resolution per monitor)
     info!("[Screenshot] 开始逐显示器截图...");
-    let rects_clone = logical_rects.clone();
     let capture_result = tokio::task::spawn_blocking(move || {
-        crate::screenshot::capture_monitors(&rects_clone)
+        crate::screenshot::capture_monitors(&logical_rects)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -137,12 +126,8 @@ pub async fn start_region_select(
 
     // Store monitor info in AppState
     {
-        let monitors_json: Vec<serde_json::Value> = monitor_infos
-            .iter()
-            .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
-            .collect();
         let mut guard = state.frozen_monitors.lock().map_err(|e| e.to_string())?;
-        *guard = monitors_json;
+        *guard = monitor_infos.clone();
     }
 
     // 5. Create overlay windows for each monitor
@@ -208,9 +193,9 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 所有覆盖层窗口已创建, count={}", monitors.len());
 
-    // 6. Listen for close-all-overlays event
+    // 6. Listen for close-all-overlays event (once — auto-removed after first trigger)
     let app_clone = app.clone();
-    app.listen("close-all-overlays", move |_| {
+    app.once("close-all-overlays", move |_| {
         info!("[Screenshot] 收到 close-all-overlays 事件");
         close_all_overlays(&app_clone);
     });

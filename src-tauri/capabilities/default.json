@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/tauri/capabilities.schema.json",
   "identifier": "default",
   "description": "Default capabilities for DH-TransShot",
   "windows": ["main", "screenshot-overlay-*", "debug-log", "settings"],

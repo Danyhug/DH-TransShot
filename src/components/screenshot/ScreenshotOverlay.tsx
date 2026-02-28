@@ -128,8 +128,9 @@ export function ScreenshotOverlay() {
           setMonitorIndex(myMonitorIndex);
 
           // Image is ready — now show the overlay window
-          await getCurrentWindow().show();
-          await getCurrentWindow().setFocus();
+          const currentWin = getCurrentWindow();
+          await currentWin.show();
+          await currentWin.setFocus();
           appLog.info("[Overlay] 覆盖层窗口已显示, label=" + label);
           return; // success
         } catch (e) {
@@ -149,9 +150,8 @@ export function ScreenshotOverlay() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        // Close ALL overlay windows via event, then close self
+        // Close ALL overlay windows via backend event
         emit("close-all-overlays");
-        getCurrentWindow().close();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -309,7 +309,6 @@ export function ScreenshotOverlay() {
         });
 
         await emit("close-all-overlays");
-        getCurrentWindow().close();
       } else {
         appLog.warn("[Overlay] 点击位置无窗口，已忽略");
       }
@@ -357,7 +356,6 @@ export function ScreenshotOverlay() {
     });
 
     await emit("close-all-overlays");
-    getCurrentWindow().close();
   }, []);
 
   return (

@@ -83,12 +83,23 @@ pub fn merge_extra(body: &mut Value, extra: &str, tag: &str) {
     }
 }
 
+/// Monitor information for multi-monitor screenshot support.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MonitorInfo {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub scale_factor: f64,
+}
+
 pub struct AppState {
     pub settings: Mutex<Settings>,
     pub frozen_screenshots: Mutex<Vec<String>>,
     pub frozen_mode: Mutex<String>,
     pub frozen_window_rects: Mutex<serde_json::Value>,
-    pub frozen_monitors: Mutex<Vec<serde_json::Value>>,
+    pub frozen_monitors: Mutex<Vec<MonitorInfo>>,
     pub http_client: reqwest::Client,
 }
 

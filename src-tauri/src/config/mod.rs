@@ -1,3 +1,3 @@
 pub mod settings;
 
-pub use settings::{merge_extra, AppState, Settings};
+pub use settings::{merge_extra, AppState, MonitorInfo, Settings};

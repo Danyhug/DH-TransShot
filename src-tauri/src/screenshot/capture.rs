@@ -158,7 +158,7 @@ pub fn capture_monitors(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec
 
     #[cfg(not(target_os = "macos"))]
     {
-        capture_monitors_xcap()
+        capture_monitors_xcap(monitors)
     }
 }
 
@@ -288,19 +288,28 @@ fn cgimage_to_base64(cg_image: *const std::ffi::c_void) -> anyhow::Result<String
 }
 
 /// Non-macOS: Capture each monitor individually using xcap.
+/// NOTE: xcap discovers monitors via its own API; the `monitors` parameter (from Tauri)
+/// is logged for comparison but not used for capture. If ordering differs between
+/// Tauri and xcap, screenshots may be assigned to the wrong overlay.
 #[cfg(not(target_os = "macos"))]
-fn capture_monitors_xcap() -> anyhow::Result<Vec<String>> {
+fn capture_monitors_xcap(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>> {
     use xcap::Monitor;
 
-    let monitors = Monitor::all()?;
-    if monitors.is_empty() {
+    let xcap_monitors = Monitor::all()?;
+    if xcap_monitors.is_empty() {
         anyhow::bail!("No monitor found");
     }
 
-    info!("[Capture] xcap per-monitor 截图, 显示器数量={}", monitors.len());
+    info!("[Capture] xcap per-monitor 截图, tauri_count={}, xcap_count={}", monitors.len(), xcap_monitors.len());
+    if monitors.len() != xcap_monitors.len() {
+        info!("[Capture] ⚠ Tauri 与 xcap 显示器数量不一致，截图可能错位");
+    }
+    for (i, rect) in monitors.iter().enumerate() {
+        info!("[Capture] tauri 显示器[{}]: logical=({},{},{}x{})", i, rect.0, rect.1, rect.2, rect.3);
+    }
 
-    let mut results = Vec::with_capacity(monitors.len());
-    for (i, mon) in monitors.iter().enumerate() {
+    let mut results = Vec::with_capacity(xcap_monitors.len());
+    for (i, mon) in xcap_monitors.iter().enumerate() {
         let img = mon.capture_image()?;
         info!("[Capture] xcap 显示器[{}]: size={}x{}", i, img.width(), img.height());
         let base64 = image_to_base64(&img)?;
