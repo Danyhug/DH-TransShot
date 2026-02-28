@@ -157,6 +157,7 @@ pub async fn start_region_select(
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
+            .accept_first_mouse(true)
             .build()
         };
 
