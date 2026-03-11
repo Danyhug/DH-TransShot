@@ -47,8 +47,8 @@ impl Default for Settings {
         Self {
             base_url: default_base_url(),
             api_key: default_api_key(),
-            translation: ServiceConfig::with_model("Qwen/Qwen2.5-7B-Instruct"),
-            ocr: ServiceConfig::with_model("PaddlePaddle/PaddleOCR-VL-1.5"),
+            translation: ServiceConfig::with_model("tencent/Hunyuan-MT-7B"),
+            ocr: ServiceConfig::with_model("PaddlePaddle/PaddleOCR-VL"),
             tts: ServiceConfig::with_model("IndexTeam/IndexTTS-2"),
             source_language: "auto".to_string(),
             target_language: "zh-CN".to_string(),
