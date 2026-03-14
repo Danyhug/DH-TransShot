@@ -260,8 +260,12 @@ pub async fn capture_region(
             .ok_or_else(|| format!("No frozen screenshot for monitor {}", monitor_index))?
     };
 
-    let result = crate::screenshot::capture_region_from_full(&base64, x, y, width, height)
-        .map_err(|e| e.to_string());
+    let result = tokio::task::spawn_blocking(move || {
+        crate::screenshot::capture_region_from_full(&base64, x, y, width, height)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string());
     match &result {
         Ok(data) => info!("[Screenshot] capture_region 完成, 裁切后 base64 size={}", data.len()),
         Err(e) => error!("[Screenshot] capture_region 失败: {}", e),
