@@ -1,6 +1,7 @@
 use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -100,6 +101,7 @@ pub struct AppState {
     pub frozen_mode: Mutex<String>,
     pub frozen_window_rects: Mutex<serde_json::Value>,
     pub frozen_monitors: Mutex<Vec<MonitorInfo>>,
+    pub tts_cache: Mutex<TtsCache>,
     pub http_client: reqwest::Client,
 }
 
@@ -111,7 +113,41 @@ impl Default for AppState {
             frozen_mode: Mutex::new(String::new()),
             frozen_window_rects: Mutex::new(serde_json::Value::Array(vec![])),
             frozen_monitors: Mutex::new(Vec::new()),
+            tts_cache: Mutex::new(TtsCache::default()),
             http_client: reqwest::Client::new(),
         }
+    }
+}
+
+const TTS_CACHE_MAX_ENTRIES: usize = 64;
+
+#[derive(Debug, Default)]
+pub struct TtsCache {
+    entries: HashMap<String, String>,
+    order: VecDeque<String>,
+}
+
+impl TtsCache {
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.entries.get(key).cloned()
+    }
+
+    pub fn insert(&mut self, key: String, value: String) {
+        if self.entries.contains_key(&key) {
+            self.order.retain(|existing| existing != &key);
+        }
+        self.entries.insert(key.clone(), value);
+        self.order.push_back(key);
+
+        while self.order.len() > TTS_CACHE_MAX_ENTRIES {
+            if let Some(oldest_key) = self.order.pop_front() {
+                self.entries.remove(&oldest_key);
+            }
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
     }
 }

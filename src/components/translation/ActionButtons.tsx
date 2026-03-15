@@ -1,14 +1,48 @@
 import { useState, useRef } from "react";
 import { synthesizeSpeech } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 
 interface Props {
   text: string;
 }
 
+const TTS_CACHE_MAX_ENTRIES = 32;
+const ttsAudioCache = new Map<string, string>();
+const ttsInFlightCache = new Map<string, Promise<string>>();
+
+function normalizeTtsText(text: string) {
+  return text.trim().replace(/\r\n/g, "\n");
+}
+
+function getTtsCacheKey(baseUrl: string, model: string, extra: string, text: string) {
+  return `${baseUrl}\n${model}\n${extra}\n${text}`;
+}
+
+function getCachedAudio(key: string) {
+  const cached = ttsAudioCache.get(key);
+  if (!cached) return null;
+  ttsAudioCache.delete(key);
+  ttsAudioCache.set(key, cached);
+  return cached;
+}
+
+function setCachedAudio(key: string, value: string) {
+  if (ttsAudioCache.has(key)) {
+    ttsAudioCache.delete(key);
+  }
+  ttsAudioCache.set(key, value);
+  while (ttsAudioCache.size > TTS_CACHE_MAX_ENTRIES) {
+    const oldestKey = ttsAudioCache.keys().next().value;
+    if (!oldestKey) break;
+    ttsAudioCache.delete(oldestKey);
+  }
+}
+
 export function ActionButtons({ text }: Props) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const settings = useSettingsStore((state) => state.settings);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(text).catch(console.error);
@@ -16,6 +50,8 @@ export function ActionButtons({ text }: Props) {
 
   const speak = async () => {
     if (!text || isSpeaking) return;
+    const normalizedText = normalizeTtsText(text);
+    if (!normalizedText) return;
 
     // Stop any currently playing audio
     if (audioRef.current) {
@@ -24,10 +60,38 @@ export function ActionButtons({ text }: Props) {
     }
 
     setIsSpeaking(true);
-    appLog.info("[TTS] 开始语音合成, 文本长度=" + text.length);
+    appLog.info("[TTS] 准备朗读, 原始文本长度=" + text.length + ", 规范化后长度=" + normalizedText.length);
 
     try {
-      const base64Audio = await synthesizeSpeech(text);
+      const cacheKey = getTtsCacheKey(
+        settings.base_url,
+        settings.tts.model,
+        settings.tts.extra,
+        normalizedText
+      );
+      let base64Audio = getCachedAudio(cacheKey);
+
+      if (base64Audio) {
+        appLog.info("[TTS] 命中前端缓存");
+      } else {
+        let pending = ttsInFlightCache.get(cacheKey);
+        if (!pending) {
+          appLog.info("[TTS] 前端缓存未命中，发起后端语音请求");
+          pending = synthesizeSpeech(normalizedText);
+          ttsInFlightCache.set(cacheKey, pending);
+        } else {
+          appLog.info("[TTS] 复用进行中的语音请求");
+        }
+
+        try {
+          base64Audio = await pending;
+          setCachedAudio(cacheKey, base64Audio);
+          appLog.info("[TTS] 已写入前端缓存");
+        } finally {
+          ttsInFlightCache.delete(cacheKey);
+        }
+      }
+
       const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
       audioRef.current = audio;
 

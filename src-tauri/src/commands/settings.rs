@@ -18,12 +18,22 @@ pub async fn save_settings(
     state: State<'_, AppState>,
     settings: Settings,
 ) -> Result<(), String> {
-    info!("[Settings] save_settings, translation.model={}, ocr.model={}", settings.translation.model, settings.ocr.model);
+    info!(
+        "[Settings] save_settings, translation.model={}, ocr.model={}, tts.model={}",
+        settings.translation.model,
+        settings.ocr.model,
+        settings.tts.model
+    );
     // Update in-memory state
     {
         let mut current = state.settings.lock().map_err(|e| e.to_string())?;
         *current = settings.clone();
     }
+    {
+        let mut tts_cache = state.tts_cache.lock().map_err(|e| e.to_string())?;
+        tts_cache.clear();
+    }
+    info!("[Settings] TTS 缓存已清空");
     // Persist to store
     use tauri_plugin_store::StoreExt;
     let store = app.store("settings.json").map_err(|e| e.to_string())?;

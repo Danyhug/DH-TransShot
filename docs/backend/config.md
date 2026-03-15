@@ -58,6 +58,7 @@ pub struct AppState {
     pub frozen_mode: Mutex<String>,
     pub frozen_window_rects: Mutex<serde_json::Value>,
     pub frozen_monitors: Mutex<Vec<serde_json::Value>>,
+    pub tts_cache: Mutex<TtsCache>,
     pub http_client: reqwest::Client,
 }
 ```
@@ -69,6 +70,7 @@ pub struct AppState {
 | `frozen_mode` | `Mutex<String>` | 区域选择模式（`"screenshot"` / `"ocr_translate"`） |
 | `frozen_window_rects` | `Mutex<serde_json::Value>` | 冻结的窗口矩形列表（JSON 数组） |
 | `frozen_monitors` | `Mutex<Vec<serde_json::Value>>` | 冻结的显示器信息列表（MonitorInfo JSON） |
+| `tts_cache` | `Mutex<TtsCache>` | TTS 内存缓存，命中后直接返回已合成的 base64 音频 |
 | `http_client` | `reqwest::Client` | 共享 HTTP 客户端（连接池复用），供 OCR 和翻译模块使用 |
 
 ## 环境变量配置
@@ -96,6 +98,7 @@ DEFAULT_API_KEY=sk-your-api-key
   - `commands/translation.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.translation`、`http_client`
   - `commands/ocr.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.ocr`、`http_client`
   - `commands/settings.rs` 读写 `settings`
+  - `commands/tts.rs` 读取 `settings`、`tts_cache`、`http_client`
   - `translation/openai_compat.rs` 使用 `merge_extra`
   - `ocr/mod.rs` 使用 `merge_extra`
 
@@ -109,5 +112,6 @@ DEFAULT_API_KEY=sk-your-api-key
   - 旧版 settings.json（含 `llm` 字段）无法反序列化，会自动回退到默认配置
 - 新增全局共享状态字段需添加到 `AppState`，并在 `Default` impl 中初始化
 - `frozen_screenshots` 存储每个显示器的完整 base64 字符串，多显示器时占用大量内存
+- `tts_cache` 当前为进程内内存缓存，容量固定 64 条；涉及 TTS 输出参数的变更应考虑是否清空缓存或调整缓存键
 - **禁止将 API Key 硬编码到源码中**，必须通过 `.env` 文件或用户设置界面配置
 - 新增服务类型时，在 `Settings` 中添加对应的 `ServiceConfig` 字段，并更新前端类型和 UI

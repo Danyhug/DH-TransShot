@@ -23,6 +23,20 @@
 5. 检查 HTTP 状态码，非成功则返回错误
 6. 读取响应二进制数据，base64 编码后返回
 
+### commands/tts.rs
+
+**`synthesize_speech(state, text) -> Result<String, String>`**
+
+1. 从 `AppState.settings` 读取当前 TTS 配置
+2. 使用 `base_url + model + extra + text` 生成缓存键
+   - 文本在生成缓存键和请求前会先做规范化：`trim()` + `CRLF -> LF`
+3. 先查询 `AppState.tts_cache`
+4. 命中时直接返回缓存的 base64 音频，不发起网络请求
+5. 未命中时调用 `tts::synthesize()`
+6. 成功后写入缓存，供后续重复朗读复用
+
+缓存当前保存在内存中，最大 64 条，超出后按插入顺序淘汰旧项。保存设置时会清空缓存，避免模型、voice 或其它参数变化后继续复用旧音频。
+
 **辅助函数：**
 - `audio_speech_url(base_url)` — 拼接 `/v1/audio/speech` 端点 URL
 
@@ -58,4 +72,6 @@
 
 - 响应格式（`response_format`）当前固定为 `mp3`，如需支持其他格式可通过 `extra` 覆盖
 - 与 `api_client.rs` 共享相同的 auth 模式（Bearer token），但不共用 `send_chat_completion` 因为 TTS 端点返回二进制数据
+- TTS 缓存键依赖 `base_url`、`model`、`extra`、`text`；如果新增会影响音频输出的默认字段，必须同步纳入缓存键
+- 当前缓存为进程内内存缓存，应用重启后失效；如果后续需要跨启动复用，再引入磁盘缓存
 - 日志前缀：`[TTS]`

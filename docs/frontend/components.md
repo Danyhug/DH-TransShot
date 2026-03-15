@@ -153,6 +153,9 @@
 
 - **Copy**：`navigator.clipboard.writeText()`
 - **Speak**：调用后端 `synthesizeSpeech`（`lib/invoke.ts`）通过 OpenAI 兼容的 `/v1/audio/speech` 接口合成语音，使用设置中配置的 TTS 模型
+  - 文本在生成缓存键和请求前会先做规范化：`trim()` + `CRLF -> LF`
+  - 前端按 `base_url + tts.model + tts.extra + text` 做内存缓存，命中时直接复用已返回的 base64 音频
+  - 若同一段文本的语音请求仍在进行中，后续点击会复用进行中的 Promise，避免并发重复请求
   - 收到 base64 音频后，构建 `data:audio/mp3;base64,...` URL，用 `new Audio(url).play()` 播放
   - 请求中按钮 disabled，防止重复点击
   - 错误通过 `appLog.error()` 记录
