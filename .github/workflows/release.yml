@@ -15,8 +15,6 @@ jobs:
         include:
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
-          - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
           - platform: windows-latest
             args: ''
 
@@ -29,16 +27,17 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add macOS targets
+      - name: Add macOS target
         if: matrix.platform == 'macos-latest'
         run: |
           rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+          cache-targets: true
+          cache-on-failure: true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -51,10 +50,10 @@ jobs:
           version: 9
 
       - name: Install frontend dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build and release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # CI 环境无本地证书，使用 ad-hoc 签名覆盖 tauri.conf.json 中的 signingIdentity
@@ -62,7 +61,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'DH-TransShot ${{ github.ref_name }}'
-          releaseBody: 'See the assets to download and install this version.'
           releaseDraft: true
           prerelease: false
+          generateReleaseNotes: true
           args: ${{ matrix.args }}
