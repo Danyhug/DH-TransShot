@@ -27,6 +27,7 @@
 | `getSettings()` | — | `Promise<Settings>` | `get_settings` |
 | `saveSettings(settings)` | `settings: Settings` | `Promise<void>` | `save_settings` |
 | `readClipboard()` | — | `Promise<string>` | `read_clipboard` |
+| `readSelectedText()` | — | `Promise<string>` | `read_selected_text` |
 | `copyImageToClipboard(imageBase64)` | `imageBase64: string` | `Promise<void>` | `copy_image_to_clipboard` |
 
 **注意：** Tauri invoke 的参数名使用 camelCase，Tauri 会自动转换为后端的 snake_case。

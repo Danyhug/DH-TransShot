@@ -29,6 +29,7 @@
 **`handleAction(action)` 路由：**
 - `"screenshot"` → `startRegion("screenshot")`
 - `"ocr_translate"` → `startRegion("ocr_translate")`
+- `"clipboard_translate"` → `handleClipboardTranslate()`（模拟复制选中文字 → 读取剪贴板 → 翻译 → 显示主窗口）
 
 **`handleAction` 不再提前 show/focus 主窗口** — 主窗口的显示由覆盖层关闭回调根据 mode 决定。
 

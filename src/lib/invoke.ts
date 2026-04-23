@@ -46,6 +46,10 @@ export async function readClipboard(): Promise<string> {
   return invoke("read_clipboard");
 }
 
+export async function readSelectedText(): Promise<string> {
+  return invoke("read_selected_text");
+}
+
 export async function copyImageToClipboard(imageBase64: string): Promise<void> {
   return invoke("copy_image_to_clipboard", { imageBase64 });
 }

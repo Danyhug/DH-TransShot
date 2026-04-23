@@ -13,6 +13,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 | `src-tauri/src/commands/ocr.rs` | OCR 识别命令 |
 | `src-tauri/src/commands/translation.rs` | LLM 翻译命令 |
 | `src-tauri/src/commands/settings.rs` | 设置读写命令 |
+| `src-tauri/src/commands/clipboard.rs` | 剪贴板操作命令（读取、图片复制、选中文字复制读取） |
 | `src-tauri/src/commands/tts.rs` | TTS 语音合成命令 |
 
 ## 核心逻辑
@@ -73,6 +74,29 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 调用 `tts::synthesize()` 发送请求到 `/v1/audio/speech`
 - 返回 base64 编码的 mp3 音频数据
 - Mutex 锁的作用域尽量小，取完配置即释放
+
+### clipboard.rs
+
+**`read_clipboard() -> Result<String, String>`**
+- 使用 `pbpaste`（macOS）或 `Get-Clipboard`（Windows）读取剪贴板文本
+- 在 `spawn_blocking` 中执行以避免阻塞异步运行时
+
+**`copy_image_to_clipboard(image_base64) -> Result<(), String>`**
+- 解码 base64 PNG 到临时文件
+- 使用 `osascript`（macOS）或 PowerShell（Windows）将图片复制到剪贴板
+- 完成后清理临时文件
+
+**`read_selected_text() -> Result<String, String>`**
+- 读取当前焦点应用的选中文本
+- 优先使用 macOS Accessibility API（`AXSelectedText` 属性），直接读取选中文字
+- 若 Accessibility API 失败或返回空，回退到剪贴板模拟：
+  - 保存当前剪贴板内容
+  - 模拟 Cmd/Ctrl+C 复制选中文本
+  - 等待 150ms 让剪贴板更新
+  - 读取新剪贴板内容
+  - 恢复原剪贴板内容
+  - 若剪贴板未变化（没有选中文本），返回空字符串
+- 用于"翻译选中文本"功能（Alt+D）
 
 ## 依赖关系
 

@@ -42,6 +42,7 @@ pub fn run() {
             commands::settings::save_settings,
             commands::clipboard::read_clipboard,
             commands::clipboard::copy_image_to_clipboard,
+            commands::clipboard::read_selected_text,
             commands::tts::synthesize_speech,
         ])
         .setup(|app| {

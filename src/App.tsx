@@ -10,7 +10,7 @@ import { useTranslationStore } from "./stores/translationStore";
 import { appLog, openDebugWindow, setupMainWindowLogListeners } from "./stores/logStore";
 import { useScreenshot } from "./hooks/useScreenshot";
 import { useTranslation, cancelPendingTranslation } from "./hooks/useTranslation";
-import { captureRegion, recognizeText, copyImageToClipboard, getSettings } from "./lib/invoke";
+import { captureRegion, recognizeText, copyImageToClipboard, getSettings, readSelectedText } from "./lib/invoke";
 import type { RegionSelectEvent } from "./types";
 
 export default function App() {
@@ -165,6 +165,42 @@ export default function App() {
       case "ocr_translate":
         startRegion("ocr_translate");
         break;
+      case "clipboard_translate":
+        handleClipboardTranslate();
+        break;
+    }
+  };
+
+  const handleClipboardTranslate = async () => {
+    try {
+      appLog.info("[App] 翻译选中文本: 读取选中文字...");
+      cancelPendingTranslation();
+      const store = useTranslationStore.getState();
+      store.setSourceText("");
+      store.setTranslatedText("");
+      store.setError(null);
+      store.setIsTranslating(false);
+      store.setIsOcrProcessing(false);
+
+      const text = await readSelectedText();
+      if (!text.trim()) {
+        appLog.warn("[App] 未获取到选中文本");
+        return;
+      }
+
+      appLog.info("[App] 选中文字已获取, 文本长度=" + text.length);
+      setSourceText(text);
+
+      // Show main window
+      const appWindow = getCurrentWindow();
+      await appWindow.show();
+      await appWindow.setFocus();
+      appLog.info("[App] 主窗口已显示");
+
+      await translate(text);
+      appLog.info("[App] 选中文本翻译完成");
+    } catch (e) {
+      appLog.error("[App] 翻译选中文本失败: " + String(e));
     }
   };
 
@@ -173,6 +209,7 @@ export default function App() {
       <TitleBar
         onScreenshot={() => startRegion("screenshot")}
         onOcrTranslate={() => startRegion("ocr_translate")}
+        onClipboardTranslate={handleClipboardTranslate}
         onDebugLog={() => openDebugWindow()}
         onSettings={() => openSettingsWindow()}
       />

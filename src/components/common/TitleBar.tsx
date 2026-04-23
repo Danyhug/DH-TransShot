@@ -4,11 +4,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 interface Props {
   onScreenshot?: () => void;
   onOcrTranslate?: () => void;
+  onClipboardTranslate?: () => void;
   onDebugLog?: () => void;
   onSettings?: () => void;
 }
 
-export function TitleBar({ onScreenshot, onOcrTranslate, onDebugLog, onSettings }: Props) {
+export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, onDebugLog, onSettings }: Props) {
   const appWindow = getCurrentWindow();
   const [pinned, setPinned] = useState(false);
 
@@ -66,6 +67,20 @@ export function TitleBar({ onScreenshot, onOcrTranslate, onDebugLog, onSettings 
             <path d="M18 22v-4h4" />
             <path d="M6 6h10a2 2 0 0 1 2 2v10" />
             <path d="M18 18H8a2 2 0 0 1-2-2V6" />
+          </svg>
+        </button>
+
+        {/* Type - Clipboard Translate (translate selected text) */}
+        <button
+          onClick={onClipboardTranslate}
+          className={btnClass}
+          style={{ color: "var(--color-text-secondary)" }}
+          title="翻译选中文本 (⌥D)"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 7 4 4 20 4 20 7" />
+            <line x1="9" y1="20" x2="15" y2="20" />
+            <line x1="12" y1="4" x2="12" y2="20" />
           </svg>
         </button>
 
