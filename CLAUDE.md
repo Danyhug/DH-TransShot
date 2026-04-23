@@ -202,6 +202,22 @@ pnpm exec vite build    # 仅构建前端
 cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
 ```
 
+## 发版流程
+
+当用户说「发版」时，按以下流程执行：
+
+1. **确认当前版本**：查看最新 git tag（`git tag --sort=-v:refname | head -1`），新版本号递增 patch（如 v0.1.5 → v0.1.6）
+2. **确保所有改动已提交**：`git add .` + `git commit`
+3. **推送提交到远程**：`git push`
+4. **创建 annotated tag**：`git tag -a v<版本号> -m "v<版本号>: <简要描述>"`
+5. **推送 tag 到远程**：`git push origin v<版本号>`
+
+删除 tag（如打错）：
+```bash
+git tag -d v<版本号>              # 删除本地 tag
+git push origin --delete v<版本号> # 删除远程 tag
+```
+
 ## 构建产物
 
 - `src-tauri/target/release/bundle/macos/DH-TransShot.app`
