@@ -10,7 +10,7 @@ import { useTranslationStore } from "./stores/translationStore";
 import { appLog, openDebugWindow, setupMainWindowLogListeners } from "./stores/logStore";
 import { useScreenshot } from "./hooks/useScreenshot";
 import { useTranslation, cancelPendingTranslation } from "./hooks/useTranslation";
-import { captureRegion, recognizeText, copyImageToClipboard, getSettings, readSelectedText } from "./lib/invoke";
+import { captureRegion, recognizeText, copyImageToClipboard, getSettings, readSelectedText, readClipboard } from "./lib/invoke";
 import type { RegionSelectEvent } from "./types";
 
 export default function App() {
@@ -166,12 +166,12 @@ export default function App() {
         startRegion("ocr_translate");
         break;
       case "clipboard_translate":
-        handleClipboardTranslate();
+        handleSelectedTextTranslate();
         break;
     }
   };
 
-  const handleClipboardTranslate = async () => {
+  const handleSelectedTextTranslate = async () => {
     try {
       appLog.info("[App] 翻译选中文本: 读取选中文字...");
       cancelPendingTranslation();
@@ -201,6 +201,33 @@ export default function App() {
       appLog.info("[App] 选中文本翻译完成");
     } catch (e) {
       appLog.error("[App] 翻译选中文本失败: " + String(e));
+    }
+  };
+
+  const handleClipboardTranslate = async () => {
+    try {
+      appLog.info("[App] 翻译剪贴板: 读取剪贴板内容...");
+      cancelPendingTranslation();
+      const store = useTranslationStore.getState();
+      store.setSourceText("");
+      store.setTranslatedText("");
+      store.setError(null);
+      store.setIsTranslating(false);
+      store.setIsOcrProcessing(false);
+
+      const text = await readClipboard();
+      if (!text.trim()) {
+        appLog.warn("[App] 剪贴板为空");
+        return;
+      }
+
+      appLog.info("[App] 剪贴板内容已获取, 文本长度=" + text.length);
+      setSourceText(text);
+
+      await translate(text);
+      appLog.info("[App] 剪贴板翻译完成");
+    } catch (e) {
+      appLog.error("[App] 翻译剪贴板失败: " + String(e));
     }
   };
 

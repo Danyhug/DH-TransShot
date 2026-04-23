@@ -97,12 +97,23 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 快捷键触发
   → hotkey.rs emit("hotkey-action", "clipboard_translate")
   → App.tsx handleAction("clipboard_translate")
-  → handleClipboardTranslate()
+  → handleSelectedTextTranslate()
     → readSelectedText()
       → 优先: Accessibility API 读取选中文字 (AXSelectedText)
       → 回退: 保存剪贴板 → 模拟 Cmd/Ctrl+C → 读取 → 恢复原剪贴板
     → setSourceText() 填入源文本
     → 主窗口 show + focus
+    → translate() 执行翻译
+```
+
+### 翻译剪贴板内容（标题栏按钮）
+
+```
+标题栏按钮点击
+  → TitleBar onClipboardTranslate
+  → App.tsx handleClipboardTranslate()
+    → readClipboard() 直接读取剪贴板文本
+    → setSourceText() 填入源文本
     → translate() 执行翻译
 ```
 

@@ -70,12 +70,12 @@ export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, o
           </svg>
         </button>
 
-        {/* Type - Clipboard Translate (translate selected text) */}
+        {/* Type - Clipboard Translate */}
         <button
           onClick={onClipboardTranslate}
           className={btnClass}
           style={{ color: "var(--color-text-secondary)" }}
-          title="翻译选中文本 (⌥D)"
+          title="翻译剪贴板"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="4 7 4 4 20 4 20 7" />

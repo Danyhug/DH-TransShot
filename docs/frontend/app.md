@@ -29,7 +29,7 @@
 **`handleAction(action)` 路由：**
 - `"screenshot"` → `startRegion("screenshot")`
 - `"ocr_translate"` → `startRegion("ocr_translate")`
-- `"clipboard_translate"` → `handleClipboardTranslate()`（模拟复制选中文字 → 读取剪贴板 → 翻译 → 显示主窗口）
+- `"clipboard_translate"` → `handleSelectedTextTranslate()`（Accessibility API 读取选中文字 → 翻译 → 显示主窗口）
 
 **`handleAction` 不再提前 show/focus 主窗口** — 主窗口的显示由覆盖层关闭回调根据 mode 决定。
 
@@ -67,7 +67,7 @@
 ```
 
 **操作入口：**
-- 标题栏图标按钮触发 OCR 翻译、区域截图、设置
+- 标题栏图标按钮触发 OCR 翻译、区域截图、翻译剪贴板、设置
 - 全局快捷键和托盘菜单通过事件系统触发
 - Ctrl/Cmd+Enter 快捷键触发翻译
 
