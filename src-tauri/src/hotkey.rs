@@ -24,7 +24,7 @@ pub fn setup_hotkeys(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
                 info!("[Hotkey] 触发: Alt+S (ocr_translate)");
                 let _ = app.emit("hotkey-action", "ocr_translate");
             } else if shortcut == &clipboard_translate_shortcut {
-                info!("[Hotkey] 触发: Alt+D (clipboard_translate)");
+                info!("[Hotkey] 触发: Alt+Q (clipboard_translate)");
                 let _ = app.emit("hotkey-action", "clipboard_translate");
             }
         },

@@ -21,7 +21,7 @@
 | `show` | Show Window | 显示并聚焦主窗口 |
 | `screenshot` | 区域截图 (Alt+A) | emit `"tray-action"` → `"screenshot"` |
 | `ocr_translate` | 区域翻译 (Alt+S) | emit `"tray-action"` → `"ocr_translate"` |
-| `clipboard_translate` | 翻译选中文本 (Alt+D) | emit `"tray-action"` → `"clipboard_translate"` |
+| `clipboard_translate` | 翻译选中文本 (Alt+Q) | emit `"tray-action"` → `"clipboard_translate"` |
 | `sep` | ───────── | 分隔线（disabled） |
 | `quit` | Quit | `app.exit(0)` 退出应用 |
 

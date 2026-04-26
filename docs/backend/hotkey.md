@@ -20,7 +20,7 @@
 |--------|--------------|---------|
 | `Alt+A` (macOS: `⌥A`) | `Modifiers::ALT` + `Code::KeyA` | `"hotkey-action"` → `"screenshot"` |
 | `Alt+S` (macOS: `⌥S`) | `Modifiers::ALT` + `Code::KeyS` | `"hotkey-action"` → `"ocr_translate"` |
-| `Alt+D` (macOS: `⌥D`) | `Modifiers::ALT` + `Code::KeyD` | `"hotkey-action"` → `"clipboard_translate"` |
+| `Alt+Q` (macOS: `⌥Q`) | `Modifiers::ALT` + `Code::KeyQ` | `"hotkey-action"` → `"clipboard_translate"` |
 
 **实现：**
 - 使用 `tauri_plugin_global_shortcut` 插件的 `on_shortcuts` 方法批量注册

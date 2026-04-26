@@ -10,7 +10,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
     let screenshot = MenuItem::with_id(app, "screenshot", "区域截图 (Alt+A)", true, None::<&str>)?;
     let ocr_translate = MenuItem::with_id(app, "ocr_translate", "区域翻译 (Alt+S)", true, None::<&str>)?;
-    let clipboard_translate = MenuItem::with_id(app, "clipboard_translate", "翻译选中文本 (Alt+D)", true, None::<&str>)?;
+    let clipboard_translate = MenuItem::with_id(app, "clipboard_translate", "翻译选中文本 (Alt+Q)", true, None::<&str>)?;
     let separator = MenuItem::with_id(app, "sep", "─────────", false, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
