@@ -8,6 +8,26 @@ fn pbpaste_utf8() -> std::process::Command {
     cmd
 }
 
+#[cfg(target_os = "macos")]
+fn wait_for_option_key_release() -> bool {
+    const KCG_EVENT_FLAG_MASK_ALTERNATE: u64 = 1 << 19;
+
+    extern "C" {
+        fn CGEventSourceFlagsState(state_id: u32) -> u64;
+    }
+
+    for _ in 0..20 {
+        let flags = unsafe { CGEventSourceFlagsState(1) };
+        if flags & KCG_EVENT_FLAG_MASK_ALTERNATE == 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    warn!("[Clipboard] Option/Alt 仍处于按下状态，跳过模拟复制以避免触发系统/浏览器快捷键");
+    false
+}
+
 /// Read selected text from the currently focused application.
 /// Primary: macOS Accessibility API (AXSelectedText).
 /// Fallback: save clipboard → simulate Cmd/Ctrl+C → read → restore clipboard.
@@ -96,6 +116,10 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
     // Step 2: Simulate Cmd+C / Ctrl+C
     #[cfg(target_os = "macos")]
     {
+        if !wait_for_option_key_release() {
+            return Ok(String::new());
+        }
+
         let copy_result = std::process::Command::new("osascript")
             .args(["-e", "tell application \"System Events\" to keystroke \"c\" using command down"])
             .output()

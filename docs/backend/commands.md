@@ -91,6 +91,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 优先使用 macOS Accessibility API（`AXSelectedText` 属性），直接读取选中文字
 - 若 Accessibility API 失败或返回空，回退到剪贴板模拟：
   - 保存当前剪贴板内容
+  - macOS 下先确认 Option/Alt 已释放，避免 `Alt+Q` 后续模拟 `Cmd+C` 变成浏览器的 `Cmd+Option+C`
   - 模拟 Cmd/Ctrl+C 复制选中文本
   - 等待 150ms 让剪贴板更新
   - 读取新剪贴板内容

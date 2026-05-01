@@ -24,12 +24,13 @@
 
 **实现：**
 - 使用 `tauri_plugin_global_shortcut` 插件的 `on_shortcuts` 方法批量注册
+- 仅在 `ShortcutState::Released` 后延迟一小段时间 emit，避免按住 Alt/Option 期间继续执行后续模拟按键
 - 回调中通过引用比较确定触发的快捷键，emit 对应 payload
 - `Modifiers::ALT` 在 macOS 为 Option (⌥)，在 Windows 为 Alt
 
 ## 依赖关系
 
-- **依赖**：`tauri::Emitter`、`tauri_plugin_global_shortcut`（`Code`、`GlobalShortcutExt`、`Modifiers`、`Shortcut`）
+- **依赖**：`tauri::Emitter`、`tauri_plugin_global_shortcut`（`Code`、`GlobalShortcutExt`、`Modifiers`、`Shortcut`、`ShortcutState`）
 - **被依赖**：`lib.rs` 的 `setup` 阶段调用 `setup_hotkeys(app)`
 - **事件消费者**：前端 `App.tsx` 监听 `"hotkey-action"` 事件
 
