@@ -37,6 +37,7 @@
 - macOS：通过 `CGWindowListCreateImage` FFI，使用每个显示器的逻辑矩形截取
   - 每张图像为该显示器的原生分辨率（2x Retina 显示器返回 2x 图像）
   - 避免了混合 DPI 时单张合成图像的非均匀缩放问题
+  - 多显示器并行截图（`std::thread::spawn`），缩短总截图耗时
 - 非 macOS：通过 `xcap::Monitor::all()` 逐个捕获
 - 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
 
@@ -49,21 +50,32 @@
 - 解码 base64 PNG 为内存图像
 - 使用 `image::crop_imm()` 裁切指定矩形区域
 - 坐标和尺寸为图像像素坐标（对应该显示器的原生分辨率）
-- 转换为 RGBA8 后重新编码为 base64 PNG
+- 编码为 JPEG 后返回 base64（比 PNG 更小更快，截图无透明通道）
 - 调用方必须通过 `tokio::task::spawn_blocking` 包装，避免阻塞 async 运行时
+
+**`capture_region_bytes(full_base64, x, y, width, height) -> anyhow::Result<Vec<u8>>`**
+- 与 `capture_region_from_full` 相同的裁切逻辑，但返回原始 JPEG 字节（不做 base64 编码）
+- 用于 `capture_and_ocr` 命令，避免 base64 编码→解码的往返开销
+- 调用方必须通过 `tokio::task::spawn_blocking` 包装
 
 **`image_to_base64(img: &RgbaImage) -> anyhow::Result<String>`**（内部函数）
 - 使用 `Cursor<Vec<u8>>` 进行内存中 PNG 编码
 - 编码为 base64 标准格式
 
+**`image_to_jpeg_base64(img: &DynamicImage) -> anyhow::Result<String>`**（内部函数）
+- 转换为 RGB8 后使用 JPEG 编码器（quality=90）编码
+- 编码为 base64 标准格式
+
 ### 数据流
 
 ```
-capture_monitors() → 逐显示器截图 → Vec<base64 PNG>
-                                      ↓
+capture_monitors() → 逐显示器并行截图 → Vec<base64 PNG>
+                                          ↓
                      每个覆盖层窗口获取自己对应显示器的图像
-                                      ↓
-       base64 输入 → 解码 → DynamicImage → crop_imm → RgbaImage → PNG → base64
+                                          ↓
+       base64 PNG → 解码 → DynamicImage → crop_imm → RGB8 → JPEG → base64
+
+       capture_region_bytes() → 同上裁切，但返回原始 JPEG 字节（供 capture_and_ocr 使用）
 
 CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → 前端
 ```

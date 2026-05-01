@@ -1,5 +1,6 @@
 use base64::Engine;
-use image::ImageFormat;
+use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, ImageFormat};
 use log::info;
 use std::io::Cursor;
 
@@ -189,29 +190,37 @@ fn capture_monitors_macos(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<V
     #[derive(Copy, Clone)]
     struct CGRect { origin: CGPoint, size: CGSize }
 
-    let mut results = Vec::with_capacity(monitors.len());
+    // Capture all monitors in parallel — CGImage capture + BGRA→RGBA + PNG encode
+    let handles: Vec<_> = monitors
+        .iter()
+        .enumerate()
+        .map(|(i, &(lx, ly, lw, lh))| {
+            std::thread::spawn(move || {
+                info!("[Capture] macOS 截取显示器[{}]: logical=({},{},{}x{})", i, lx, ly, lw, lh);
+                let rect = CGRect {
+                    origin: CGPoint { x: lx, y: ly },
+                    size: CGSize { width: lw, height: lh },
+                };
+                unsafe {
+                    let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
+                    if cg_image.is_null() {
+                        anyhow::bail!("CGWindowListCreateImage returned null for monitor {} - check screen recording permission", i);
+                    }
+                    let base64 = cgimage_to_base64(cg_image)?;
+                    CFRelease(cg_image);
+                    info!("[Capture] 显示器[{}] 截图完成, base64 size={}", i, base64.len());
+                    Ok(base64)
+                }
+            })
+        })
+        .collect();
 
-    for (i, &(lx, ly, lw, lh)) in monitors.iter().enumerate() {
-        info!("[Capture] macOS 截取显示器[{}]: logical=({},{},{}x{})", i, lx, ly, lw, lh);
-
-        let rect = CGRect {
-            origin: CGPoint { x: lx, y: ly },
-            size: CGSize { width: lw, height: lh },
-        };
-
-        unsafe {
-            // kCGWindowListOptionOnScreenOnly = 1, kCGNullWindowID = 0
-            // kCGWindowImageDefault = 0 → native resolution for this display
-            let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
-            if cg_image.is_null() {
-                anyhow::bail!("CGWindowListCreateImage returned null for monitor {} - check screen recording permission", i);
-            }
-
-            let base64 = cgimage_to_base64(cg_image)?;
-            CFRelease(cg_image);
-            info!("[Capture] 显示器[{}] 截图完成, base64 size={}", i, base64.len());
-            results.push(base64);
-        }
+    let mut results = Vec::with_capacity(handles.len());
+    for (i, handle) in handles.into_iter().enumerate() {
+        let base64 = handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("Monitor {} capture thread panicked", i))??;
+        results.push(base64);
     }
 
     Ok(results)
@@ -319,7 +328,8 @@ fn capture_monitors_xcap(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Ve
     Ok(results)
 }
 
-/// Given a full-screen image as base64 PNG, crop the specified region.
+/// Given a full-screen image as base64 PNG, crop the specified region
+/// and return as base64 JPEG (smaller and faster than PNG for screenshots).
 pub fn capture_region_from_full(
     full_base64: &str,
     x: u32,
@@ -332,11 +342,39 @@ pub fn capture_region_from_full(
     let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
     info!("[Capture] 原图解码完成, 尺寸={}x{}", img.width(), img.height());
     let cropped = img.crop_imm(x, y, width, height);
-    image_to_base64(&cropped.to_rgba8())
+    image_to_jpeg_base64(&cropped)
 }
 
 fn image_to_base64(img: &image::RgbaImage) -> anyhow::Result<String> {
     let mut buf = Cursor::new(Vec::new());
     img.write_to(&mut buf, ImageFormat::Png)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(buf.into_inner()))
+}
+
+fn image_to_jpeg_base64(img: &image::DynamicImage) -> anyhow::Result<String> {
+    let rgb = img.to_rgb8();
+    let mut buf = Cursor::new(Vec::new());
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, 90);
+    encoder.encode_image(&DynamicImage::ImageRgb8(rgb))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(buf.into_inner()))
+}
+
+/// Given a full-screen image as base64 PNG, crop the specified region and return
+/// the cropped image bytes as JPEG (no base64 encoding — avoids double encoding
+/// when the caller only needs the raw image for further processing).
+pub fn capture_region_bytes(
+    full_base64: &str,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(full_base64)?;
+    let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
+    let cropped = img.crop_imm(x, y, width, height);
+    let rgb = cropped.to_rgb8();
+    let mut buf = Cursor::new(Vec::new());
+    let mut encoder = JpegEncoder::new_with_quality(&mut buf, 90);
+    encoder.encode_image(&DynamicImage::ImageRgb8(rgb))?;
+    Ok(buf.into_inner())
 }

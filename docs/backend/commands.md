@@ -42,7 +42,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 **`capture_region(state, monitor_index, x, y, width, height) -> Result<String, String>`**
 - 从 `AppState.frozen_screenshots[monitor_index]` 取出该显示器的冻结截图
-- 调用 `screenshot::capture_region_from_full()` 裁切指定区域
+- 调用 `screenshot::capture_region_from_full()` 裁切指定区域，返回 base64 JPEG
 - 坐标为该显示器图像的像素坐标（前端已将 CSS 坐标 × DPR 转换为图像像素）
 
 ### ocr.rs
@@ -50,6 +50,11 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 **`recognize_text(state, image_base64, language) -> Result<String, String>`**
 - 调用 `ocr::recognize()` 进行 OCR 识别
 - 平台无关的统一接口
+
+**`capture_and_ocr(state, monitor_index, x, y, width, height, language) -> Result<String, String>`**
+- 合并裁切+OCR 的单步命令，用于 `ocr_translate` 模式
+- 从 `AppState.frozen_screenshots` 取出冻结截图，在 `spawn_blocking` 中调用 `screenshot::capture_region_bytes()` 裁切为 JPEG 字节
+- 将 JPEG 字节直接传给 `ocr::recognize()`，避免了 `captureRegion` + `recognizeText` 分步调用时的 PNG 编码→base64→IPC→base64 解码→PNG 解码 往返开销
 
 ### translation.rs
 
@@ -101,7 +106,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 ## 依赖关系
 
-- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`、`tts`
+- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`、`tts`、`base64`
 - **被依赖**：`lib.rs` 中通过 `generate_handler!` 注册
 - **前端对应**：`src/lib/invoke.ts` 中的类型化封装函数
 

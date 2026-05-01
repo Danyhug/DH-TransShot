@@ -10,7 +10,7 @@ import { useTranslationStore } from "./stores/translationStore";
 import { appLog, openDebugWindow, setupMainWindowLogListeners } from "./stores/logStore";
 import { useScreenshot } from "./hooks/useScreenshot";
 import { useTranslation, cancelPendingTranslation } from "./hooks/useTranslation";
-import { captureRegion, recognizeText, copyImageToClipboard, getSettings, readSelectedText, readClipboard } from "./lib/invoke";
+import { captureRegion, captureAndOcr, copyImageToClipboard, getSettings, readSelectedText, readClipboard } from "./lib/invoke";
 import type { RegionSelectEvent } from "./types";
 
 export default function App() {
@@ -69,19 +69,18 @@ export default function App() {
       appLog.info(`[App] 收到区域选择事件: monitor=${monitor_index}, region=(${x},${y},${width}x${height}), mode=${mode}`);
 
       try {
-        const imageBase64 = await captureRegion(monitor_index, x, y, width, height);
-        appLog.info("[App] 区域裁切完成, base64 size=" + imageBase64.length);
-
         if (mode === "screenshot") {
-          // Screenshot mode: copy to clipboard, don't show main window
-          appLog.info("[App] screenshot 模式，复制图片到剪贴板...");
+          // Screenshot mode: crop → copy to clipboard, don't show main window
+          appLog.info("[App] screenshot 模式，裁切中...");
+          const imageBase64 = await captureRegion(monitor_index, x, y, width, height);
+          appLog.info("[App] 区域裁切完成, base64 size=" + imageBase64.length);
           await copyImageToClipboard(imageBase64);
           appLog.info("[App] 图片已复制到剪贴板");
         } else if (mode === "ocr_translate") {
-          // OCR + Translate mode: OCR → set source text → translate → show window
+          // OCR + Translate mode: merged capture+OCR → set source text → translate → show window
           const sessionId = ++ocrSessionRef.current;
           cancelPendingTranslation();
-          appLog.info("[App] ocr_translate 模式，开始 OCR... (session=" + sessionId + ")");
+          appLog.info("[App] ocr_translate 模式，开始 capture+OCR... (session=" + sessionId + ")");
           const store = useTranslationStore.getState();
           store.setSourceText("");
           store.setTranslatedText("");
@@ -90,7 +89,7 @@ export default function App() {
           store.setIsOcrProcessing(true);
 
           try {
-            const ocrText = await recognizeText(imageBase64, sourceLangRef.current);
+            const ocrText = await captureAndOcr(monitor_index, x, y, width, height, sourceLangRef.current);
             if (sessionId !== ocrSessionRef.current) {
               appLog.info("[App] OCR 结果已过期 (session=" + sessionId + "), 丢弃");
               return;

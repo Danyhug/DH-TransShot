@@ -26,6 +26,17 @@ export async function recognizeText(
   return invoke("recognize_text", { imageBase64, language });
 }
 
+export async function captureAndOcr(
+  monitorIndex: number,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  language: string
+): Promise<string> {
+  return invoke("capture_and_ocr", { monitorIndex, x, y, width, height, language });
+}
+
 export async function translateText(
   text: string,
   sourceLang: string,

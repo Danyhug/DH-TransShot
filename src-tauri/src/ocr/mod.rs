@@ -17,9 +17,8 @@ struct PreparedOcrImage {
     original_height: u32,
 }
 
-fn prepare_ocr_image(image_base64: &str) -> anyhow::Result<PreparedOcrImage> {
-    let bytes = base64::engine::general_purpose::STANDARD.decode(image_base64)?;
-    let img = image::load_from_memory(&bytes)?;
+fn prepare_ocr_image_from_bytes(bytes: &[u8]) -> anyhow::Result<PreparedOcrImage> {
+    let img = image::load_from_memory(bytes)?;
     let (original_width, original_height) = img.dimensions();
     let longest_edge = original_width.max(original_height);
 
@@ -64,9 +63,10 @@ fn prepare_ocr_image(image_base64: &str) -> anyhow::Result<PreparedOcrImage> {
 }
 
 /// Perform OCR using a vision-language model via OpenAI-compatible API.
+/// Accepts raw image bytes (any format supported by `image::load_from_memory`).
 pub async fn recognize(
     client: &reqwest::Client,
-    image_base64: &str,
+    image_bytes: &[u8],
     _language: &str,
     base_url: &str,
     api_key: &str,
@@ -74,12 +74,12 @@ pub async fn recognize(
     extra: &str,
 ) -> anyhow::Result<String> {
     let url = crate::api_client::chat_completions_url(base_url);
-    let original_base64_size = image_base64.len();
-    let image_base64 = image_base64.to_string();
-    let prepared = tokio::task::spawn_blocking(move || prepare_ocr_image(&image_base64))
+    let original_size = image_bytes.len();
+    let owned_bytes = image_bytes.to_vec();
+    let prepared = tokio::task::spawn_blocking(move || prepare_ocr_image_from_bytes(&owned_bytes))
         .await??;
     info!(
-        "[OCR] 发送请求到 {}, model={}, image {}x{} -> {}x{}, media_type={}, base64 size={} -> {}",
+        "[OCR] 发送请求到 {}, model={}, image {}x{} -> {}x{}, media_type={}, size={} -> {}",
         url,
         model,
         prepared.original_width,
@@ -87,7 +87,7 @@ pub async fn recognize(
         prepared.width,
         prepared.height,
         prepared.media_type,
-        original_base64_size,
+        original_size,
         prepared.base64_data.len()
     );
 
