@@ -66,44 +66,76 @@
 
 ### ScreenshotOverlay.tsx
 
-**状态：**
-- `backgroundImage` — 当前显示器的冻结截图 base64
+**双阶段架构：**
+- `phase: "select"` — 选区阶段（原有逻辑，冻结截图 + 拖拽/窗口选择）
+- `phase: "annotate"` — 标注阶段（仅 screenshot 模式，选区后进入）
+
+**选区阶段状态：**
+- `backgroundUrl` — 冻结截图 blob URL
 - `mode` — 操作模式（"screenshot" / "ocr_translate"）
 - `windowRects` — 后端采集的可见窗口矩形列表（全局逻辑坐标）
-- `monitor` — 当前覆盖层对应的显示器信息（`MonitorInfo`，含物理坐标、尺寸、scale_factor）
+- `monitor` — 当前覆盖层对应的显示器信息（`MonitorInfo`）
 - `monitorIndex` — 当前覆盖层对应的显示器索引
-- `isSelecting` — 是否正在选区操作（mousedown 后）
-- `isDragging` — 是否已开始拖拽（移动距离 >= 5px）
 - `selRect` — 拖拽选区矩形
-- `hoveredRect` — 鼠标悬停时匹配到的窗口矩形（全局逻辑坐标）
+- `hoveredRect` — 鼠标悬停时匹配到的窗口矩形
+
+**标注阶段状态：**
+- `croppedImageEl` — 裁切后的截图 Image 元素（canvas 渲染背景）
+- `tool` — 当前工具（"rect" / "arrow" / "pen" / "text"）
+- `color` — 标注颜色（预设：红/蓝/绿/黄/白）
+- `shapes` — 已确认的标注图形列表（支持撤销）
+- `currentShape` — 正在绘制的图形
+- `textInput` — 文字输入状态（位置 + 当前输入值）
+
+**Shape 类型：**
+- `rect` — 矩形（x, y, w, h, color, strokeWidth）
+- `arrow` — 箭头（x1, y1, x2, y2, color, strokeWidth）
+- `pen` — 画笔（points[], color, strokeWidth）
+- `text` — 文字（x, y, text, color, fontSize）
 
 **多显示器架构：**
 - 后端为每个显示器创建一个覆盖层窗口（label: `screenshot-overlay-0`, `screenshot-overlay-1`, ...）
 - 每个覆盖层窗口根据自身 label 的索引确定对应的显示器
 - 通过 `getFrozenScreenshot(monitorIndex)` 获取该显示器自己的原生分辨率截图
-- 背景图使用 `backgroundSize: cover` 显示（因为图像是该显示器的原生分辨率，与窗口大小完美匹配）
-- 避免了混合 DPI 时的坐标映射问题
-- 窗口矩形坐标（`windowRects`）是全局逻辑坐标，渲染时转换为当前覆盖层的局部坐标
+- 背景图使用 `backgroundSize: cover` 显示
 - 选区提交时将局部 CSS 坐标乘以 `devicePixelRatio` 得到图像像素坐标
 - ESC 或选区完成时，通过 `emit("close-all-overlays")` 通知后端关闭所有覆盖层
 
-**交互流程：**
-1. mount 时通过 `getFrozenScreenshot(monitorIndex)` 获取该显示器的截图、mode、`window_rects` 和 `monitors`
-2. 根据窗口 label 确定对应的 `MonitorInfo`
-3. **悬停检测**（mousedown 前的 mousemove）：将局部坐标转为全局逻辑坐标，遍历 `windowRects`（前到后顺序），找到第一个包含光标的窗口，设置 `hoveredRect` 显示绿色高亮（转换回局部坐标渲染）
-4. **mousedown** → 记录起点，开始选区
-5. **mousemove（拖拽中）** → 若移动距离 >= 5px，切换为拖拽模式（`isDragging=true`），清除窗口高亮，更新选区矩形
-6. **mouseup 点击**（距离 < 5px）→ 使用 `hoveredRect`（全局逻辑坐标），转换为局部坐标后乘以 DPR 得图像像素坐标，emit `"region-selected"`（含 `monitor_index`），关闭所有覆盖层
-7. **mouseup 拖拽**（距离 >= 5px）→ 使用拖拽选区（最小 5×5），CSS 坐标乘以 DPR 得图像像素坐标，emit `"region-selected"`（含 `monitor_index`），关闭所有覆盖层
-8. `ESC` → emit `"close-all-overlays"` 并关闭当前窗口
+**交互流程（选区阶段）：**
+1. mount 时通过 `getFrozenScreenshot(monitorIndex)` 获取截图、mode、窗口矩形、显示器信息
+2. 悬停检测：mousemove 时查找光标下的窗口，显示绿色高亮
+3. mousedown → 记录起点；mousemove → 拖拽选区；mouseup → 完成选区
+4. screenshot 模式：选区完成后进入标注阶段（前端裁切选区图片）
+5. ocr_translate 模式：选区完成后直接 emit `"region-selected"` 关闭覆盖层
 
-**视觉效果：**
+**交互流程（标注阶段 — 仅 screenshot 模式）：**
+1. 从冻结截图中前端裁切选区区域，创建裁切后的 Image 元素
+2. Canvas 渲染：背景图 + 已有标注 + 当前绘制中的图形
+3. 工具栏浮动在画面上方：矩形/箭头/画笔/文字工具切换 + 颜色选择 + 确认/取消
+4. 矩形/箭头：mousedown 起点 → mousemove 更新 → mouseup 确认
+5. 画笔：mousedown 开始 → mousemove 逐点收集 → mouseup 整条笔画确认
+6. 文字：mousedown 弹出定位输入框 → Enter/blur 确认
+7. 确认（Enter / ✓）：canvas 导出 base64，emit `"region-selected"` 附带 `annotatedImage`
+8. 取消（ESC / ✗）：关闭覆盖层，不 emit
+9. 撤销（Ctrl+Z）：移除最后一个 shape
+
+**键盘快捷键（标注阶段）：**
+- `Enter` — 确认标注
+- `Escape` — 取消
+- `Ctrl/Cmd+Z` — 撤销
+- `1` `2` `3` `4` — 切换工具（rect/arrow/pen/text）
+
+**视觉效果（选区阶段）：**
 - 30% 黑色半透明覆盖层
-- **窗口高亮**：`border: 2px solid #22c55e`（绿色边框）+ `background: rgba(34,197,94,0.08)`（淡绿色填充）+ `box-shadow: 0 0 0 9999px` 镂空效果
-- **拖拽选区**：蓝色边框 + `box-shadow: 0 0 0 9999px` 遮罩镂空效果
+- **窗口高亮**：绿色边框 + 淡绿填充 + box-shadow 镂空
+- **拖拽选区**：蓝色边框 + box-shadow 遮罩镂空
 - 选区上方显示物理像素尺寸
-- 开始拖拽后窗口高亮消失
-- 无选区且无悬停窗口时显示操作提示
+
+**视觉效果（标注阶段）：**
+- 冻结截图全屏背景，无遮罩
+- Canvas 限定在选区区域内（maxWidth=selRect.width, maxHeight=selRect.height），圆角 + 白色半透明边框
+- 工具栏：深色半透明圆角条，紧贴截图下方，含工具图标、颜色色块、确认/取消按钮
+- 文字输入框：黑底半透明，定位在点击位置
 
 ### SettingsPanel.tsx
 

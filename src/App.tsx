@@ -70,11 +70,17 @@ export default function App() {
 
       try {
         if (mode === "screenshot") {
-          // Screenshot mode: crop → copy to clipboard, don't show main window
-          appLog.info("[App] screenshot 模式，裁切中...");
-          const imageBase64 = await captureRegion(monitor_index, x, y, width, height);
-          appLog.info("[App] 区域裁切完成, base64 size=" + imageBase64.length);
-          await copyImageToClipboard(imageBase64);
+          if (event.payload.annotatedImage) {
+            // Annotation mode: frontend already rendered the annotated image
+            appLog.info("[App] screenshot 标注模式，直接使用标注图片, base64 size=" + event.payload.annotatedImage.length);
+            await copyImageToClipboard(event.payload.annotatedImage);
+          } else {
+            // Plain screenshot: crop → copy to clipboard
+            appLog.info("[App] screenshot 模式，裁切中...");
+            const imageBase64 = await captureRegion(monitor_index, x, y, width, height);
+            appLog.info("[App] 区域裁切完成, base64 size=" + imageBase64.length);
+            await copyImageToClipboard(imageBase64);
+          }
           appLog.info("[App] 图片已复制到剪贴板");
         } else if (mode === "ocr_translate") {
           // OCR + Translate mode: merged capture+OCR → set source text → translate → show window

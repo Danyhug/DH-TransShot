@@ -154,6 +154,7 @@ pub async fn start_region_select(
             .inner_size(logical_w, logical_h)
             .position(pos.x as f64 / scale, pos.y as f64 / scale)
             .decorations(false)
+            .transparent(true)
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)

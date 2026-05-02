@@ -22,6 +22,7 @@ export interface RegionSelectEvent {
   height: number;
   mode: string;
   monitor_index: number;
+  annotatedImage?: string;
 }
 
 export interface WindowRect {
