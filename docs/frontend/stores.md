@@ -47,15 +47,23 @@
 | `settings` | Settings | 默认配置 | 完整用户设置 |
 
 **默认值常量（导出）：**
-- `emptyService` — 空 ServiceConfig（所有字段为空字符串）
-- `defaultSettings` — 完整默认 Settings（复用 `emptyService`），可被其他文件导入
+- `defaultSettings` — 完整默认 Settings，可被其他文件导入
 
 **默认 Settings：**
 ```typescript
 {
-  translation: { base_url: "", api_key: "", model: "", extra: "" },
-  ocr: { base_url: "", api_key: "", model: "", extra: "" },
-  tts: { base_url: "", api_key: "", model: "", extra: "" },
+  translation: {
+    model: "tencent/Hunyuan-MT-7B",
+    extra: '{\n  "temperature": 0.3,\n  "top_p": 0.9,\n  "max_tokens": 4096\n}',
+  },
+  ocr: {
+    model: "PaddlePaddle/PaddleOCR-VL-1.5",
+    extra: '{\n  "temperature": 0.1,\n  "top_p": 0.9,\n  "max_tokens": 4096\n}',
+  },
+  tts: {
+    model: "FunAudioLLM/CosyVoice2-0.5B",
+    extra: '{\n  "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",\n  "speed": 1.0,\n  "response_format": "mp3",\n  "sample_rate": 44100\n}',
+  },
   source_language: "auto",
   target_language: "zh-CN",
   hotkey_screenshot: "Alt+A",
@@ -63,7 +71,7 @@
 }
 ```
 
-前端服务配置默认为空字符串，实际值在主窗口 `App.tsx` 初始化或监听 `settings-saved` 事件时通过 `getSettings()` 从后端获取。
+前端默认值与后端 `config/settings.rs` 的 `Default` impl 保持一致，包含优化过的 extra 参数。实际值在主窗口 `App.tsx` 初始化或监听 `settings-saved` 事件时通过 `getSettings()` 从后端获取。
 
 **类型定义：**
 - `ServiceName = "translation" | "ocr" | "tts"` — 服务名称联合类型

@@ -11,10 +11,10 @@ pub struct ServiceConfig {
 }
 
 impl ServiceConfig {
-    fn with_model(model: &str) -> Self {
+    fn with_model_and_extra(model: &str, extra: &str) -> Self {
         Self {
             model: model.to_string(),
-            extra: String::new(),
+            extra: extra.to_string(),
         }
     }
 }
@@ -48,9 +48,31 @@ impl Default for Settings {
         Self {
             base_url: default_base_url(),
             api_key: default_api_key(),
-            translation: ServiceConfig::with_model("tencent/Hunyuan-MT-7B"),
-            ocr: ServiceConfig::with_model("PaddlePaddle/PaddleOCR-VL-1.5"),
-            tts: ServiceConfig::with_model("fnlp/MOSS-TTSD-v0.5"),
+            translation: ServiceConfig::with_model_and_extra(
+                "tencent/Hunyuan-MT-7B",
+                r#"{
+  "temperature": 0.3,
+  "top_p": 0.9,
+  "max_tokens": 4096
+}"#,
+            ),
+            ocr: ServiceConfig::with_model_and_extra(
+                "PaddlePaddle/PaddleOCR-VL-1.5",
+                r#"{
+  "temperature": 0.1,
+  "top_p": 0.9,
+  "max_tokens": 4096
+}"#,
+            ),
+            tts: ServiceConfig::with_model_and_extra(
+                "FunAudioLLM/CosyVoice2-0.5B",
+                r#"{
+  "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",
+  "speed": 1.0,
+  "response_format": "mp3",
+  "sample_rate": 44100
+}"#,
+            ),
             source_language: "auto".to_string(),
             target_language: "zh-CN".to_string(),
             hotkey_screenshot: "Alt+A".to_string(),

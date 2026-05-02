@@ -30,9 +30,9 @@
 |------|------|--------|------|
 | `base_url` | String | 环境变量 `DEFAULT_BASE_URL`，未设置时 `"https://api.siliconflow.cn"` | 全局共享 API 基础 URL（翻译/OCR/TTS 共用） |
 | `api_key` | String | 环境变量 `DEFAULT_API_KEY`，未设置时 `""` | 全局共享 API 密钥（翻译/OCR/TTS 共用） |
-| `translation` | ServiceConfig | model=`"Qwen/Qwen2.5-7B-Instruct"` | 翻译服务配置 |
-| `ocr` | ServiceConfig | model=`"PaddlePaddle/PaddleOCR-VL-1.5"` | OCR 服务配置 |
-| `tts` | ServiceConfig | model=`""` | TTS 服务配置（预留） |
+| `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096}` | 翻译服务配置 |
+| `ocr` | ServiceConfig | model=`"PaddlePaddle/PaddleOCR-VL-1.5"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096}` | OCR 服务配置 |
+| `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置 |
 | `source_language` | String | `"auto"` | 源语言 |
 | `target_language` | String | `"zh-CN"` | 目标语言 |
 | `hotkey_screenshot` | String | `"Alt+A"` | 区域截图快捷键 |
@@ -87,7 +87,7 @@ DEFAULT_API_KEY=sk-your-api-key
 
 `lib.rs` 在 `run()` 函数最前面调用 `dotenvy::dotenv()` 加载环境变量，随后 `Settings::default()` 通过 `std::env::var()` 读取顶层 `base_url` 和 `api_key`。
 
-每个服务的 model 有独立的硬编码默认值（翻译：`Qwen/Qwen2.5-7B-Instruct`，OCR：`PaddlePaddle/PaddleOCR-VL-1.5`，TTS：空）。
+每个服务有独立的默认配置（翻译：`tencent/Hunyuan-MT-7B`，OCR：`PaddlePaddle/PaddleOCR-VL-1.5`，TTS：`FunAudioLLM/CosyVoice2-0.5B`），且包含优化过的 extra 参数默认值。
 
 ## 依赖关系
 
