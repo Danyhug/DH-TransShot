@@ -26,6 +26,7 @@ const DEFAULT_STROKE_WIDTH = 3;
 const ANNOTATION_TOOLBAR_HEIGHT = 52;
 const ANNOTATION_TOOLBAR_MIN_WIDTH = 360;
 const ANNOTATION_PICKER_HEIGHT = 188;
+const COLOR_TOOLTIP_OFFSET = 14;
 
 // --- Selection types ---
 
@@ -53,6 +54,7 @@ export function ScreenshotOverlay() {
     height: number;
   } | null>(null);
   const [hoveredRect, setHoveredRect] = useState<WindowRect | null>(null);
+  const [hoverColor, setHoverColor] = useState<{ x: number; y: number; hex: string; copied: boolean } | null>(null);
 
   // --- Annotate phase state ---
   const [croppedImageEl, setCroppedImageEl] = useState<HTMLImageElement | null>(null);
@@ -81,6 +83,10 @@ export function ScreenshotOverlay() {
   const monitorRef = useRef<MonitorInfo | null>(null);
   const monitorIndexRef = useRef(0);
   const blobUrlRef = useRef<string | null>(null);
+  const screenshotCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const screenshotCanvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const hoverColorRef = useRef<typeof hoverColor>(null);
+  const screenshotImageSizeRef = useRef<{ width: number; height: number } | null>(null);
 
   // --- Refs for annotate phase ---
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -92,6 +98,7 @@ export function ScreenshotOverlay() {
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
   const textInputRef = useRef<typeof textInput>(null);
+  const annotateSourceRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
 
   // Keep refs in sync
   useEffect(() => { windowRectsRef.current = windowRects; }, [windowRects]);
@@ -99,6 +106,7 @@ export function ScreenshotOverlay() {
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { monitorRef.current = monitor; }, [monitor]);
   useEffect(() => { monitorIndexRef.current = monitorIndex; }, [monitorIndex]);
+  useEffect(() => { hoverColorRef.current = hoverColor; }, [hoverColor]);
   useEffect(() => { shapesRef.current = shapes; }, [shapes]);
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
@@ -150,6 +158,19 @@ export function ScreenshotOverlay() {
             img.onerror = () => reject(new Error("Image decode failed"));
             img.src = url;
           });
+
+          const sampleCanvas = document.createElement("canvas");
+          sampleCanvas.width = imgEl.naturalWidth;
+          sampleCanvas.height = imgEl.naturalHeight;
+          const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+          if (sampleCtx) {
+            sampleCtx.drawImage(imgEl, 0, 0);
+            screenshotCanvasRef.current = sampleCanvas;
+            screenshotCanvasCtxRef.current = sampleCtx;
+            screenshotImageSizeRef.current = { width: imgEl.naturalWidth, height: imgEl.naturalHeight };
+          } else {
+            appLog.warn("[Overlay] 取色 canvas context 创建失败");
+          }
 
           if (cancelled) {
             URL.revokeObjectURL(url);
@@ -207,6 +228,9 @@ export function ScreenshotOverlay() {
       if (croppedBlobUrlRef.current) {
         URL.revokeObjectURL(croppedBlobUrlRef.current);
       }
+      screenshotCanvasRef.current = null;
+      screenshotCanvasCtxRef.current = null;
+      screenshotImageSizeRef.current = null;
     };
   }, []);
 
@@ -250,13 +274,76 @@ export function ScreenshotOverlay() {
     []
   );
 
+  const getMonitorScale = useCallback(() => {
+    return monitorRef.current?.scale_factor || window.devicePixelRatio || 1;
+  }, []);
+
+  const getImageScale = useCallback(() => {
+    const imageSize = screenshotImageSizeRef.current;
+    if (!imageSize || window.innerWidth <= 0 || window.innerHeight <= 0) {
+      const fallback = getMonitorScale();
+      return { scaleX: fallback, scaleY: fallback };
+    }
+
+    return {
+      scaleX: imageSize.width / window.innerWidth,
+      scaleY: imageSize.height / window.innerHeight,
+    };
+  }, [getMonitorScale]);
+
+  const getColorAtPoint = useCallback((localX: number, localY: number): string | null => {
+    const canvas = screenshotCanvasRef.current;
+    const ctx = screenshotCanvasCtxRef.current;
+    if (!canvas || !ctx) return null;
+
+    const { scaleX, scaleY } = getImageScale();
+    const imageX = Math.min(canvas.width - 1, Math.max(0, Math.round(localX * scaleX)));
+    const imageY = Math.min(canvas.height - 1, Math.max(0, Math.round(localY * scaleY)));
+
+    const [r, g, b] = ctx.getImageData(imageX, imageY, 1, 1).data;
+    return "#" + [r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
+  }, [getImageScale]);
+
+  const updateHoverColor = useCallback((sampleX: number, sampleY: number, displayX = sampleX, displayY = sampleY) => {
+    const hex = getColorAtPoint(sampleX, sampleY);
+    if (!hex) return;
+    setHoverColor({ x: displayX, y: displayY, hex, copied: false });
+  }, [getColorAtPoint]);
+
+  const copyHoverColor = useCallback(async () => {
+    const currentHoverColor = hoverColorRef.current;
+    if (!currentHoverColor) return;
+
+    try {
+      await navigator.clipboard.writeText(currentHoverColor.hex);
+      appLog.info("[Overlay] 已复制取色值: " + currentHoverColor.hex);
+      setHoverColor({ ...currentHoverColor, copied: true });
+    } catch (e) {
+      appLog.error("[Overlay] 复制取色值失败: " + String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleColorCopyKey = (e: KeyboardEvent) => {
+      if (textInputRef.current) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key.toLowerCase() !== "c" || !hoverColorRef.current) return;
+
+      e.preventDefault();
+      copyHoverColor();
+    };
+
+    window.addEventListener("keydown", handleColorCopyKey);
+    return () => window.removeEventListener("keydown", handleColorCopyKey);
+  }, [copyHoverColor]);
+
   // --- Crop the selected region from the frozen screenshot ---
   const cropRegion = useCallback(async (sel: { left: number; top: number; width: number; height: number }) => {
-    const dpr = window.devicePixelRatio || 1;
-    const srcX = Math.round(sel.left * dpr);
-    const srcY = Math.round(sel.top * dpr);
-    const srcW = Math.round(sel.width * dpr);
-    const srcH = Math.round(sel.height * dpr);
+    const { scaleX, scaleY } = getImageScale();
+    const srcX = Math.round(sel.left * scaleX);
+    const srcY = Math.round(sel.top * scaleY);
+    const srcW = Math.round(sel.width * scaleX);
+    const srcH = Math.round(sel.height * scaleY);
 
     const img = new Image();
     img.src = backgroundUrl;
@@ -276,12 +363,25 @@ export function ScreenshotOverlay() {
     );
     const url = URL.createObjectURL(blob);
     return url;
-  }, [backgroundUrl]);
+  }, [backgroundUrl, getImageScale]);
+
+  const toImageRect = useCallback((rect: { left: number; top: number; width: number; height: number }) => {
+    const { scaleX, scaleY } = getImageScale();
+    return {
+      x: Math.round(rect.left * scaleX),
+      y: Math.round(rect.top * scaleY),
+      width: Math.max(1, Math.round(rect.width * scaleX)),
+      height: Math.max(1, Math.round(rect.height * scaleY)),
+      scaleX,
+      scaleY,
+    };
+  }, [getImageScale]);
 
   // --- Enter annotate phase ---
   const enterAnnotate = useCallback(async (sel: { left: number; top: number; width: number; height: number }) => {
     try {
       const url = await cropRegion(sel);
+      annotateSourceRectRef.current = sel;
       const img = new Image();
       img.src = url;
       await new Promise<void>((resolve, reject) => {
@@ -558,6 +658,8 @@ export function ScreenshotOverlay() {
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
+      updateHoverColor(e.clientX, e.clientY);
+
       if (!isSelectingRef.current) {
         const rect = findWindowAtPoint(e.clientX, e.clientY);
         setHoveredRect(rect);
@@ -592,7 +694,7 @@ export function ScreenshotOverlay() {
         });
       }
     },
-    [findWindowAtPoint]
+    [findWindowAtPoint, updateHoverColor]
   );
 
   const handleMouseUp = useCallback(async () => {
@@ -610,7 +712,6 @@ export function ScreenshotOverlay() {
 
     const currentMode = modeRef.current;
     const currentMonitorIndex = monitorIndexRef.current;
-    const dpr = window.devicePixelRatio || 1;
     const dx = selection.endX - downPos.x;
     const dy = selection.endY - downPos.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -634,17 +735,19 @@ export function ScreenshotOverlay() {
           }
         } else {
           // ocr_translate: emit directly
-          const imgX = Math.round((currentHovered.x - monLogicalX) * dpr);
-          const imgY = Math.round((currentHovered.y - monLogicalY) * dpr);
-          const imgW = Math.round(currentHovered.width * dpr);
-          const imgH = Math.round(currentHovered.height * dpr);
+          const imgRect = toImageRect({
+            left: currentHovered.x - monLogicalX,
+            top: currentHovered.y - monLogicalY,
+            width: currentHovered.width,
+            height: currentHovered.height,
+          });
 
           appLog.info(
-            `[Overlay] 窗口点击选中: monitor=${currentMonitorIndex}, global_logical=(${currentHovered.x},${currentHovered.y},${currentHovered.width}x${currentHovered.height}), image=(${imgX},${imgY},${imgW}x${imgH}), mode=${currentMode}`
+            `[Overlay] 窗口点击选中: monitor=${currentMonitorIndex}, global_logical=(${currentHovered.x},${currentHovered.y},${currentHovered.width}x${currentHovered.height}), image=(${imgRect.x},${imgRect.y},${imgRect.width}x${imgRect.height}), scale=(${imgRect.scaleX.toFixed(3)},${imgRect.scaleY.toFixed(3)}), mode=${currentMode}`
           );
 
           await emit("region-selected", {
-            x: imgX, y: imgY, width: imgW, height: imgH,
+            x: imgRect.x, y: imgRect.y, width: imgRect.width, height: imgRect.height,
             mode: currentMode, monitor_index: currentMonitorIndex,
           });
           await emit("close-all-overlays");
@@ -675,7 +778,7 @@ export function ScreenshotOverlay() {
     if (currentMode === "screenshot") {
       // Enter annotation mode
       appLog.info(
-        `[Overlay] 选区完成(screenshot), local_css=(${x},${y},${width}x${height}), dpr=${dpr}, 进入标注模式`
+        `[Overlay] 选区完成(screenshot), local_css=(${x},${y},${width}x${height}), 进入标注模式`
       );
       selectionRef.current = null;
       mouseDownPosRef.current = null;
@@ -683,17 +786,14 @@ export function ScreenshotOverlay() {
       await enterAnnotate({ left: x, top: y, width, height });
     } else {
       // ocr_translate: emit directly
-      const imgX = Math.round(x * dpr);
-      const imgY = Math.round(y * dpr);
-      const imgW = Math.round(width * dpr);
-      const imgH = Math.round(height * dpr);
+      const imgRect = toImageRect({ left: x, top: y, width, height });
 
       appLog.info(
-        `[Overlay] 选区完成: monitor=${currentMonitorIndex}, local_css=(${x},${y},${width}x${height}), image=(${imgX},${imgY},${imgW}x${imgH}), dpr=${dpr}, mode=${currentMode}`
+        `[Overlay] 选区完成: monitor=${currentMonitorIndex}, local_css=(${x},${y},${width}x${height}), image=(${imgRect.x},${imgRect.y},${imgRect.width}x${imgRect.height}), scale=(${imgRect.scaleX.toFixed(3)},${imgRect.scaleY.toFixed(3)}), mode=${currentMode}`
       );
 
       await emit("region-selected", {
-        x: imgX, y: imgY, width: imgW, height: imgH,
+        x: imgRect.x, y: imgRect.y, width: imgRect.width, height: imgRect.height,
         mode: currentMode, monitor_index: currentMonitorIndex,
       });
       await emit("close-all-overlays");
@@ -702,7 +802,7 @@ export function ScreenshotOverlay() {
       setSelRect(null);
       isDraggingRef.current = false;
     }
-  }, [toLocalRect, enterAnnotate]);
+  }, [toLocalRect, enterAnnotate, toImageRect]);
 
   // --- Annotate phase: canvas mouse handlers ---
 
@@ -722,6 +822,11 @@ export function ScreenshotOverlay() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
+    const sourceRect = annotateSourceRectRef.current;
+    if (sourceRect) {
+      const { scaleX, scaleY } = getImageScale();
+      updateHoverColor(sourceRect.left + pos.x / scaleX, sourceRect.top + pos.y / scaleY, e.clientX, e.clientY);
+    }
 
     if (toolRef.current === "text") {
       setTextInput({ x: pos.x, y: pos.y, value: "" });
@@ -755,13 +860,19 @@ export function ScreenshotOverlay() {
       });
       penPointsRef.current = [pos];
     }
-  }, [textInput, canvasToImageCoords]);
+  }, [textInput, canvasToImageCoords, updateHoverColor, getImageScale]);
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!drawingRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
+    const sourceRect = annotateSourceRectRef.current;
+    if (sourceRect) {
+      const { scaleX, scaleY } = getImageScale();
+      updateHoverColor(sourceRect.left + pos.x / scaleX, sourceRect.top + pos.y / scaleY, e.clientX, e.clientY);
+    }
+
+    if (!drawingRef.current) return;
 
     if (toolRef.current === "pen") {
       penPointsRef.current.push(pos);
@@ -791,7 +902,7 @@ export function ScreenshotOverlay() {
         strokeWidth: strokeWidthRef.current,
       });
     }
-  }, [canvasToImageCoords]);
+  }, [canvasToImageCoords, updateHoverColor, getImageScale]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (!drawingRef.current) return;
@@ -803,13 +914,41 @@ export function ScreenshotOverlay() {
     }
   }, [currentShape]);
 
+  const renderColorTooltip = () => {
+    if (!hoverColor) return null;
+
+    return (
+      <div
+        className="fixed pointer-events-none rounded-lg border border-white/15 bg-neutral-900/90 px-2 py-1 text-xs text-white shadow-lg"
+        style={{
+          left: Math.min(window.innerWidth - 132, Math.max(8, hoverColor.x + COLOR_TOOLTIP_OFFSET)),
+          top: Math.min(window.innerHeight - 48, Math.max(8, hoverColor.y + COLOR_TOOLTIP_OFFSET)),
+          zIndex: 80,
+          backdropFilter: "blur(8px)",
+        }}
+      >
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <span
+            className="h-4 w-4 rounded border border-white/30"
+            style={{ background: hoverColor.hex }}
+          />
+          <span className="font-mono">{hoverColor.hex}</span>
+          <span className="text-white/45">{hoverColor.copied ? "已复制" : "C 复制"}</span>
+        </div>
+      </div>
+    );
+  };
+
   // --- Render ---
+
+  const displayScale = getImageScale();
 
   if (phase === "annotate" && selRect) {
     return (
       <div
         className="screenshot-overlay-root fixed inset-0 select-none"
       >
+        {renderColorTooltip()}
         {/* Annotation group: canvas + text input + toolbar, anchored at selection top-left */}
         <div
           className="absolute flex flex-col items-start"
@@ -1070,8 +1209,8 @@ export function ScreenshotOverlay() {
               top: selRect.top - 24,
             }}
           >
-            {Math.round(selRect.width * (window.devicePixelRatio || 1))} x{" "}
-            {Math.round(selRect.height * (window.devicePixelRatio || 1))}
+            {Math.round(selRect.width * displayScale.scaleX)} x{" "}
+            {Math.round(selRect.height * displayScale.scaleY)}
           </div>
         </>
       )}
@@ -1082,6 +1221,8 @@ export function ScreenshotOverlay() {
           Drag to select region · ESC to cancel
         </div>
       )}
+
+      {renderColorTooltip()}
     </div>
   );
 }

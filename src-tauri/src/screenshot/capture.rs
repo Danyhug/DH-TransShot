@@ -371,7 +371,28 @@ pub fn capture_region_bytes(
 ) -> anyhow::Result<Vec<u8>> {
     let bytes = base64::engine::general_purpose::STANDARD.decode(full_base64)?;
     let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
-    let cropped = img.crop_imm(x, y, width, height);
+    let img_width = img.width();
+    let img_height = img.height();
+    let crop_x = x.min(img_width.saturating_sub(1));
+    let crop_y = y.min(img_height.saturating_sub(1));
+    let crop_width = width.min(img_width.saturating_sub(crop_x)).max(1);
+    let crop_height = height.min(img_height.saturating_sub(crop_y)).max(1);
+
+    info!(
+        "[Capture] capture_region_bytes, full={}x{}, requested=({},{},{}x{}), clamped=({},{},{}x{})",
+        img_width,
+        img_height,
+        x,
+        y,
+        width,
+        height,
+        crop_x,
+        crop_y,
+        crop_width,
+        crop_height
+    );
+
+    let cropped = img.crop_imm(crop_x, crop_y, crop_width, crop_height);
     let rgb = cropped.to_rgb8();
     let mut buf = Cursor::new(Vec::new());
     let mut encoder = JpegEncoder::new_with_quality(&mut buf, 90);

@@ -78,6 +78,7 @@
 - `monitorIndex` — 当前覆盖层对应的显示器索引
 - `selRect` — 拖拽选区矩形
 - `hoveredRect` — 鼠标悬停时匹配到的窗口矩形
+- `hoverColor` — 鼠标当前位置的截图像素色值（HEX）和复制提示状态
 
 **标注阶段状态：**
 - `croppedImageEl` — 裁切后的截图 Image 元素（canvas 渲染背景）
@@ -98,15 +99,16 @@
 - 每个覆盖层窗口根据自身 label 的索引确定对应的显示器
 - 通过 `getFrozenScreenshot(monitorIndex)` 获取该显示器自己的原生分辨率截图
 - 背景图使用 `backgroundSize: cover` 显示
-- 选区提交时将局部 CSS 坐标乘以 `devicePixelRatio` 得到图像像素坐标
+- 选区提交时按冻结截图实际像素尺寸与覆盖层窗口 CSS 尺寸的比例换算为图像像素坐标
 - ESC 或选区完成时，通过 `emit("close-all-overlays")` 通知后端关闭所有覆盖层
 
 **交互流程（选区阶段）：**
 1. mount 时通过 `getFrozenScreenshot(monitorIndex)` 获取截图、mode、窗口矩形、显示器信息
 2. 悬停检测：mousemove 时查找光标下的窗口，显示绿色高亮
-3. mousedown → 记录起点；mousemove → 拖拽选区；mouseup → 完成选区
-4. screenshot 模式：选区完成后进入标注阶段（前端裁切选区图片）
-5. ocr_translate 模式：选区完成后直接 emit `"region-selected"` 关闭覆盖层
+3. 取色提示：mousemove 时从冻结截图采样当前像素，展示 HEX 色值，按 `C` 复制
+4. mousedown → 记录起点；mousemove → 拖拽选区；mouseup → 完成选区
+5. screenshot 模式：选区完成后进入标注阶段（前端裁切选区图片）
+6. ocr_translate 模式：选区完成后直接 emit `"region-selected"` 关闭覆盖层
 
 **交互流程（标注阶段 — 仅 screenshot 模式）：**
 1. 从冻结截图中前端裁切选区区域，创建裁切后的 Image 元素
@@ -123,19 +125,26 @@
 - `Enter` — 确认标注
 - `Escape` — 取消
 - `Ctrl/Cmd+Z` — 撤销
+- `C` — 复制鼠标当前位置 HEX 色值
 - `1` `2` `3` `4` — 切换工具（rect/arrow/pen/text）
+
+**键盘快捷键（选区阶段）：**
+- `Escape` — 取消
+- `C` — 复制鼠标当前位置 HEX 色值
 
 **视觉效果（选区阶段）：**
 - 30% 黑色半透明覆盖层
 - **窗口高亮**：绿色边框 + 淡绿填充 + box-shadow 镂空
 - **拖拽选区**：蓝色边框 + box-shadow 遮罩镂空
 - 选区上方显示物理像素尺寸
+- 鼠标旁显示当前像素 HEX 色值和 `C 复制` 提示
 
 **视觉效果（标注阶段）：**
 - 冻结截图全屏背景，无遮罩
 - Canvas 限定在选区区域内（maxWidth=selRect.width, maxHeight=selRect.height），圆角 + 白色半透明边框
 - 工具栏：深色半透明圆角条，紧贴截图下方，含工具图标、颜色色块、确认/取消按钮
 - 文字输入框：黑底半透明，定位在点击位置
+- 鼠标旁保留取色提示，可在标注时按 `C` 复制原截图像素色值
 
 ### SettingsPanel.tsx
 
@@ -211,7 +220,7 @@
 - 所有组件使用 CSS 变量（`var(--color-*)`）实现主题，避免硬编码颜色
 - 卡片容器使用 `rounded-2xl` + `overflow-hidden` + `--color-surface` 背景
 - TextArea 使用透明背景，样式由外层卡片控制
-- ScreenshotOverlay 的 DPI 处理是关键：选区逻辑坐标 × DPR = 物理像素
+- ScreenshotOverlay 的 DPI 处理是关键：选区逻辑坐标 ×（冻结截图实际像素尺寸 / 覆盖层 CSS 尺寸）= 图像物理像素
 - TitleBar 的 Pin 功能使用 Tauri `setAlwaysOnTop()` API
 - ActionButtons 中的 TTS 通过后端 `synthesize_speech` 命令调用 OpenAI 兼容的 TTS API，使用设置中配置的模型
 - 按钮悬停统一使用 `hover:bg-black/5` 半透明效果

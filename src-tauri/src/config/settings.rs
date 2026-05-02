@@ -49,7 +49,7 @@ impl Default for Settings {
             base_url: default_base_url(),
             api_key: default_api_key(),
             translation: ServiceConfig::with_model("tencent/Hunyuan-MT-7B"),
-            ocr: ServiceConfig::with_model("deepseek-ai/DeepSeek-OCR"),
+            ocr: ServiceConfig::with_model("PaddlePaddle/PaddleOCR-VL-1.5"),
             tts: ServiceConfig::with_model("fnlp/MOSS-TTSD-v0.5"),
             source_language: "auto".to_string(),
             target_language: "zh-CN".to_string(),
