@@ -221,4 +221,4 @@ git push origin --delete v<版本号> # 删除远程 tag
 ## 构建产物
 
 - `src-tauri/target/release/bundle/macos/DH-TransShot.app`
-- `src-tauri/target/release/bundle/dmg/DH-TransShot_0.1.0_aarch64.dmg`
+- `src-tauri/target/release/bundle/dmg/DH-TransShot_0.1.10_aarch64.dmg`

@@ -258,4 +258,4 @@ cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
 ## 构建产物
 
 - macOS: `src-tauri/target/release/bundle/macos/DH-TransShot.app`
-- DMG: `src-tauri/target/release/bundle/dmg/DH-TransShot_0.1.0_aarch64.dmg`
+- DMG: `src-tauri/target/release/bundle/dmg/DH-TransShot_0.1.10_aarch64.dmg`

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/nicegui/main/tauri/tauri.conf.schema.json",
   "productName": "DH-TransShot",
-  "version": "0.1.0",
+  "version": "0.1.10",
   "identifier": "com.danyhug.dh-transshot",
   "build": {
     "beforeDevCommand": "pnpm dev",
