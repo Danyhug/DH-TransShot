@@ -206,11 +206,12 @@ cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
 
 当用户说「发版」时，按以下流程执行：
 
-1. **确认当前版本**：查看最新 git tag（`git tag --sort=-v:refname | head -1`），新版本号递增 patch（如 v0.1.5 → v0.1.6）
-2. **确保所有改动已提交**：`git add .` + `git commit`
-3. **推送提交到远程**：`git push`
-4. **创建 annotated tag**：`git tag -a v<版本号> -m "v<版本号>: <简要描述>"`
-5. **推送 tag 到远程**：`git push origin v<版本号>`
+1. **确保工作区干净**：所有功能改动先提交，避免把未确认改动打进发版提交
+2. **创建发版提交和 annotated tag**：默认执行 `pnpm release`（递增 patch）；需要大版本时执行 `pnpm release:minor` 或 `pnpm release:major`
+3. **推送提交和 tag**：按脚本输出执行 `git push && git push origin v<版本号>`
+4. **等待 GitHub Actions**：Release workflow 会从 tag 自动同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 后再打包
+
+版本号规则：以 `git tag` 为准。不要手动只改某一个版本文件；需要同步指定版本时执行 `pnpm sync-version v<版本号>`。
 
 删除 tag（如打错）：
 ```bash
@@ -221,4 +222,4 @@ git push origin --delete v<版本号> # 删除远程 tag
 ## 构建产物
 
 - `src-tauri/target/release/bundle/macos/DH-TransShot.app`
-- `src-tauri/target/release/bundle/dmg/DH-TransShot_0.1.10_aarch64.dmg`
+- `src-tauri/target/release/bundle/dmg/DH-TransShot_<版本号>_aarch64.dmg`

@@ -88,6 +88,24 @@ pnpm exec vite build    # 仅构建前端
 cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
 ```
 
+### 发版
+
+版本号以 `git tag` 为准。推送 `v*` tag 后，GitHub Actions 会先把 tag 同步到 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`，再构建安装包，避免 Release tag 与打包版本不一致。
+
+```bash
+pnpm release        # 基于最新 v* tag 递增 patch，创建提交和 annotated tag
+pnpm release:minor  # 递增 minor
+pnpm release:major  # 递增 major
+
+git push && git push origin v<版本号>
+```
+
+如需只同步版本号，可运行：
+
+```bash
+pnpm sync-version v<版本号>
+```
+
 ### 环境变量
 
 复制 `.env.test` 为 `.env`，填入实际的 API 配置：
