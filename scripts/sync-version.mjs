@@ -32,17 +32,19 @@ function updateJson(file, updater) {
 }
 
 function updateTomlVersion(file, version) {
-  const lines = readFileSync(file, "utf8").split("\n");
+  const content = readFileSync(file, "utf8");
+  const lines = content.split("\n");
   let inPackage = false;
   let updated = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (/^\[.*\]$/.test(line)) {
-      inPackage = line === "[package]";
+    const trimmedLine = line.trim();
+    if (/^\[.*\]$/.test(trimmedLine)) {
+      inPackage = trimmedLine === "[package]";
       continue;
     }
-    if (inPackage && /^version\s*=\s*"[^"]+"/.test(line)) {
+    if (inPackage && /^version\s*=\s*"[^"]+"/.test(trimmedLine)) {
       lines[index] = line.replace(/"[^"]+"/, `"${version}"`);
       updated = true;
       break;
