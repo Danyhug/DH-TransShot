@@ -98,7 +98,7 @@ export function ScreenshotOverlay() {
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
   const textInputRef = useRef<typeof textInput>(null);
-  const annotateSourceRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+
 
   // Keep refs in sync
   useEffect(() => { windowRectsRef.current = windowRects; }, [windowRects]);
@@ -381,7 +381,6 @@ export function ScreenshotOverlay() {
   const enterAnnotate = useCallback(async (sel: { left: number; top: number; width: number; height: number }) => {
     try {
       const url = await cropRegion(sel);
-      annotateSourceRectRef.current = sel;
       const img = new Image();
       img.src = url;
       await new Promise<void>((resolve, reject) => {
@@ -822,11 +821,6 @@ export function ScreenshotOverlay() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
-    const sourceRect = annotateSourceRectRef.current;
-    if (sourceRect) {
-      const { scaleX, scaleY } = getImageScale();
-      updateHoverColor(sourceRect.left + pos.x / scaleX, sourceRect.top + pos.y / scaleY, e.clientX, e.clientY);
-    }
 
     if (toolRef.current === "text") {
       setTextInput({ x: pos.x, y: pos.y, value: "" });
@@ -860,17 +854,12 @@ export function ScreenshotOverlay() {
       });
       penPointsRef.current = [pos];
     }
-  }, [textInput, canvasToImageCoords, updateHoverColor, getImageScale]);
+  }, [textInput, canvasToImageCoords]);
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
-    const sourceRect = annotateSourceRectRef.current;
-    if (sourceRect) {
-      const { scaleX, scaleY } = getImageScale();
-      updateHoverColor(sourceRect.left + pos.x / scaleX, sourceRect.top + pos.y / scaleY, e.clientX, e.clientY);
-    }
 
     if (!drawingRef.current) return;
 
@@ -902,7 +891,7 @@ export function ScreenshotOverlay() {
         strokeWidth: strokeWidthRef.current,
       });
     }
-  }, [canvasToImageCoords, updateHoverColor, getImageScale]);
+  }, [canvasToImageCoords]);
 
   const handleCanvasMouseUp = useCallback(() => {
     if (!drawingRef.current) return;
@@ -948,7 +937,6 @@ export function ScreenshotOverlay() {
       <div
         className="screenshot-overlay-root fixed inset-0 select-none"
       >
-        {renderColorTooltip()}
         {/* Annotation group: canvas + text input + toolbar, anchored at selection top-left */}
         <div
           className="absolute flex flex-col items-start"
