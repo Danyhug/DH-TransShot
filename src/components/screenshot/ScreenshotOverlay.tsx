@@ -23,6 +23,7 @@ type Tool = "rect" | "arrow" | "pen" | "text";
 
 const PRESET_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#ffffff"];
 const DEFAULT_STROKE_WIDTH = 3;
+const DEFAULT_FONT_SIZE_RATIO = 8;
 const ANNOTATION_TOOLBAR_HEIGHT = 52;
 const ANNOTATION_TOOLBAR_MIN_WIDTH = 360;
 const ANNOTATION_PICKER_HEIGHT = 188;
@@ -62,6 +63,7 @@ export function ScreenshotOverlay() {
   const [tool, setTool] = useState<Tool>("rect");
   const [color, setColor] = useState("#ef4444");
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_STROKE_WIDTH);
+  const [fontSize, setFontSize] = useState(30);
   const [showStylePicker, setShowStylePicker] = useState(false);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [currentShape, setCurrentShape] = useState<Shape | null>(null);
@@ -94,6 +96,7 @@ export function ScreenshotOverlay() {
   const toolRef = useRef<Tool>("rect");
   const colorRef = useRef("#ef4444");
   const strokeWidthRef = useRef(DEFAULT_STROKE_WIDTH);
+  const fontSizeRef = useRef(30);
   const drawingRef = useRef(false);
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
@@ -111,6 +114,7 @@ export function ScreenshotOverlay() {
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { strokeWidthRef.current = strokeWidth; }, [strokeWidth]);
+  useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
   useEffect(() => { croppedImageElRef.current = croppedImageEl; }, [croppedImageEl]);
   useEffect(() => { textInputRef.current = textInput; }, [textInput]);
 
@@ -410,6 +414,8 @@ export function ScreenshotOverlay() {
       setPhase("annotate");
       setShapes([]);
       setCurrentShape(null);
+      setShowStylePicker(false);
+      setFontSize(Math.round(img.naturalHeight / DEFAULT_FONT_SIZE_RATIO));
       appLog.info("[Overlay] 进入标注模式, cropped size=" + img.naturalWidth + "x" + img.naturalHeight);
     } catch (e) {
       appLog.error("[Overlay] 裁切图片失败: " + String(e));
@@ -617,15 +623,15 @@ export function ScreenshotOverlay() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [phase, textInput, handleConfirm]);
 
-  const commitTextInput = useCallback((fontSize: number) => {
+  const commitTextInput = useCallback(() => {
     const pendingTextInput = textInputRef.current;
     if (!pendingTextInput) return;
 
-    textInputRef.current = null;
-    setTextInput(null);
-
     const value = pendingTextInput.value.trim();
     if (!value) return;
+
+    textInputRef.current = null;
+    setTextInput(null);
 
     setShapes((prev) => [
       ...prev,
@@ -635,7 +641,7 @@ export function ScreenshotOverlay() {
         y: pendingTextInput.y,
         text: value,
         color: colorRef.current,
-        fontSize,
+        fontSize: fontSizeRef.current,
       },
     ]);
   }, []);
@@ -816,6 +822,7 @@ export function ScreenshotOverlay() {
   }, []);
 
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    setShowStylePicker(false);
     if (textInput) return; // Don't draw while text input is open
 
     const canvas = canvasRef.current;
@@ -969,18 +976,19 @@ export function ScreenshotOverlay() {
               const displayH = canvas.clientHeight;
               const scaleX = displayW / canvas.width;
               const scaleY = displayH / canvas.height;
-              const fontSize = Math.round((croppedImageEl?.naturalHeight ?? 600) / 20);
               return (
                 <input
-                  autoFocus
+                  ref={(el) => { if (el) requestAnimationFrame(() => el.focus()); }}
                   type="text"
+                  spellCheck={false}
+                  autoComplete="off"
                   value={textInput.value}
                   onChange={(e) => setTextInput({ ...textInput, value: e.target.value })}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
                       e.stopPropagation();
-                      commitTextInput(fontSize);
+                      commitTextInput();
                     } else if (e.key === "Escape") {
                       e.preventDefault();
                       e.stopPropagation();
@@ -988,7 +996,7 @@ export function ScreenshotOverlay() {
                       setTextInput(null);
                     }
                   }}
-                  onBlur={() => commitTextInput(fontSize)}
+                  onBlur={() => commitTextInput()}
                   className="absolute text-white bg-black/60 border border-white/40 rounded px-2 py-1 outline-none"
                   style={{
                     left: textInput.x * scaleX,
@@ -1021,7 +1029,7 @@ export function ScreenshotOverlay() {
               <button
                 key={t.id}
                 title={t.title}
-                onClick={() => setTool(t.id)}
+                onClick={() => { setTool(t.id); setShowStylePicker(false); }}
                 className="w-8 h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors"
                 style={{
                   background: tool === t.id ? "rgba(255,255,255,0.2)" : "transparent",
@@ -1038,7 +1046,7 @@ export function ScreenshotOverlay() {
             {/* Color and stroke picker */}
             <div className="relative">
               <button
-                title="颜色和线宽"
+                title={tool === "text" ? "颜色和字号" : "颜色和线宽"}
                 onClick={() => setShowStylePicker((prev) => !prev)}
                 className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
               >
@@ -1086,29 +1094,65 @@ export function ScreenshotOverlay() {
                     </label>
                   </div>
 
-                  <div className="flex items-center justify-between text-white/60 text-xs mb-2">
-                    <span>线宽</span>
-                    <span>{strokeWidth}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="12"
-                    step="1"
-                    value={strokeWidth}
-                    onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                    className="w-full accent-blue-500"
-                  />
-                  <div className="mt-3 h-8 rounded bg-white/5 flex items-center justify-center">
-                    <div
-                      className="rounded-full"
-                      style={{
-                        width: 120,
-                        height: strokeWidth,
-                        background: color,
-                      }}
-                    />
-                  </div>
+                  {tool !== "text" ? (
+                    <>
+                      <div className="flex items-center justify-between text-white/60 text-xs mb-2">
+                        <span>线宽</span>
+                        <span>{strokeWidth}px</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="1"
+                        max="12"
+                        step="1"
+                        value={strokeWidth}
+                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                        className="w-full accent-blue-500"
+                      />
+                      <div className="mt-3 h-8 rounded bg-white/5 flex items-center justify-center">
+                        <div
+                          className="rounded-full"
+                          style={{
+                            width: 120,
+                            height: strokeWidth,
+                            background: color,
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : (() => {
+                    const imgH = croppedImageEl?.naturalHeight ?? 240;
+                    const minFs = Math.max(8, Math.round(imgH / 40));
+                    const maxFs = Math.round(imgH / 3);
+                    return (
+                      <>
+                        <div className="flex items-center justify-between text-white/60 text-xs mb-2">
+                          <span>字号</span>
+                          <span>{fontSize}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={minFs}
+                          max={maxFs}
+                          step="2"
+                          value={Math.min(fontSize, maxFs)}
+                          onChange={(e) => setFontSize(Number(e.target.value))}
+                          className="w-full accent-blue-500"
+                        />
+                        <div className="mt-3 h-8 rounded bg-white/5 flex items-center justify-center overflow-hidden">
+                          <span
+                            className="font-medium truncate"
+                            style={{
+                              fontSize: Math.min(fontSize, maxFs) * (canvasRef.current ? canvasRef.current.clientWidth / canvasRef.current.width : 0.5),
+                              color,
+                            }}
+                          >
+                            Aa 文字预览
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
