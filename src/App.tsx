@@ -26,6 +26,11 @@ export default function App() {
   // Generation counter for OCR sessions; stale sessions discard their results
   const ocrSessionRef = useRef(0);
 
+  // Suppress blur-hide when a docked window (settings/debug) was just requested.
+  // On Windows, window creation is async and the blur fires before the window exists,
+  // so checking getByLabel() in the blur handler is unreliable.
+  const suppressNextBlur = useRef(false);
+
   useEffect(() => {
     appLog.info("[App] 主窗口初始化");
 
@@ -44,19 +49,23 @@ export default function App() {
       if (!focused) {
         const isOnTop = await appWindow.isAlwaysOnTop();
         if (!isOnTop) {
+          // If a docked window was just requested, skip hiding this time
+          if (suppressNextBlur.current) {
+            suppressNextBlur.current = false;
+            return;
+          }
           // Small delay to let the OS settle focus on the target window
           await new Promise((r) => setTimeout(r, 80));
           // Don't hide if any screenshot overlay is active (main window will be restored when overlay closes)
           const allWindows = await getAllWindows();
           const hasOverlay = allWindows.some((w) => w.label.startsWith("screenshot-overlay"));
           if (hasOverlay) return;
-          // Don't hide if focus went to our debug-log or settings window
+          // Don't hide if our debug-log or settings window exists
           const debugWin = await WebviewWindow.getByLabel("debug-log");
           const settingsWin = await WebviewWindow.getByLabel("settings");
-          if ((debugWin && await debugWin.isFocused()) || (settingsWin && await settingsWin.isFocused())) return;
-          // 关闭子窗口
-          if (debugWin) await debugWin.close();
-          if (settingsWin) await settingsWin.close();
+          if (debugWin || settingsWin) {
+            return;
+          }
           appLog.info("[App] 主窗口失焦，自动隐藏");
           await appWindow.hide();
         }
@@ -242,8 +251,8 @@ export default function App() {
         onScreenshot={() => startRegion("screenshot")}
         onOcrTranslate={() => startRegion("ocr_translate")}
         onClipboardTranslate={handleClipboardTranslate}
-        onDebugLog={() => openDebugWindow()}
-        onSettings={() => openSettingsWindow()}
+        onDebugLog={() => { suppressNextBlur.current = true; openDebugWindow(); }}
+        onSettings={() => { suppressNextBlur.current = true; openSettingsWindow(); }}
       />
 
       <TranslationPanel />

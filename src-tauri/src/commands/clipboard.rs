@@ -1,5 +1,14 @@
 use log::{info, error, warn};
 
+/// Helper: build a PowerShell Command with CREATE_NO_WINDOW on Windows to suppress the console window.
+#[cfg(target_os = "windows")]
+fn powershell_command(script: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-command", script]);
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
 /// Helper: run pbpaste with UTF-8 locale to ensure emoji and multi-byte chars are decoded correctly.
 #[cfg(target_os = "macos")]
 fn pbpaste_utf8() -> std::process::Command {
@@ -104,8 +113,7 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
 
     #[cfg(target_os = "windows")]
-    let saved_clipboard: Option<String> = std::process::Command::new("powershell")
-        .args(["-command", "Get-Clipboard"])
+    let saved_clipboard: Option<String> = powershell_command("Get-Clipboard")
         .output()
         .ok()
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
@@ -133,8 +141,7 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
 
     #[cfg(target_os = "windows")]
     {
-        let copy_result = std::process::Command::new("powershell")
-            .args(["-command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^c\")"])
+        let copy_result = powershell_command("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^c\")")
             .output()
             .map_err(|e| format!("powershell failed: {}", e))?;
 
@@ -155,8 +162,7 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
 
     #[cfg(target_os = "windows")]
-    let new_clipboard: Result<String, String> = std::process::Command::new("powershell")
-        .args(["-command", "Get-Clipboard"])
+    let new_clipboard: Result<String, String> = powershell_command("Get-Clipboard")
         .output()
         .map_err(|e| e.to_string())
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
@@ -191,9 +197,7 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
     #[cfg(target_os = "windows")]
     if let Some(ref old_text) = saved_clipboard {
         let ps_script = format!("Set-Clipboard -Value '{}'", old_text.replace('\'', "''"));
-        let _ = std::process::Command::new("powershell")
-            .args(["-command", &ps_script])
-            .output();
+        let _ = powershell_command(&ps_script).output();
         info!("[Clipboard] 原剪贴板内容已恢复");
     }
 
@@ -215,8 +219,7 @@ pub async fn read_clipboard() -> Result<String, String> {
         }
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("powershell")
-                .args(["-command", "Get-Clipboard"])
+            powershell_command("Get-Clipboard")
                 .output()
                 .map_err(|e| e.to_string())
                 .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -279,8 +282,7 @@ pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String>
                  [System.Drawing.Image]::FromFile('{}'))",
                 tmp_path.display()
             );
-            let output = std::process::Command::new("powershell")
-                .args(["-command", &ps_script])
+            let output = powershell_command(&ps_script)
                 .output()
                 .map_err(|e| format!("powershell failed: {}", e))?;
             if !output.status.success() {
