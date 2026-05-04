@@ -7,9 +7,10 @@ interface Props {
   onClipboardTranslate?: () => void;
   onDebugLog?: () => void;
   onSettings?: () => void;
+  onWindowDragStart?: () => void;
 }
 
-export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, onDebugLog, onSettings }: Props) {
+export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, onDebugLog, onSettings, onWindowDragStart }: Props) {
   const appWindow = getCurrentWindow();
   const [pinned, setPinned] = useState(false);
 
@@ -25,6 +26,10 @@ export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, o
   return (
     <div
       data-tauri-drag-region
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        onWindowDragStart?.();
+      }}
       className="flex items-center justify-between h-10 px-4 select-none shrink-0"
     >
       {/* Left: Pin button */}

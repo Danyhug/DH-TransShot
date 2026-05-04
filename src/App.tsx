@@ -30,6 +30,7 @@ export default function App() {
   // On Windows, window creation is async and the blur fires before the window exists,
   // so checking getByLabel() in the blur handler is unreliable.
   const suppressNextBlur = useRef(false);
+  const suppressBlurUntil = useRef(0);
 
   useEffect(() => {
     appLog.info("[App] 主窗口初始化");
@@ -54,8 +55,13 @@ export default function App() {
             suppressNextBlur.current = false;
             return;
           }
-          // Small delay to let the OS settle focus on the target window
-          await new Promise((r) => setTimeout(r, 80));
+          // Small delay to let the OS settle focus on the target window. Windows can
+          // briefly report focus loss while dragging an undecorated transparent window.
+          await new Promise((r) => setTimeout(r, 180));
+          if (Date.now() < suppressBlurUntil.current) {
+            appLog.info("[App] 主窗口拖动中，跳过本次失焦隐藏");
+            return;
+          }
           // Don't hide if any screenshot overlay is active (main window will be restored when overlay closes)
           const allWindows = await getAllWindows();
           const hasOverlay = allWindows.some((w) => w.label.startsWith("screenshot-overlay"));
@@ -246,11 +252,14 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-screen rounded-xl overflow-hidden" style={{ backgroundColor: "var(--color-bg)" }}>
+    <div className="main-window-root flex flex-col h-screen rounded-xl overflow-hidden" style={{ backgroundColor: "var(--color-bg)" }}>
       <TitleBar
         onScreenshot={() => startRegion("screenshot")}
         onOcrTranslate={() => startRegion("ocr_translate")}
         onClipboardTranslate={handleClipboardTranslate}
+        onWindowDragStart={() => {
+          suppressBlurUntil.current = Date.now() + 1200;
+        }}
         onDebugLog={() => { suppressNextBlur.current = true; openDebugWindow(); }}
         onSettings={() => { suppressNextBlur.current = true; openSettingsWindow(); }}
       />

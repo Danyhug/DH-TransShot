@@ -42,6 +42,16 @@ html, body, #root {
   background-color: var(--color-bg);
 }
 
+html.platform-windows,
+html.platform-windows body {
+  background: var(--color-bg);
+}
+
+html.platform-windows #root,
+html.platform-windows .main-window-root {
+  border-radius: 0;
+}
+
 body {
   color: var(--color-text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
