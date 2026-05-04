@@ -10,7 +10,7 @@ mod tts;
 
 use config::{AppState, Settings};
 use log::{info, warn};
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,11 +69,25 @@ pub fn run() {
             info!("[Setup] 系统托盘初始化完成");
             hotkey::setup_hotkeys(app)?;
             info!("[Setup] 全局快捷键注册完成");
+
+            // 拦截主窗口关闭事件，改为隐藏（macOS + Windows 统一行为）
+            if let Some(window) = app.get_webview_window("main") {
+                let win = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        info!("[Setup] 主窗口关闭请求，拦截并隐藏");
+                        api.prevent_close();
+                        let _ = win.hide();
+                    }
+                });
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // macOS: 点击 Dock 图标时显示主窗口
+            #[cfg(target_os = "macos")]
             if let RunEvent::Reopen { .. } = event {
                 info!("[App] Dock 图标点击，显示主窗口");
                 if let Some(window) = app_handle.get_webview_window("main") {
@@ -81,5 +95,8 @@ pub fn run() {
                     let _ = window.set_focus();
                 }
             }
+            // 避免未使用变量警告
+            #[cfg(not(target_os = "macos"))]
+            let _ = app_handle;
         });
 }
