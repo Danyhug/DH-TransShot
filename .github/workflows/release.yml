@@ -27,6 +27,12 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install LLVM (for lld-link)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          choco install llvm -y
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+
       - name: Add macOS target
         if: matrix.platform == 'macos-latest'
         run: |
