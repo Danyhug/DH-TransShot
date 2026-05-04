@@ -3,6 +3,7 @@ use log::{info, error, warn};
 /// Helper: build a PowerShell Command with CREATE_NO_WINDOW on Windows to suppress the console window.
 #[cfg(target_os = "windows")]
 fn powershell_command(script: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
     let mut cmd = std::process::Command::new("powershell");
     cmd.args(["-command", script]);
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
