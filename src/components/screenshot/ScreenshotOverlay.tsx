@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { getFrozenScreenshot } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
 import type { WindowRect, MonitorInfo } from "../../types";
@@ -24,9 +23,7 @@ type Tool = "rect" | "arrow" | "pen" | "text";
 const PRESET_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#ffffff"];
 const DEFAULT_STROKE_WIDTH = 3;
 const DEFAULT_FONT_SIZE_RATIO = 8;
-const ANNOTATION_TOOLBAR_HEIGHT = 52;
 const ANNOTATION_TOOLBAR_MIN_WIDTH = 360;
-const ANNOTATION_PICKER_HEIGHT = 188;
 const COLOR_TOOLTIP_OFFSET = 14;
 
 // --- Selection types ---
@@ -394,23 +391,11 @@ export function ScreenshotOverlay() {
       croppedBlobUrlRef.current = url;
       setCroppedImageEl(img);
       setCanvasDisplaySize({ width: sel.width, height: sel.height });
-      const mon = monitorRef.current;
-      if (mon) {
-        const currentWindow = getCurrentWindow();
-        const monitorLogicalX = mon.x / mon.scale_factor;
-        const monitorLogicalY = mon.y / mon.scale_factor;
-        const windowWidth = Math.max(sel.width, ANNOTATION_TOOLBAR_MIN_WIDTH);
-        const windowTop = Math.max(monitorLogicalY, monitorLogicalY + sel.top - ANNOTATION_PICKER_HEIGHT);
-        const monitorLogicalWidth = mon.width / mon.scale_factor;
-        const maxWindowLeft = monitorLogicalX + Math.max(0, monitorLogicalWidth - windowWidth);
-        const desiredWindowLeft = monitorLogicalX + sel.left;
-        const windowLeft = Math.min(Math.max(desiredWindowLeft, monitorLogicalX), maxWindowLeft);
-        const contentTop = monitorLogicalY + sel.top - windowTop;
-        const contentLeft = desiredWindowLeft - windowLeft;
-        await currentWindow.setPosition(new LogicalPosition(windowLeft, windowTop));
-        await currentWindow.setSize(new LogicalSize(windowWidth, contentTop + sel.height + ANNOTATION_TOOLBAR_HEIGHT));
-        setSelRect({ left: contentLeft, top: contentTop, width: sel.width, height: sel.height });
-      }
+      // Keep the full-screen overlay window as-is (no resize).
+      // selRect from the select phase is already in the correct coordinate space,
+      // so we reuse it directly to position the canvas + toolbar.
+      // This avoids issues with setPosition/setSize not working on Windows
+      // for transparent frameless windows.
       setPhase("annotate");
       setShapes([]);
       setCurrentShape(null);
