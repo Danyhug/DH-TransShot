@@ -47,14 +47,10 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 ### ocr.rs
 
-**`recognize_text(state, image_base64, language) -> Result<String, String>`**
-- 调用 `ocr::recognize()` 进行 OCR 识别
-- 平台无关的统一接口
-
 **`capture_and_ocr(state, monitor_index, x, y, width, height, language) -> Result<String, String>`**
 - 合并裁切+OCR 的单步命令，用于 `ocr_translate` 模式
 - 从 `AppState.frozen_screenshots` 取出冻结截图，在 `spawn_blocking` 中调用 `screenshot::capture_region_bytes()` 裁切为 JPEG 字节
-- 将 JPEG 字节直接传给 `ocr::recognize()`，避免了 `captureRegion` + `recognizeText` 分步调用时的 PNG 编码→base64→IPC→base64 解码→PNG 解码 往返开销
+- 将 JPEG 字节直接传给 `ocr::recognize()`，避免了分步调用时的 PNG 编码→base64→IPC→base64 解码→PNG 解码 往返开销
 
 ### translation.rs
 

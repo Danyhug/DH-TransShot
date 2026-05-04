@@ -38,10 +38,6 @@ export const defaultSettings: Settings = {
   "sample_rate": 44100
 }`,
   },
-  source_language: "auto",
-  target_language: "zh-CN",
-  hotkey_screenshot: "Alt+A",
-  hotkey_region: "Alt+S",
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({

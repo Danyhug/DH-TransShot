@@ -16,11 +16,11 @@
 
 ```typescript
 interface Settings {
-  llm: LlmConfig;
-  source_language: string;
-  target_language: string;
-  hotkey_screenshot: string;
-  hotkey_region: string;
+  base_url: string;
+  api_key: string;
+  translation: ServiceConfig;
+  ocr: ServiceConfig;
+  tts: ServiceConfig;
 }
 ```
 

@@ -33,10 +33,6 @@
 | `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096}` | 翻译服务配置 |
 | `ocr` | ServiceConfig | model=`"PaddlePaddle/PaddleOCR-VL-1.5"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096}` | OCR 服务配置 |
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置 |
-| `source_language` | String | `"auto"` | 源语言 |
-| `target_language` | String | `"zh-CN"` | 目标语言 |
-| `hotkey_screenshot` | String | `"Alt+A"` | 区域截图快捷键 |
-| `hotkey_region` | String | `"Alt+S"` | 区域翻译快捷键 |
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`

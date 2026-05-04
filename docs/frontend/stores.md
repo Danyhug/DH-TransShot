@@ -64,10 +64,6 @@
     model: "FunAudioLLM/CosyVoice2-0.5B",
     extra: '{\n  "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",\n  "speed": 1.0,\n  "response_format": "mp3",\n  "sample_rate": 44100\n}',
   },
-  source_language: "auto",
-  target_language: "zh-CN",
-  hotkey_screenshot: "Alt+A",
-  hotkey_region: "Alt+S",
 }
 ```
 

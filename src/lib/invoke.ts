@@ -19,13 +19,6 @@ export async function getFrozenScreenshot(monitorIndex: number): Promise<Screens
   return invoke("get_frozen_screenshot", { monitorIndex });
 }
 
-export async function recognizeText(
-  imageBase64: string,
-  language: string
-): Promise<string> {
-  return invoke("recognize_text", { imageBase64, language });
-}
-
 export async function captureAndOcr(
   monitorIndex: number,
   x: number,

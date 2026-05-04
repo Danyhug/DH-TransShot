@@ -28,10 +28,6 @@ pub struct Settings {
     pub translation: ServiceConfig,
     pub ocr: ServiceConfig,
     pub tts: ServiceConfig,
-    pub source_language: String,
-    pub target_language: String,
-    pub hotkey_screenshot: String,
-    pub hotkey_region: String,
 }
 
 fn default_base_url() -> String {
@@ -73,10 +69,6 @@ impl Default for Settings {
   "sample_rate": 44100
 }"#,
             ),
-            source_language: "auto".to_string(),
-            target_language: "zh-CN".to_string(),
-            hotkey_screenshot: "Alt+A".to_string(),
-            hotkey_region: "Alt+S".to_string(),
         }
     }
 }

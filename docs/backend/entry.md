@@ -56,7 +56,7 @@ pub fn run() {
 
 **注册的命令：**
 - `start_region_select`、`capture_region`、`get_frozen_screenshot`
-- `recognize_text`
+- `capture_and_ocr`
 - `translate_text`
 - `get_settings`、`save_settings`
 - `read_clipboard`、`copy_image_to_clipboard`

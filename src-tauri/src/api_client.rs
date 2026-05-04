@@ -5,18 +5,18 @@ use serde::Deserialize;
 
 /// Shared Chat Completions response structures (OpenAI-compatible).
 #[derive(Deserialize)]
-pub struct ChatResponse {
-    pub choices: Vec<ChatChoice>,
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
 }
 
 #[derive(Deserialize)]
-pub struct ChatChoice {
-    pub message: ChatMessage,
+struct ChatChoice {
+    message: ChatMessage,
 }
 
 #[derive(Deserialize)]
-pub struct ChatMessage {
-    pub content: String,
+struct ChatMessage {
+    content: String,
 }
 
 /// Build the full Chat Completions endpoint URL from a base_url.

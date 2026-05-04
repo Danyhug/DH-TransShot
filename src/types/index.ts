@@ -4,10 +4,6 @@ export interface Settings {
   translation: ServiceConfig;
   ocr: ServiceConfig;
   tts: ServiceConfig;
-  source_language: string;
-  target_language: string;
-  hotkey_screenshot: string;
-  hotkey_region: string;
 }
 
 export interface ServiceConfig {

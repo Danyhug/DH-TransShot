@@ -41,9 +41,8 @@
 3. 主窗口不弹出
 
 **ocr_translate 模式：**
-1. `captureRegion(x, y, width, height)` — 裁切选区图片
-2. `recognizeText(imageBase64, sourceLang)` — OCR 识别
-3. `setSourceText(ocrText)` — 填入源文本框
+1. `captureAndOcr(x, y, width, height, sourceLang)` — 裁切选区 + OCR 识别
+2. `setSourceText(ocrText)` — 填入源文本框
 4. 若文本非空：`translate(ocrText)` — LLM 翻译
 5. 主窗口由覆盖层关闭回调恢复位置 + show + focus
 
@@ -88,7 +87,7 @@
 - **依赖**：
   - `hooks/useScreenshot`、`hooks/useTranslation`
   - `stores/translationStore`、`stores/settingsStore`
-  - `lib/invoke`（captureRegion、recognizeText、copyImageToClipboard）
+  - `lib/invoke`（captureRegion、captureAndOcr、copyImageToClipboard）
   - `components/*`（TitleBar、TranslationPanel、SettingsDialog、ScreenshotOverlay）
 - **被依赖**：`main.tsx` / `screenshot.tsx` 作为 Vite 入口
 

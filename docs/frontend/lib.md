@@ -22,7 +22,7 @@
 |------|------|--------|-------------|
 | `startRegionSelect(mode)` | `mode: string` | `Promise<void>` | `start_region_select` |
 | `captureRegion(x, y, width, height)` | 4 个 number | `Promise<string>` | `capture_region` |
-| `recognizeText(imageBase64, language)` | 2 个 string | `Promise<string>` | `recognize_text` |
+| `captureAndOcr(x, y, width, height, language)` | 4 个 number + string | `Promise<string>` | `capture_and_ocr` |
 | `translateText(text, sourceLang, targetLang)` | 3 个 string | `Promise<string>` | `translate_text` |
 | `getSettings()` | — | `Promise<Settings>` | `get_settings` |
 | `saveSettings(settings)` | `settings: Settings` | `Promise<void>` | `save_settings` |
