@@ -44,6 +44,10 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 info!("[Tray] 点击: 区域翻译");
                 let _ = app.emit("tray-action", "ocr_translate");
             }
+            "clipboard_translate" => {
+                info!("[Tray] 点击: 翻译选中文本");
+                let _ = app.emit("tray-action", "clipboard_translate");
+            }
             "quit" => {
                 info!("[Tray] 点击: 退出");
                 app.exit(0);

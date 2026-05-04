@@ -10,7 +10,7 @@ mod tts;
 
 use config::{AppState, Settings};
 use log::{info, warn};
-use tauri::Manager;
+use tauri::{Manager, RunEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +71,15 @@ pub fn run() {
             info!("[Setup] 全局快捷键注册完成");
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let RunEvent::Reopen { .. } = event {
+                info!("[App] Dock 图标点击，显示主窗口");
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        });
 }
