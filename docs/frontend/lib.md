@@ -21,14 +21,16 @@
 | 函数 | 参数 | 返回值 | 对应后端命令 |
 |------|------|--------|-------------|
 | `startRegionSelect(mode)` | `mode: string` | `Promise<void>` | `start_region_select` |
-| `captureRegion(x, y, width, height)` | 4 个 number | `Promise<string>` | `capture_region` |
-| `captureAndOcr(x, y, width, height, language)` | 4 个 number + string | `Promise<string>` | `capture_and_ocr` |
+| `captureRegion(monitorIndex, x, y, width, height)` | 5 个 number | `Promise<string>` | `capture_region` |
+| `getFrozenScreenshot(monitorIndex)` | `monitorIndex: number` | `Promise<ScreenshotInitEvent>` | `get_frozen_screenshot` |
+| `captureAndOcr(monitorIndex, x, y, width, height, language)` | 5 个 number + string | `Promise<string>` | `capture_and_ocr` |
 | `translateText(text, sourceLang, targetLang)` | 3 个 string | `Promise<string>` | `translate_text` |
 | `getSettings()` | — | `Promise<Settings>` | `get_settings` |
 | `saveSettings(settings)` | `settings: Settings` | `Promise<void>` | `save_settings` |
 | `readClipboard()` | — | `Promise<string>` | `read_clipboard` |
 | `readSelectedText()` | — | `Promise<string>` | `read_selected_text` |
 | `copyImageToClipboard(imageBase64)` | `imageBase64: string` | `Promise<void>` | `copy_image_to_clipboard` |
+| `synthesizeSpeech(text)` | `text: string` | `Promise<string>` | `synthesize_speech` |
 
 **注意：** Tauri invoke 的参数名使用 camelCase，Tauri 会自动转换为后端的 snake_case。
 

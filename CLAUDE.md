@@ -93,6 +93,7 @@ appLog.error("[Settings] 配置保存失败: " + String(e));
    - `[Settings]` — 配置读写（commands/settings.rs）
    - `[Hotkey]` — 快捷键（hotkey.rs）
    - `[Tray]` — 系统托盘（tray.rs）
+   - `[TTS]` — TTS 语音合成（tts/mod.rs）
 2. **日志级别**：
    - `info!` — 命令入口、API 请求/响应状态、操作完成
    - `warn!` — 配置缺失、API Key 为空等非致命情况
@@ -127,6 +128,7 @@ error!("[OCR] API 错误 ({}): {}", status, body);
 | [docs/backend/config.md](docs/backend/config.md) | `config/` | Settings 结构体、AppState 全局状态 |
 | [docs/backend/tray.md](docs/backend/tray.md) | `tray.rs` | 系统托盘菜单与事件路由 |
 | [docs/backend/hotkey.md](docs/backend/hotkey.md) | `hotkey.rs` | 全局快捷键注册与事件发射 |
+| [docs/backend/tts.md](docs/backend/tts.md) | `tts/` | TTS 语音合成（OpenAI 兼容 Audio Speech API） |
 
 ### 前端模块（src/）
 
@@ -151,30 +153,45 @@ error!("[OCR] API 错误 ({}): {}", status, body);
 src-tauri/src/
 ├── lib.rs                      # Tauri Builder 入口
 ├── main.rs                     # 程序入口
+├── api_client.rs               # 共享 HTTP 客户端（Chat Completions 请求）
 ├── commands/                   # Tauri 命令层（前后端 RPC 接口）
+│   ├── mod.rs
 │   ├── screenshot.rs
 │   ├── ocr.rs
 │   ├── translation.rs
-│   └── settings.rs
+│   ├── settings.rs
+│   ├── clipboard.rs
+│   └── tts.rs
 ├── screenshot/                 # 截图捕获
+│   ├── mod.rs
 │   └── capture.rs
-├── ocr/                        # OCR 识别（平台分发）
-│   ├── apple_vision.rs
-│   └── windows_ocr.rs
+├── ocr/                        # OCR 识别（视觉大模型）
+│   └── mod.rs
 ├── translation/                # LLM 翻译
+│   ├── mod.rs
 │   └── openai_compat.rs
 ├── config/                     # 配置与全局状态
+│   ├── mod.rs
 │   └── settings.rs
+├── tts/                        # TTS 语音合成
+│   └── mod.rs
 ├── tray.rs                     # 系统托盘
 └── hotkey.rs                   # 全局快捷键
 
 src/
 ├── App.tsx                     # 主窗口编排
 ├── ScreenshotApp.tsx           # 截图覆盖层
+├── DebugApp.tsx                # 调试日志窗口
+├── SettingsApp.tsx             # 设置窗口
+├── main.tsx                    # 主窗口 React 入口
+├── screenshot.tsx              # 覆盖层 React 入口
+├── debug.tsx                   # 调试窗口 React 入口
+├── settings.tsx                # 设置窗口 React 入口
 ├── components/                 # UI 组件
 │   ├── translation/
 │   ├── screenshot/
 │   ├── settings/
+│   ├── debug/
 │   └── common/
 ├── hooks/                      # 业务逻辑 Hooks
 ├── stores/                     # Zustand 状态管理

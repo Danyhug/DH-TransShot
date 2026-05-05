@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`ServiceConfig`、`merge_extra` |
+| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`MonitorInfo`、`merge_extra` |
 | `src-tauri/src/config/settings.rs` | 配置结构体定义、默认值和工具函数 |
 
 ## 核心逻辑
@@ -83,7 +83,7 @@ DEFAULT_API_KEY=sk-your-api-key
 
 `lib.rs` 在 `run()` 函数最前面调用 `dotenvy::dotenv()` 加载环境变量，随后 `Settings::default()` 通过 `std::env::var()` 读取顶层 `base_url` 和 `api_key`。
 
-每个服务有独立的默认配置（翻译：`tencent/Hunyuan-MT-7B`，OCR：`PaddlePaddle/PaddleOCR-VL-1.5`，TTS：`FunAudioLLM/CosyVoice2-0.5B`），且包含优化过的 extra 参数默认值。
+每个服务有独立的默认配置（翻译：`tencent/Hunyuan-MT-7B`，OCR：`Qwen/Qwen3.5-4B`，TTS：`FunAudioLLM/CosyVoice2-0.5B`），且包含优化过的 extra 参数默认值。
 
 ## 依赖关系
 

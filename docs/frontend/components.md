@@ -14,7 +14,7 @@
 | `src/components/translation/TextArea.tsx` | 通用文本域（透明背景，由外层卡片提供样式） |
 | `src/components/translation/ActionButtons.tsx` | 朗读 + 复制按钮（内嵌于卡片底部） |
 | `src/components/screenshot/ScreenshotOverlay.tsx` | 全屏截图覆盖层：冻结截图背景 + 拖拽选区 |
-| `src/components/settings/SettingsDialog.tsx` | 设置弹窗：LLM 配置 + 快捷键展示 |
+| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 快捷键展示 |
 | `src/components/debug/LogPanel.tsx` | 调试日志面板：日志列表 + 剪贴板内容 + 操作按钮 |
 | `src/components/common/TitleBar.tsx` | 自定义标题栏：左侧 Pin 置顶 + 右侧功能图标（相机、裁切框、日志、开关） |
 

@@ -54,11 +54,11 @@
 {
   translation: {
     model: "tencent/Hunyuan-MT-7B",
-    extra: '{\n  "temperature": 0.3,\n  "top_p": 0.9,\n  "max_tokens": 4096\n}',
+    extra: '{\n  "temperature": 0.3,\n  "top_p": 0.9,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
   },
   ocr: {
-    model: "PaddlePaddle/PaddleOCR-VL-1.5",
-    extra: '{\n  "temperature": 0.1,\n  "top_p": 0.9,\n  "max_tokens": 4096\n}',
+    model: "Qwen/Qwen3.5-4B",
+    extra: '{\n  "temperature": 0.1,\n  "top_p": 0.9,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
   },
   tts: {
     model: "FunAudioLLM/CosyVoice2-0.5B",
@@ -76,7 +76,7 @@
 - `setSettings(settings)` — 整体替换设置
 - `updateService(service, key, value)` — 更新指定服务配置的单个字段
   - `service`: `"translation"` | `"ocr"` | `"tts"`
-  - `key`: `ServiceConfig` 的字段名（`base_url` / `api_key` / `model` / `extra`）
+  - `key`: `ServiceConfig` 的字段名（`model` / `extra`）
   - `value`: 新值
 
 ## 依赖关系

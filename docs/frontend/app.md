@@ -10,8 +10,12 @@
 |------|------|
 | `src/App.tsx` | 主窗口根组件：事件监听、操作路由、工作流编排 |
 | `src/ScreenshotApp.tsx` | 截图覆盖层根组件：包装 ScreenshotOverlay |
+| `src/DebugApp.tsx` | 调试日志窗口根组件：包装 LogPanel |
+| `src/SettingsApp.tsx` | 设置窗口根组件：包装 SettingsPanel |
 | `src/main.tsx` | 主窗口 React 入口（渲染 App 到 #root） |
 | `src/screenshot.tsx` | 覆盖层 React 入口（渲染 ScreenshotApp 到 #root） |
+| `src/debug.tsx` | 调试窗口 React 入口（渲染 DebugApp 到 #root） |
+| `src/settings.tsx` | 设置窗口 React 入口（渲染 SettingsApp 到 #root） |
 
 ## 核心逻辑
 
@@ -61,7 +65,7 @@
 │ │ 翻译结果                  │ │  ← 翻译结果卡片
 │ │ 🔊 📋                    │ │  ← ActionButtons 在卡片内底部
 │ └──────────────────────────┘ │
-│  SettingsDialog (modal)      │  ← 设置弹窗（条件渲染）
+│  SettingsPanel (独立窗口)      │  ← 设置窗口（吸附在主窗口左侧）
 └──────────────────────────────┘
 ```
 
@@ -88,7 +92,7 @@
   - `hooks/useScreenshot`、`hooks/useTranslation`
   - `stores/translationStore`、`stores/settingsStore`
   - `lib/invoke`（captureRegion、captureAndOcr、copyImageToClipboard）
-  - `components/*`（TitleBar、TranslationPanel、SettingsDialog、ScreenshotOverlay）
+  - `components/*`（TitleBar、TranslationPanel、SettingsPanel、ScreenshotOverlay）
 - **被依赖**：`main.tsx` / `screenshot.tsx` 作为 Vite 入口
 
 ## 修改指南

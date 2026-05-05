@@ -9,7 +9,6 @@
 | 文件 | 职责 |
 |------|------|
 | `src-tauri/src/translation/mod.rs` | 模块声明，公开导出 `OpenAiCompatProvider` |
-| `src-tauri/src/translation/provider.rs` | Translation Provider trait（预留扩展，当前未使用） |
 | `src-tauri/src/translation/openai_compat.rs` | OpenAI 兼容 Chat Completions 客户端实现 |
 
 ## 核心逻辑
@@ -50,4 +49,4 @@
 - `base_url` 末尾的 `/` 由 `api_client` 自动去除
 - 空 `api_key` 时不发送 Authorization header（适配 Ollama 等本地服务）
 - 如需支持流式翻译，需将 HTTP 响应改为 SSE 流处理
-- 新增翻译 Provider（如直接调用 Google Translate API）可实现 `provider.rs` 中的 trait
+- 新增翻译 Provider（如直接调用 Google Translate API）可在 `translation/` 下新建模块，参考 `openai_compat.rs` 实现

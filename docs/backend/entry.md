@@ -45,7 +45,7 @@ pub fn run() {
 2. 注册插件：`tauri_plugin_log`（日志持久化，必须第一个注册）、`tauri_plugin_global_shortcut`、`tauri_plugin_store`
 3. 注册全局状态：`app_state`
 4. 注册 Tauri 命令（截图 3 个 + OCR 1 个 + 翻译 1 个 + 设置 2 个 + 剪贴板 2 个）
-5. setup 阶段：加载持久化配置 → 初始化系统托盘 → 注册全局快捷键
+5. setup 阶段：加载持久化配置 → 初始化系统托盘 → 注册全局快捷键 → 拦截主窗口关闭事件改为隐藏 → macOS Dock 图标点击显示主窗口
 
 **日志插件（tauri-plugin-log）：**
 - 必须作为第一个插件注册，确保 setup 阶段的 `info!`/`warn!` 调用已有日志后端
@@ -59,7 +59,8 @@ pub fn run() {
 - `capture_and_ocr`
 - `translate_text`
 - `get_settings`、`save_settings`
-- `read_clipboard`、`copy_image_to_clipboard`
+- `read_clipboard`、`copy_image_to_clipboard`、`read_selected_text`
+- `synthesize_speech`
 
 ### main.rs
 

@@ -66,7 +66,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 **`save_settings(state, settings) -> Result<(), String>`**
 - 替换 `AppState.settings` 的内容
-- 当前仅内存持久化，重启丢失
+- 通过 `tauri_plugin_store` 持久化到 `settings.json`，启动时自动加载
 
 ### tts.rs
 
