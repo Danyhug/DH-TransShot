@@ -49,15 +49,17 @@ impl Default for Settings {
                 r#"{
   "temperature": 0.3,
   "top_p": 0.9,
-  "max_tokens": 4096
+  "max_tokens": 4096,
+  "enable_thinking": false
 }"#,
             ),
             ocr: ServiceConfig::with_model_and_extra(
-                "PaddlePaddle/PaddleOCR-VL-1.5",
+                "Qwen/Qwen3.5-4B",
                 r#"{
   "temperature": 0.1,
   "top_p": 0.9,
-  "max_tokens": 4096
+  "max_tokens": 4096,
+  "enable_thinking": false
 }"#,
             ),
             tts: ServiceConfig::with_model_and_extra(
@@ -66,7 +68,8 @@ impl Default for Settings {
   "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",
   "speed": 1.0,
   "response_format": "mp3",
-  "sample_rate": 44100
+  "sample_rate": 44100,
+  "enable_thinking": false
 }"#,
             ),
         }

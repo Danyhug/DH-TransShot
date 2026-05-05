@@ -18,15 +18,17 @@ export const defaultSettings: Settings = {
     extra: `{
   "temperature": 0.3,
   "top_p": 0.9,
-  "max_tokens": 4096
+  "max_tokens": 4096,
+  "enable_thinking": false
 }`,
   },
   ocr: {
-    model: "PaddlePaddle/PaddleOCR-VL-1.5",
+    model: "Qwen/Qwen3.5-4B",
     extra: `{
   "temperature": 0.1,
   "top_p": 0.9,
-  "max_tokens": 4096
+  "max_tokens": 4096,
+  "enable_thinking": false
 }`,
   },
   tts: {
@@ -35,7 +37,8 @@ export const defaultSettings: Settings = {
   "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",
   "speed": 1.0,
   "response_format": "mp3",
-  "sample_rate": 44100
+  "sample_rate": 44100,
+  "enable_thinking": false
 }`,
   },
 };

@@ -30,9 +30,9 @@
 |------|------|--------|------|
 | `base_url` | String | 环境变量 `DEFAULT_BASE_URL`，未设置时 `"https://api.siliconflow.cn"` | 全局共享 API 基础 URL（翻译/OCR/TTS 共用） |
 | `api_key` | String | 环境变量 `DEFAULT_API_KEY`，未设置时 `""` | 全局共享 API 密钥（翻译/OCR/TTS 共用） |
-| `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096}` | 翻译服务配置 |
-| `ocr` | ServiceConfig | model=`"PaddlePaddle/PaddleOCR-VL-1.5"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096}` | OCR 服务配置 |
-| `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置 |
+| `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | 翻译服务配置 |
+| `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
+| `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`
