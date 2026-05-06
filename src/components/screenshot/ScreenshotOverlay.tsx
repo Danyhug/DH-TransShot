@@ -398,6 +398,7 @@ export function ScreenshotOverlay() {
       // for transparent frameless windows.
       setPhase("annotate");
       setShapes([]);
+      emit("close-other-overlays", getCurrentWindow().label);
       setCurrentShape(null);
       setShowStylePicker(false);
       setFontSize(Math.round(img.naturalHeight / DEFAULT_FONT_SIZE_RATIO));
@@ -490,10 +491,10 @@ export function ScreenshotOverlay() {
     renderCanvas();
   }, [phase, shapes, currentShape, renderCanvas]);
 
-  // --- Confirm: render final image and emit ---
-  const handleConfirm = useCallback(async () => {
+  // --- Render annotated image to an offscreen canvas ---
+  const renderAnnotatedCanvas = useCallback((): HTMLCanvasElement | null => {
     const img = croppedImageElRef.current;
-    if (!img) return;
+    if (!img) return null;
 
     const canvas = document.createElement("canvas");
     canvas.width = img.naturalWidth;
@@ -555,6 +556,14 @@ export function ScreenshotOverlay() {
       ctx.restore();
     }
 
+    return canvas;
+  }, []);
+
+  // --- Confirm: render final image and emit ---
+  const handleConfirm = useCallback(async () => {
+    const canvas = renderAnnotatedCanvas();
+    if (!canvas) return;
+
     const dataUrl = canvas.toDataURL("image/png");
     const base64 = dataUrl.split(",")[1];
 
@@ -574,7 +583,19 @@ export function ScreenshotOverlay() {
     });
 
     await emit("close-all-overlays");
-  }, []);
+  }, [renderAnnotatedCanvas]);
+
+  const handleDownload = useCallback(() => {
+    const canvas = renderAnnotatedCanvas();
+    if (!canvas) return;
+
+    const dataUrl = canvas.toDataURL("image/png");
+    const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const link = document.createElement("a");
+    link.download = `dh_${ts}.png`;
+    link.href = dataUrl;
+    link.click();
+  }, [renderAnnotatedCanvas]);
 
   // --- Annotate phase: keyboard shortcuts ---
   useEffect(() => {
@@ -938,7 +959,7 @@ export function ScreenshotOverlay() {
           }}
         >
           {/* Transparent annotation layer over the original frozen background */}
-          <div className="relative inline-block shrink-0 border border-white/30">
+          <div className="relative inline-block shrink-0 border-[3px] border-white/80 shadow-[0_0_0_1px_rgba(0,0,0,0.3)]">
             <canvas
               ref={canvasRef}
               style={{
@@ -1159,6 +1180,13 @@ export function ScreenshotOverlay() {
               className="w-8 h-8 flex items-center justify-center rounded-md text-red-400 hover:bg-red-400/20 text-lg"
             >
               ✗
+            </button>
+            <button
+              title="下载图片"
+              onClick={handleDownload}
+              className="w-8 h-8 flex items-center justify-center rounded-md text-white/60 hover:bg-white/10 text-base"
+            >
+              ↓
             </button>
 
             {/* Undo hint */}

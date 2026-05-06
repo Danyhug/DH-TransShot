@@ -13,6 +13,16 @@ fn close_all_overlays(app: &tauri::AppHandle) {
     }
 }
 
+/// Close all screenshot overlay windows except the one with label `keep_label`.
+fn close_other_overlays(app: &tauri::AppHandle, keep_label: &str) {
+    for win in app.webview_windows().values() {
+        if win.label().starts_with("screenshot-overlay") && win.label() != keep_label {
+            info!("[Screenshot] 关闭其他覆盖层窗口: {}", win.label());
+            let _ = win.close();
+        }
+    }
+}
+
 /// Start region selection: capture per-monitor screenshots, store them in AppState,
 /// then create screenshot overlay windows for ALL monitors.
 #[tauri::command]
@@ -201,6 +211,14 @@ pub async fn start_region_select(
     app.once("close-all-overlays", move |_| {
         info!("[Screenshot] 收到 close-all-overlays 事件");
         close_all_overlays(&app_clone);
+    });
+
+    // 7. Listen for close-other-overlays event (entering annotate — close all but current)
+    let app_clone = app.clone();
+    app.listen("close-other-overlays", move |event| {
+        let keep: String = serde_json::from_str(event.payload()).unwrap_or_default();
+        info!("[Screenshot] 收到 close-other-overlays 事件, keep={}", keep);
+        close_other_overlays(&app_clone, &keep);
     });
 
     Ok(())
