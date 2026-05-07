@@ -26,6 +26,7 @@ anyhow = "1"
 log = "0.4"
 tauri-plugin-log = "2"
 dotenvy = "0.15"
+tauri-plugin-dialog = "2.7.1"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.8"

@@ -31,6 +31,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::screenshot::start_region_select,
@@ -43,6 +44,7 @@ pub fn run() {
             commands::clipboard::read_clipboard,
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::read_selected_text,
+            commands::clipboard::save_file,
             commands::tts::synthesize_speech,
         ])
         .setup(|app| {

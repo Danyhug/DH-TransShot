@@ -239,6 +239,20 @@ pub async fn read_clipboard() -> Result<String, String> {
     result
 }
 
+/// Save base64 PNG data to a file path chosen by the user.
+#[tauri::command]
+pub async fn save_file(path: String, base64_data: String) -> Result<(), String> {
+    info!("[Clipboard] save_file, path={}, base64 size={}", path, base64_data.len());
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("base64 decode failed: {}", e))?;
+    std::fs::write(&path, &bytes)
+        .map_err(|e| format!("write file failed: {}", e))?;
+    info!("[Clipboard] 文件已保存: {}, size={}", path, bytes.len());
+    Ok(())
+}
+
 /// Copy an image (base64 PNG) to the system clipboard.
 #[tauri::command]
 pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String> {

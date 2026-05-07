@@ -42,6 +42,7 @@
     "store:allow-save",
     "store:allow-load",
     "store:allow-clear",
+    "dialog:allow-save",
     "log:default"
   ]
 }

@@ -58,6 +58,10 @@ export async function copyImageToClipboard(imageBase64: string): Promise<void> {
   return invoke("copy_image_to_clipboard", { imageBase64 });
 }
 
+export async function saveFile(path: string, base64Data: string): Promise<void> {
+  return invoke("save_file", { path, base64Data });
+}
+
 export async function synthesizeSpeech(text: string): Promise<string> {
   return invoke("synthesize_speech", { text });
 }

@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getFrozenScreenshot } from "../../lib/invoke";
+import { getFrozenScreenshot, saveFile } from "../../lib/invoke";
+import { save } from "@tauri-apps/plugin-dialog";
 import { appLog } from "../../stores/logStore";
 import type { WindowRect, MonitorInfo } from "../../types";
 
@@ -585,16 +586,27 @@ export function ScreenshotOverlay() {
     await emit("close-all-overlays");
   }, [renderAnnotatedCanvas]);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async () => {
     const canvas = renderAnnotatedCanvas();
     if (!canvas) return;
 
     const dataUrl = canvas.toDataURL("image/png");
+    const base64 = dataUrl.split(",")[1];
     const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-    const link = document.createElement("a");
-    link.download = `dh_${ts}.png`;
-    link.href = dataUrl;
-    link.click();
+    const defaultName = `dh_${ts}.png`;
+
+    const filePath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "Images", extensions: ["png"] }],
+    });
+    if (!filePath) return;
+
+    try {
+      await saveFile(filePath, base64);
+      appLog.info("[Overlay] 图片已保存: " + filePath);
+    } catch (e) {
+      appLog.error("[Overlay] 图片保存失败: " + String(e));
+    }
   }, [renderAnnotatedCanvas]);
 
   // --- Annotate phase: keyboard shortcuts ---
