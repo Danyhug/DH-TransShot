@@ -1,10 +1,10 @@
 use crate::config::AppState;
 use crate::config::MonitorInfo;
 use log::{info, error};
-use tauri::{Listener, Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// Close all existing screenshot overlay windows (labels matching "screenshot-overlay-*").
-fn close_all_overlays(app: &tauri::AppHandle) {
+pub fn close_all_overlays(app: &tauri::AppHandle) {
     for win in app.webview_windows().values() {
         if win.label().starts_with("screenshot-overlay") {
             info!("[Screenshot] 关闭覆盖层窗口: {}", win.label());
@@ -14,7 +14,7 @@ fn close_all_overlays(app: &tauri::AppHandle) {
 }
 
 /// Close all screenshot overlay windows except the one with label `keep_label`.
-fn close_other_overlays(app: &tauri::AppHandle, keep_label: &str) {
+pub fn close_other_overlays(app: &tauri::AppHandle, keep_label: &str) {
     for win in app.webview_windows().values() {
         if win.label().starts_with("screenshot-overlay") && win.label() != keep_label {
             info!("[Screenshot] 关闭其他覆盖层窗口: {}", win.label());
@@ -205,21 +205,6 @@ pub async fn start_region_select(
     }
 
     info!("[Screenshot] 所有覆盖层窗口已创建, count={}", monitors.len());
-
-    // 6. Listen for close-all-overlays event (once — auto-removed after first trigger)
-    let app_clone = app.clone();
-    app.once("close-all-overlays", move |_| {
-        info!("[Screenshot] 收到 close-all-overlays 事件");
-        close_all_overlays(&app_clone);
-    });
-
-    // 7. Listen for close-other-overlays event (entering annotate — close all but current)
-    let app_clone = app.clone();
-    app.listen("close-other-overlays", move |event| {
-        let keep: String = serde_json::from_str(event.payload()).unwrap_or_default();
-        info!("[Screenshot] 收到 close-other-overlays 事件, keep={}", keep);
-        close_other_overlays(&app_clone, &keep);
-    });
 
     Ok(())
 }

@@ -10,7 +10,7 @@ mod tts;
 
 use config::{AppState, Settings};
 use log::{info, warn};
-use tauri::{Manager, RunEvent, WindowEvent};
+use tauri::{Listener, Manager, RunEvent, WindowEvent};
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +71,19 @@ pub fn run() {
             info!("[Setup] 系统托盘初始化完成");
             hotkey::setup_hotkeys(app)?;
             info!("[Setup] 全局快捷键注册完成");
+
+            // Register overlay close listeners once at app level (not per screenshot session)
+            let app_handle = app.handle().clone();
+            app.listen("close-all-overlays", move |_| {
+                info!("[Setup] 收到 close-all-overlays 事件");
+                commands::screenshot::close_all_overlays(&app_handle);
+            });
+            let app_handle = app.handle().clone();
+            app.listen("close-other-overlays", move |event| {
+                let keep: String = serde_json::from_str(event.payload()).unwrap_or_default();
+                info!("[Setup] 收到 close-other-overlays 事件, keep={}", keep);
+                commands::screenshot::close_other_overlays(&app_handle, &keep);
+            });
 
             // 拦截主窗口关闭事件，改为隐藏（macOS + Windows 统一行为）
             if let Some(window) = app.get_webview_window("main") {
