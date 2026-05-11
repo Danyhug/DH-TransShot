@@ -98,7 +98,9 @@ export default function App() {
           }
           appLog.info("[App] 图片已复制到剪贴板");
         } else if (mode === "ocr_translate") {
-          // OCR + Translate mode: merged capture+OCR → set source text → translate → show window
+          // OCR + Translate mode: show main window, then capture+OCR → set source text → translate
+          await getCurrentWindow().show();
+          await getCurrentWindow().setFocus();
           const sessionId = ++ocrSessionRef.current;
           cancelPendingTranslation();
           appLog.info("[App] ocr_translate 模式，开始 capture+OCR... (session=" + sessionId + ")");

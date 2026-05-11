@@ -185,20 +185,12 @@ pub async fn start_region_select(
             }
         };
 
-        // Show main window when the FIRST overlay closes (ocr_translate mode)
+        // Log when the first overlay closes
         if i == 0 {
             let frozen_mode = mode.clone();
-            let app_clone = app.clone();
             overlay.on_window_event(move |event| {
                 if let tauri::WindowEvent::Destroyed = event {
                     info!("[Screenshot] 主覆盖层窗口关闭, mode={}", frozen_mode);
-                    if frozen_mode == "ocr_translate" {
-                        if let Some(main_win) = app_clone.get_webview_window("main") {
-                            info!("[Screenshot] ocr_translate 模式，显示主窗口");
-                            let _ = main_win.show();
-                            let _ = main_win.set_focus();
-                        }
-                    }
                 }
             });
         }
