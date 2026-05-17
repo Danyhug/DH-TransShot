@@ -4,11 +4,18 @@ export interface Settings {
   translation: ServiceConfig;
   ocr: ServiceConfig;
   tts: ServiceConfig;
+  hotkeys: HotkeyConfig;
 }
 
 export interface ServiceConfig {
   model: string;
   extra: string;
+}
+
+export interface HotkeyConfig {
+  screenshot: string;
+  ocr_translate: string;
+  clipboard_translate: string;
 }
 
 export interface RegionSelectEvent {

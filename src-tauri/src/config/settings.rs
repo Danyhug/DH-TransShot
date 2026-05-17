@@ -20,6 +20,38 @@ impl ServiceConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HotkeyConfig {
+    #[serde(default = "default_hotkey_screenshot")]
+    pub screenshot: String,
+    #[serde(default = "default_hotkey_ocr_translate")]
+    pub ocr_translate: String,
+    #[serde(default = "default_hotkey_clipboard_translate")]
+    pub clipboard_translate: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            screenshot: default_hotkey_screenshot(),
+            ocr_translate: default_hotkey_ocr_translate(),
+            clipboard_translate: default_hotkey_clipboard_translate(),
+        }
+    }
+}
+
+fn default_hotkey_screenshot() -> String {
+    "Alt+A".to_string()
+}
+
+fn default_hotkey_ocr_translate() -> String {
+    "Alt+S".to_string()
+}
+
+fn default_hotkey_clipboard_translate() -> String {
+    "Alt+Q".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -28,6 +60,8 @@ pub struct Settings {
     pub translation: ServiceConfig,
     pub ocr: ServiceConfig,
     pub tts: ServiceConfig,
+    #[serde(default)]
+    pub hotkeys: HotkeyConfig,
 }
 
 fn default_base_url() -> String {
@@ -72,6 +106,7 @@ impl Default for Settings {
   "enable_thinking": false
 }"#,
             ),
+            hotkeys: HotkeyConfig::default(),
         }
     }
 }

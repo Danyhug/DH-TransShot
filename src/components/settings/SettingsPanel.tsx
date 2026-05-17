@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, saveSettings } from "../../lib/invoke";
+import { getSettings, saveSettings, suspendHotkeys, resumeHotkeys } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
 import { defaultSettings } from "../../stores/settingsStore";
-import type { Settings, ServiceConfig } from "../../types";
+import { HotkeyInput } from "./HotkeyInput";
+import type { Settings, ServiceConfig, HotkeyConfig } from "../../types";
 
 type TabName = "translation" | "ocr" | "tts";
 
@@ -150,6 +151,14 @@ export function SettingsPanel() {
       .catch((e) => appLog.error("[Settings] 设置窗口: 配置加载失败: " + String(e)));
   }, []);
 
+  // 设置面板期间挂起全局快捷键，避免录入新组合时被系统拦截
+  useEffect(() => {
+    suspendHotkeys().catch((e) => appLog.warn("[Settings] suspend_hotkeys 失败: " + String(e)));
+    return () => {
+      resumeHotkeys().catch((e) => appLog.warn("[Settings] resume_hotkeys 失败: " + String(e)));
+    };
+  }, []);
+
   const updateService = useCallback((service: TabName, key: keyof ServiceConfig, value: string) => {
     setSettings((prev) => ({
       ...prev,
@@ -158,6 +167,12 @@ export function SettingsPanel() {
   }, []);
 
   const save = useCallback(async () => {
+    const hk = settings.hotkeys;
+    if (!hk?.screenshot?.trim() || !hk?.ocr_translate?.trim() || !hk?.clipboard_translate?.trim()) {
+      appLog.warn("[Settings] 快捷键不能为空");
+      alert("快捷键不能为空，请为三个动作都设置快捷键");
+      return;
+    }
     try {
       appLog.info("[Settings] 保存配置, translation.model=" + settings.translation.model + ", ocr.model=" + settings.ocr.model);
       await saveSettings(settings);
@@ -281,24 +296,32 @@ export function SettingsPanel() {
           onChange={(key, value) => updateService(activeTab, key, value)}
         />
 
-        {/* Hotkeys info */}
+        {/* Hotkeys */}
         <div style={{ marginTop: "14px" }}>
           <h3 className="text-xs font-medium" style={{ color: "var(--color-text-secondary)", marginBottom: "6px" }}>
             快捷键
           </h3>
-          <div className="space-y-0.5 text-xs" style={{ color: "var(--color-text-secondary)" }}>
-            <div className="flex justify-between">
-              <span>区域截图</span>
-              <span style={{ color: "var(--color-text)" }}>⌥A</span>
-            </div>
-            <div className="flex justify-between">
-              <span>区域翻译</span>
-              <span style={{ color: "var(--color-text)" }}>⌥S</span>
-            </div>
-            <div className="flex justify-between">
-              <span>翻译选中文本</span>
-              <span style={{ color: "var(--color-text)" }}>⌥Q</span>
-            </div>
+          <div className="space-y-1.5">
+            {([
+              { key: "screenshot", label: "区域截图" },
+              { key: "ocr_translate", label: "区域翻译" },
+              { key: "clipboard_translate", label: "翻译选中文本" },
+            ] as { key: keyof HotkeyConfig; label: string }[]).map(({ key, label }) => (
+              <div key={key} className="flex items-center justify-between gap-2">
+                <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+                  {label}
+                </span>
+                <HotkeyInput
+                  value={settings.hotkeys?.[key] ?? ""}
+                  onChange={(v) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      hotkeys: { ...prev.hotkeys, [key]: v },
+                    }))
+                  }
+                />
+              </div>
+            ))}
           </div>
         </div>
       </div>

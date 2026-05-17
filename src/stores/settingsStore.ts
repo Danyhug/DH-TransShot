@@ -41,6 +41,11 @@ export const defaultSettings: Settings = {
   "enable_thinking": false
 }`,
   },
+  hotkeys: {
+    screenshot: "Alt+A",
+    ocr_translate: "Alt+S",
+    clipboard_translate: "Alt+Q",
+  },
 };
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({

@@ -1,4 +1,5 @@
 use crate::config::{AppState, Settings};
+use crate::hotkey;
 use log::{info, error};
 use tauri::State;
 
@@ -44,5 +45,7 @@ pub async fn save_settings(
         e.to_string()
     })?;
     info!("[Settings] 配置保存成功");
+    // 应用新快捷键（立即生效）
+    hotkey::reload_hotkeys(&app);
     Ok(())
 }

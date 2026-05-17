@@ -65,3 +65,11 @@ export async function saveFile(path: string, base64Data: string): Promise<void> 
 export async function synthesizeSpeech(text: string): Promise<string> {
   return invoke("synthesize_speech", { text });
 }
+
+export async function suspendHotkeys(): Promise<void> {
+  return invoke("suspend_hotkeys");
+}
+
+export async function resumeHotkeys(): Promise<void> {
+  return invoke("resume_hotkeys");
+}

@@ -29,7 +29,9 @@ pub fn run() {
                 ])
                 .build(),
         )
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(hotkey::handle_shortcut_event)
+            .build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
@@ -46,6 +48,8 @@ pub fn run() {
             commands::clipboard::read_selected_text,
             commands::clipboard::save_file,
             commands::tts::synthesize_speech,
+            hotkey::suspend_hotkeys,
+            hotkey::resume_hotkeys,
         ])
         .setup(|app| {
             info!("[Setup] 应用启动，加载持久化配置...");

@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`MonitorInfo`、`merge_extra` |
+| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`HotkeyConfig`、`MonitorInfo`、`merge_extra` |
 | `src-tauri/src/config/settings.rs` | 配置结构体定义、默认值和工具函数 |
 
 ## 核心逻辑
@@ -33,6 +33,19 @@
 | `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | 翻译服务配置 |
 | `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
+| `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
+
+**`HotkeyConfig` — 快捷键配置**
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `screenshot` | String | `"Alt+A"` | 区域截图快捷键 |
+| `ocr_translate` | String | `"Alt+S"` | 区域翻译快捷键 |
+| `clipboard_translate` | String | `"Alt+Q"` | 翻译选中文本快捷键 |
+
+- 字符串使用 `+` 分隔，修饰键支持 `Alt`/`Option`/`Ctrl`/`Control`/`Shift`/`Cmd`/`Command`/`Super`/`CmdOrCtrl`，主键支持 `A-Z`、`0-9`、`F1-F24`、`Space`、`Enter`、`Tab`、`Escape`、方向键、标点符号等
+- 每个字段使用 `#[serde(default = "...")]`，旧版 settings.json（无 `hotkeys` 字段）反序列化时自动填充默认值
+- 修改后由 `save_settings` 触发 `hotkey::reload_hotkeys` 立即生效
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`

@@ -14,7 +14,8 @@
 | `src/components/translation/TextArea.tsx` | 通用文本域（透明背景，由外层卡片提供样式） |
 | `src/components/translation/ActionButtons.tsx` | 朗读 + 复制按钮（内嵌于卡片底部） |
 | `src/components/screenshot/ScreenshotOverlay.tsx` | 全屏截图覆盖层：冻结截图背景 + 拖拽选区 |
-| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 快捷键展示 |
+| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 自定义快捷键 |
+| `src/components/settings/HotkeyInput.tsx` | 单个快捷键的键盘捕获输入框（点击 → 按下组合键 → 自动填充 "Alt+A" 格式） |
 | `src/components/debug/LogPanel.tsx` | 调试日志面板：日志列表 + 剪贴板内容 + 操作按钮 |
 | `src/components/common/TitleBar.tsx` | 自定义标题栏：左侧 Pin 置顶 + 右侧功能图标（相机、裁切框、日志、开关） |
 
@@ -151,8 +152,19 @@
 - 独立设置窗口（非模态弹窗）
 - 标签页切换：翻译 / OCR / TTS 服务配置
 - 表单字段：API 地址、API 密钥（password）、模型、自定义参数
-- 快捷键参考区（只读展示）
-- 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置
+- 快捷键区：使用 `HotkeyInput` 组件可视化录入三个动作的快捷键（screenshot / ocr_translate / clipboard_translate）
+- 保存前校验三个快捷键非空，否则 alert 阻断
+- mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`），unmount 时调用 `resume_hotkeys` 恢复
+- 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置；后端 `save_settings` 命令会调用 `hotkey::reload_hotkeys` 让新快捷键立即生效
+
+### HotkeyInput.tsx
+
+- Props：`value`（如 `"Alt+A"`） / `onChange`
+- 点击按钮进入「录入」模式（虚线边框 + 主题色提示文字）
+- 在 window keydown 事件（capture 阶段）监听：忽略纯修饰键，将 `e.altKey/ctrlKey/shiftKey/metaKey` + 主键 code 组合为 `"Alt+A"` 等字符串
+- `codeToToken` 将浏览器 `KeyboardEvent.code`（如 `KeyA`、`Digit1`、`F2`、`Comma`）转为 Rust `Shortcut::from_str` 期望的 token（`A`、`1`、`F2`、`,`）
+- 校验：至少一个修饰键；Esc（无修饰）取消录入；失焦自动退出
+- `formatShortcut` 在 macOS 下把字符串显示为符号（`⌥A`、`⌃⇧S`），Win/Linux 下原样显示
 
 ### LogPanel.tsx
 

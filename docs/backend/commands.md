@@ -64,9 +64,11 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 **`get_settings(state) -> Result<Settings, String>`**
 - 返回 `AppState.settings` 的克隆
 
-**`save_settings(state, settings) -> Result<(), String>`**
+**`save_settings(app, state, settings) -> Result<(), String>`**
 - 替换 `AppState.settings` 的内容
 - 通过 `tauri_plugin_store` 持久化到 `settings.json`，启动时自动加载
+- 清空 `tts_cache`（settings 中的 tts 配置可能已变）
+- 调用 `hotkey::reload_hotkeys(&app)` 重新注册自定义快捷键，立即生效
 
 ### tts.rs
 

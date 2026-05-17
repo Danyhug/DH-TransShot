@@ -202,12 +202,16 @@ src/
 
 ## 全局快捷键
 
-| 快捷键 | 功能 |
+默认快捷键如下，用户可在设置面板中自定义（保存后立即生效，无需重启）：
+
+| 默认快捷键 | 功能 |
 |--------|------|
 | `Alt+A` (macOS: `⌥A`) | 区域截图（框选 → 裁切 → 复制到剪贴板） |
 | `Alt+S` (macOS: `⌥S`) | 区域翻译（框选 → 裁切 → OCR → 翻译 → 显示） |
 | `Alt+Q` (macOS: `⌥Q`) | 翻译选中文本（Accessibility API 读取选中文字 → 翻译 → 显示；若 API 失败则回退到剪贴板模拟） |
 | 标题栏按钮「T」 | 翻译剪贴板内容（直接读取剪贴板文本 → 翻译） |
+
+快捷键字符串格式由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析，支持 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K`、`Alt+F1`、`Ctrl+Space` 等组合（修饰键支持 `Alt`/`Option`/`Ctrl`/`Shift`/`Cmd`/`Super`/`CmdOrCtrl`）。详情见 [docs/backend/hotkey.md](docs/backend/hotkey.md)。
 
 ## 常用命令
 
