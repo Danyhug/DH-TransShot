@@ -24,7 +24,7 @@ type Tool = "rect" | "arrow" | "pen" | "text";
 const PRESET_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#ffffff"];
 const DEFAULT_STROKE_WIDTH = 3;
 const DEFAULT_FONT_SIZE_RATIO = 8;
-const ANNOTATION_TOOLBAR_MIN_WIDTH = 360;
+const ANNOTATION_TOOLBAR_MIN_WIDTH = 420;
 const COLOR_TOOLTIP_OFFSET = 14;
 
 // --- Selection types ---
@@ -71,6 +71,8 @@ export function ScreenshotOverlay() {
     value: string;
   } | null>(null);
   const [canvasDisplaySize, setCanvasDisplaySize] = useState<{ width: number; height: number } | null>(null);
+  const [selectedTextIndex, setSelectedTextIndex] = useState<number | null>(null);
+  const [editingTextIndex, setEditingTextIndex] = useState<number | null>(null);
 
   // --- Refs for select phase ---
   const isSelectingRef = useRef(false);
@@ -99,6 +101,10 @@ export function ScreenshotOverlay() {
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
   const textInputRef = useRef<typeof textInput>(null);
+  const selectedTextIndexRef = useRef<number | null>(null);
+  const editingTextIndexRef = useRef<number | null>(null);
+  const draggingTextRef = useRef<{ index: number; offsetX: number; offsetY: number } | null>(null);
+  const selectingShapeRef = useRef(false);
 
 
   // Keep refs in sync
@@ -115,6 +121,32 @@ export function ScreenshotOverlay() {
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
   useEffect(() => { croppedImageElRef.current = croppedImageEl; }, [croppedImageEl]);
   useEffect(() => { textInputRef.current = textInput; }, [textInput]);
+  useEffect(() => { selectedTextIndexRef.current = selectedTextIndex; }, [selectedTextIndex]);
+  useEffect(() => { editingTextIndexRef.current = editingTextIndex; }, [editingTextIndex]);
+
+  useEffect(() => {
+    if (selectingShapeRef.current) return;
+    const i = selectedTextIndexRef.current;
+    if (i == null) return;
+    setShapes((prev) =>
+      prev.map((s, k) => (k === i && s.type === "text" ? { ...s, fontSize } : s))
+    );
+  }, [fontSize]);
+
+  useEffect(() => {
+    if (selectingShapeRef.current) return;
+    const i = selectedTextIndexRef.current;
+    if (i == null) return;
+    setShapes((prev) =>
+      prev.map((s, k) => (k === i && s.type === "text" ? { ...s, color } : s))
+    );
+  }, [color]);
+
+  useEffect(() => {
+    if (selectedTextIndex == null) return;
+    const s = shapes[selectedTextIndex];
+    if (!s || s.type !== "text") setSelectedTextIndex(null);
+  }, [shapes, selectedTextIndex]);
 
   // --- Load frozen screenshot on mount ---
   useEffect(() => {
@@ -213,9 +245,14 @@ export function ScreenshotOverlay() {
     loadScreenshot();
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (textInputRef.current) return;
-
       if (e.key === "Escape") {
+        if (textInputRef.current) {
+          textInputRef.current = null;
+          setTextInput(null);
+          editingTextIndexRef.current = null;
+          setEditingTextIndex(null);
+          return;
+        }
         emit("close-all-overlays");
       }
     };
@@ -424,7 +461,7 @@ export function ScreenshotOverlay() {
     const allShapes = [...shapesRef.current];
     if (currentShape) allShapes.push(currentShape);
 
-    for (const shape of allShapes) {
+    allShapes.forEach((shape, idx) => {
       ctx.save();
       switch (shape.type) {
         case "rect": {
@@ -476,16 +513,29 @@ export function ScreenshotOverlay() {
           break;
         }
         case "text": {
+          if (editingTextIndex !== null && idx === editingTextIndex) break;
           ctx.fillStyle = shape.color;
           ctx.font = `${shape.fontSize}px sans-serif`;
           ctx.textBaseline = "top";
           ctx.fillText(shape.text, shape.x, shape.y);
+          if (
+            selectedTextIndex !== null &&
+            idx === selectedTextIndex &&
+            idx < shapesRef.current.length
+          ) {
+            const w = ctx.measureText(shape.text).width;
+            ctx.strokeStyle = "#3b82f6";
+            ctx.setLineDash([4, 3]);
+            ctx.lineWidth = 1;
+            ctx.strokeRect(shape.x - 3, shape.y - 3, w + 6, shape.fontSize * 1.2 + 6);
+            ctx.setLineDash([]);
+          }
           break;
         }
       }
       ctx.restore();
-    }
-  }, [currentShape]);
+    });
+  }, [currentShape, selectedTextIndex, editingTextIndex]);
 
   useEffect(() => {
     if (phase !== "annotate") return;
@@ -614,12 +664,22 @@ export function ScreenshotOverlay() {
     if (phase !== "annotate") return;
 
     const handleKey = (e: KeyboardEvent) => {
-      if (textInput) return;
-
       if (e.key === "Escape") {
+        if (textInputRef.current) {
+          textInputRef.current = null;
+          setTextInput(null);
+          editingTextIndexRef.current = null;
+          setEditingTextIndex(null);
+          return;
+        }
+        if (selectedTextIndexRef.current !== null) {
+          setSelectedTextIndex(null);
+          return;
+        }
         emit("close-all-overlays");
         return;
       }
+      if (textInput) return;
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
         e.preventDefault();
         setShapes((prev) => prev.slice(0, -1));
@@ -631,9 +691,9 @@ export function ScreenshotOverlay() {
         return;
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (e.key === "1") setTool("rect");
-        if (e.key === "2") setTool("arrow");
-        if (e.key === "3") setTool("pen");
+        if (e.key === "1") { setTool("rect"); setSelectedTextIndex(null); }
+        if (e.key === "2") { setTool("arrow"); setSelectedTextIndex(null); }
+        if (e.key === "3") { setTool("pen"); setSelectedTextIndex(null); }
         if (e.key === "4") setTool("text");
       }
     };
@@ -646,10 +706,31 @@ export function ScreenshotOverlay() {
     if (!pendingTextInput) return;
 
     const value = pendingTextInput.value.trim();
-    if (!value) return;
-
+    const editingIdx = editingTextIndexRef.current;
     textInputRef.current = null;
     setTextInput(null);
+    editingTextIndexRef.current = null;
+    setEditingTextIndex(null);
+
+    if (editingIdx !== null) {
+      if (!value) {
+        setShapes((prev) => prev.filter((_, i) => i !== editingIdx));
+        if (selectedTextIndexRef.current === editingIdx) {
+          setSelectedTextIndex(null);
+        }
+      } else {
+        setShapes((prev) =>
+          prev.map((s, i) =>
+            i === editingIdx && s.type === "text"
+              ? { ...s, text: value, fontSize: fontSizeRef.current, color: colorRef.current }
+              : s
+          )
+        );
+      }
+      return;
+    }
+
+    if (!value) return;
 
     setShapes((prev) => [
       ...prev,
@@ -662,6 +743,13 @@ export function ScreenshotOverlay() {
         fontSize: fontSizeRef.current,
       },
     ]);
+  }, []);
+
+  const cancelTextInput = useCallback(() => {
+    textInputRef.current = null;
+    setTextInput(null);
+    editingTextIndexRef.current = null;
+    setEditingTextIndex(null);
   }, []);
 
   // --- Select phase mouse handlers ---
@@ -839,18 +927,60 @@ export function ScreenshotOverlay() {
     };
   }, []);
 
+  const hitTestText = useCallback((px: number, py: number): number => {
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!ctx) return -1;
+    for (let i = shapesRef.current.length - 1; i >= 0; i--) {
+      const s = shapesRef.current[i];
+      if (s.type !== "text") continue;
+      ctx.save();
+      ctx.font = `${s.fontSize}px sans-serif`;
+      const w = ctx.measureText(s.text).width;
+      ctx.restore();
+      const h = s.fontSize * 1.2;
+      if (px >= s.x - 4 && px <= s.x + w + 4 && py >= s.y - 4 && py <= s.y + h + 4) {
+        return i;
+      }
+    }
+    return -1;
+  }, []);
+
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
     setShowStylePicker(false);
-    if (textInput) return; // Don't draw while text input is open
 
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
 
     if (toolRef.current === "text") {
+      const hit = hitTestText(pos.x, pos.y);
+      if (hit >= 0) {
+        const s = shapesRef.current[hit];
+        if (s.type === "text") {
+          if (textInputRef.current) commitTextInput();
+          selectingShapeRef.current = true;
+          setSelectedTextIndex(hit);
+          setFontSize(s.fontSize);
+          setColor(s.color);
+          queueMicrotask(() => { selectingShapeRef.current = false; });
+          draggingTextRef.current = {
+            index: hit,
+            offsetX: pos.x - s.x,
+            offsetY: pos.y - s.y,
+          };
+        }
+        return;
+      }
+      if (textInputRef.current) {
+        commitTextInput();
+        return;
+      }
+      setSelectedTextIndex(null);
       setTextInput({ x: pos.x, y: pos.y, value: "" });
       return;
     }
+
+    if (textInput) return; // Don't draw while text input is open
 
     drawingRef.current = true;
 
@@ -879,12 +1009,24 @@ export function ScreenshotOverlay() {
       });
       penPointsRef.current = [pos];
     }
-  }, [textInput, canvasToImageCoords]);
+  }, [textInput, canvasToImageCoords, hitTestText, commitTextInput]);
 
   const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const pos = canvasToImageCoords(e, canvas);
+
+    if (draggingTextRef.current) {
+      const d = draggingTextRef.current;
+      setShapes((prev) =>
+        prev.map((s, i) =>
+          i === d.index && s.type === "text"
+            ? { ...s, x: pos.x - d.offsetX, y: pos.y - d.offsetY }
+            : s
+        )
+      );
+      return;
+    }
 
     if (!drawingRef.current) return;
 
@@ -919,6 +1061,10 @@ export function ScreenshotOverlay() {
   }, [canvasToImageCoords]);
 
   const handleCanvasMouseUp = useCallback(() => {
+    if (draggingTextRef.current) {
+      draggingTextRef.current = null;
+      return;
+    }
     if (!drawingRef.current) return;
     drawingRef.current = false;
 
@@ -927,6 +1073,27 @@ export function ScreenshotOverlay() {
       setCurrentShape(null);
     }
   }, [currentShape]);
+
+  const handleCanvasDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (toolRef.current !== "text") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const pos = canvasToImageCoords(e, canvas);
+    const hit = hitTestText(pos.x, pos.y);
+    if (hit < 0) return;
+    const s = shapesRef.current[hit];
+    if (s.type !== "text") return;
+
+    draggingTextRef.current = null;
+    setSelectedTextIndex(null);
+    selectingShapeRef.current = true;
+    setFontSize(s.fontSize);
+    setColor(s.color);
+    queueMicrotask(() => { selectingShapeRef.current = false; });
+    editingTextIndexRef.current = hit;
+    setEditingTextIndex(hit);
+    setTextInput({ x: s.x, y: s.y, value: s.text });
+  }, [canvasToImageCoords, hitTestText]);
 
   const renderColorTooltip = () => {
     if (!hoverColor) return null;
@@ -984,6 +1151,7 @@ export function ScreenshotOverlay() {
               onMouseMove={handleCanvasMouseMove}
               onMouseUp={handleCanvasMouseUp}
               onMouseLeave={handleCanvasMouseUp}
+              onDoubleClick={handleCanvasDoubleClick}
             />
 
             {/* Text input overlay — positioned in canvas pixel space, scaled by CSS */}
@@ -994,36 +1162,57 @@ export function ScreenshotOverlay() {
               const displayH = canvas.clientHeight;
               const scaleX = displayW / canvas.width;
               const scaleY = displayH / canvas.height;
+              const inputFontPx = fontSize * scaleX;
+              const inputLeft = textInput.x * scaleX;
+              const inputTop = textInput.y * scaleY;
               return (
-                <input
-                  ref={(el) => { if (el) requestAnimationFrame(() => el.focus()); }}
-                  type="text"
-                  spellCheck={false}
-                  autoComplete="off"
-                  value={textInput.value}
-                  onChange={(e) => setTextInput({ ...textInput, value: e.target.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      commitTextInput();
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      textInputRef.current = null;
-                      setTextInput(null);
-                    }
-                  }}
-                  onBlur={() => commitTextInput()}
-                  className="absolute text-white bg-black/60 border border-white/40 rounded px-2 py-1 outline-none"
-                  style={{
-                    left: textInput.x * scaleX,
-                    top: textInput.y * scaleY,
-                    fontSize: `${fontSize * scaleX}px`,
-                    minWidth: "120px",
-                    zIndex: 60,
-                  }}
-                />
+                <>
+                  <input
+                    ref={(el) => {
+                      if (el) {
+                        requestAnimationFrame(() => {
+                          el.focus();
+                          if (editingTextIndexRef.current !== null) el.select();
+                        });
+                      }
+                    }}
+                    type="text"
+                    spellCheck={false}
+                    autoComplete="off"
+                    value={textInput.value}
+                    onChange={(e) => setTextInput({ ...textInput, value: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        commitTextInput();
+                      } else if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        cancelTextInput();
+                      }
+                    }}
+                    onBlur={() => commitTextInput()}
+                    className="absolute text-white bg-black/60 border border-white/40 rounded px-2 py-1 outline-none"
+                    style={{
+                      left: inputLeft,
+                      top: inputTop,
+                      fontSize: `${inputFontPx}px`,
+                      minWidth: "120px",
+                      zIndex: 60,
+                    }}
+                  />
+                  <div
+                    className="absolute pointer-events-none whitespace-nowrap rounded bg-black/55 text-white/75 px-1.5 py-0.5 text-[10px] leading-none"
+                    style={{
+                      left: inputLeft,
+                      top: inputTop + inputFontPx + 14,
+                      zIndex: 60,
+                    }}
+                  >
+                    Enter 确认 · Esc 取消
+                  </div>
+                </>
               );
             })()}
           </div>
@@ -1047,7 +1236,11 @@ export function ScreenshotOverlay() {
               <button
                 key={t.id}
                 title={t.title}
-                onClick={() => { setTool(t.id); setShowStylePicker(false); }}
+                onClick={() => {
+                  setTool(t.id);
+                  setShowStylePicker(false);
+                  if (t.id !== "text") setSelectedTextIndex(null);
+                }}
                 className="w-8 h-8 flex items-center justify-center rounded-md text-sm font-medium transition-colors"
                 style={{
                   background: tool === t.id ? "rgba(255,255,255,0.2)" : "transparent",
@@ -1064,12 +1257,33 @@ export function ScreenshotOverlay() {
             {/* Color and stroke picker */}
             <div className="relative">
               <button
-                title={tool === "text" ? "颜色和字号" : "颜色和线宽"}
+                title={tool === "text" ? "颜色 · 字号" : "颜色 · 线宽"}
                 onClick={() => setShowStylePicker((prev) => !prev)}
-                className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
+                className="h-8 px-2 gap-1.5 inline-flex items-center rounded-md hover:bg-white/10 transition-colors"
+                style={{
+                  background: showStylePicker ? "rgba(255,255,255,0.12)" : "transparent",
+                }}
               >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ color: "rgba(255,255,255,0.85)" }}
+                >
+                  <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.9-.5-1.4 0-1.1.9-2 2-2H17a4 4 0 0 0 4-4c0-4-4-7-9-7z" />
+                  <circle cx="7.5" cy="10.5" r="1" fill="currentColor" />
+                  <circle cx="12" cy="7.5" r="1" fill="currentColor" />
+                  <circle cx="16.5" cy="10.5" r="1" fill="currentColor" />
+                </svg>
+                <span className="text-white/90 text-xs tabular-nums leading-none">
+                  {tool === "text" ? fontSize : strokeWidth}
+                </span>
                 <span
-                  className="w-5 h-5 rounded-full border-2 border-white/80 shadow-sm"
+                  className="w-3.5 h-3.5 rounded-full border border-white/60"
                   style={{ background: color }}
                 />
               </button>
