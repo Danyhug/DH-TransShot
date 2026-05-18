@@ -1169,12 +1169,7 @@ export function ScreenshotOverlay() {
                 <>
                   <input
                     ref={(el) => {
-                      if (el) {
-                        requestAnimationFrame(() => {
-                          el.focus();
-                          if (editingTextIndexRef.current !== null) el.select();
-                        });
-                      }
+                      if (el) requestAnimationFrame(() => el.focus());
                     }}
                     type="text"
                     spellCheck={false}
