@@ -1,5 +1,7 @@
 # DH-TransShot
 
+[English](README_EN.md)
+
 截屏+翻译二合一桌面工具，支持 macOS 和 Windows。**本项目由 Vibe Coding 驱动开发。**
 
 ![Rust](https://img.shields.io/badge/Rust-000000?style=flat&logo=rust&logoColor=white)
