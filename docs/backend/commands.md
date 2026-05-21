@@ -94,8 +94,8 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 优先使用 macOS Accessibility API（`AXSelectedText` 属性），直接读取选中文字
 - 若 Accessibility API 失败或返回空，回退到剪贴板模拟：
   - 保存当前剪贴板内容
-  - macOS 下先确认 Option/Alt 已释放，避免 `Alt+Q` 后续模拟 `Cmd+C` 变成浏览器的 `Cmd+Option+C`
-  - 模拟 Cmd/Ctrl+C 复制选中文本
+  - macOS 下先确认 Option/Alt 已释放（`CGEventSourceFlagsState` 轮询）
+  - **模拟 Cmd+C 用 CGEvent 直接 post**，并通过 `CGEventSetFlags` 显式只设 Cmd 修饰位 —— 这样即使硬件层 Alt 状态尚未完全清零，目标应用也只会收到干净的 Cmd+C，不会被解析为 `Cmd+Option+C`（Chrome 的"检查元素"）。Windows 仍用 `SendKeys "^c"`
   - 等待 150ms 让剪贴板更新
   - 读取新剪贴板内容
   - 恢复原剪贴板内容

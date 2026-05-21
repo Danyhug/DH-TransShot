@@ -38,6 +38,74 @@ fn wait_for_option_key_release() -> bool {
     false
 }
 
+/// Post a synthetic Cmd+C via CGEvent with EXPLICIT modifier flags.
+///
+/// Why not osascript `keystroke "c" using command down`? AppleScript's keystroke
+/// merges its requested modifiers with any modifier keys the user is currently
+/// holding. When Alt+Q triggers our hotkey and we fall back to clipboard copy,
+/// the user's Alt may still be physically/logically pressed for a brief window
+/// — the synthesized Cmd+C then arrives as Cmd+Option+C, which Chrome reads as
+/// "Inspect Element" and pops the dev tools.
+///
+/// CGEventSetFlags overrides the event's modifier flags regardless of hardware
+/// state, so the target app receives a clean Cmd+C every time.
+#[cfg(target_os = "macos")]
+fn simulate_cmd_c_via_cgevent() -> Result<(), String> {
+    type CGEventRef = *mut std::ffi::c_void;
+    type CGEventSourceRef = *mut std::ffi::c_void;
+
+    extern "C" {
+        fn CGEventSourceCreate(state_id: i32) -> CGEventSourceRef;
+        fn CGEventCreateKeyboardEvent(
+            source: CGEventSourceRef,
+            virtual_key: u16,
+            key_down: bool,
+        ) -> CGEventRef;
+        fn CGEventSetFlags(event: CGEventRef, flags: u64);
+        fn CGEventPost(tap: u32, event: CGEventRef);
+        fn CFRelease(cf: *const std::ffi::c_void);
+    }
+
+    const KEY_C: u16 = 8;
+    const FLAG_COMMAND: u64 = 1 << 20; // kCGEventFlagMaskCommand
+    const HID_EVENT_TAP: u32 = 0; // kCGHIDEventTap
+    const COMBINED_SESSION_STATE: i32 = 0; // kCGEventSourceStateCombinedSessionState
+
+    unsafe {
+        let source = CGEventSourceCreate(COMBINED_SESSION_STATE);
+        if source.is_null() {
+            return Err("CGEventSourceCreate 失败".to_string());
+        }
+
+        let key_down = CGEventCreateKeyboardEvent(source, KEY_C, true);
+        let key_up = CGEventCreateKeyboardEvent(source, KEY_C, false);
+        if key_down.is_null() || key_up.is_null() {
+            if !key_down.is_null() {
+                CFRelease(key_down);
+            }
+            if !key_up.is_null() {
+                CFRelease(key_up);
+            }
+            CFRelease(source);
+            return Err("CGEventCreateKeyboardEvent 失败".to_string());
+        }
+
+        // Force flags = Cmd only — clears Alt/Shift/Ctrl that the user may still hold.
+        CGEventSetFlags(key_down, FLAG_COMMAND);
+        CGEventSetFlags(key_up, FLAG_COMMAND);
+
+        CGEventPost(HID_EVENT_TAP, key_down);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        CGEventPost(HID_EVENT_TAP, key_up);
+
+        CFRelease(key_down);
+        CFRelease(key_up);
+        CFRelease(source);
+    }
+
+    Ok(())
+}
+
 /// Read selected text from the currently focused application.
 /// Primary: macOS Accessibility API (AXSelectedText).
 /// Fallback: save clipboard → simulate Cmd/Ctrl+C → read → restore clipboard.
@@ -129,14 +197,8 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
             return Ok(String::new());
         }
 
-        let copy_result = std::process::Command::new("osascript")
-            .args(["-e", "tell application \"System Events\" to keystroke \"c\" using command down"])
-            .output()
-            .map_err(|e| format!("osascript failed: {}", e))?;
-
-        if !copy_result.status.success() {
-            let stderr = String::from_utf8_lossy(&copy_result.stderr);
-            warn!("[Clipboard] 模拟复制失败: {}", stderr);
+        if let Err(e) = simulate_cmd_c_via_cgevent() {
+            warn!("[Clipboard] CGEvent 模拟 Cmd+C 失败: {}", e);
         }
     }
 
