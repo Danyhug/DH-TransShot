@@ -14,20 +14,56 @@ fn shortcut_actions() -> &'static Mutex<HashMap<Shortcut, String>> {
     SHORTCUT_ACTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Poll the OS-level modifier state until Alt/Option is no longer held, then emit.
+/// This replaces a naive sleep — we don't depend on the Released ShortcutEvent
+/// (which can be dropped on macOS when focus shifts during the press), and we
+/// guarantee subsequent OS operations don't see a stale modifier state.
 fn emit_hotkey_action(app: AppHandle, action: String) {
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(120));
+        wait_for_modifier_release();
         let _ = app.emit("hotkey-action", action);
     });
 }
 
+/// Block (up to ~500ms) until the Alt/Option modifier is released.
+#[cfg(target_os = "macos")]
+fn wait_for_modifier_release() {
+    // kCGEventFlagMaskAlternate
+    const FLAG_ALT: u64 = 1 << 19;
+    extern "C" {
+        fn CGEventSourceFlagsState(state_id: u32) -> u64;
+    }
+    for _ in 0..20 {
+        let flags = unsafe { CGEventSourceFlagsState(1) };
+        if flags & FLAG_ALT == 0 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn wait_for_modifier_release() {
+    // Windows/Linux: a short fixed delay is sufficient — global hotkey delivery
+    // doesn't get stuck across focus changes the same way macOS Carbon does.
+    std::thread::sleep(std::time::Duration::from_millis(120));
+}
+
 /// Global shortcut event handler — dispatches based on SHORTCUT_ACTIONS map.
+///
+/// Acts on `Pressed`, NOT `Released`. On macOS, when a hotkey action steals
+/// keyboard focus (e.g. creating an overlay window), the user's modifier-key
+/// release can be delivered to the new front app instead of Carbon's hotkey
+/// system, leaving subsequent presses silently undelivered. Acting on Pressed
+/// avoids that class of failure; modifier-still-held side effects are handled
+/// inside `emit_hotkey_action` by waiting for the modifier to release before
+/// emitting.
 pub fn handle_shortcut_event(
     app: &AppHandle,
     shortcut: &Shortcut,
     event: tauri_plugin_global_shortcut::ShortcutEvent,
 ) {
-    if event.state != ShortcutState::Released {
+    if event.state != ShortcutState::Pressed {
         return;
     }
     let action = match shortcut_actions().lock() {

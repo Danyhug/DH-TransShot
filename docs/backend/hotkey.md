@@ -24,9 +24,16 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 注册为 plugin builder 级别的全局 handler（在 `lib.rs` 中通过 `Builder::with_handler` 装载）。
 
-- 只在 `ShortcutState::Released` 触发，避免按住 Alt/Option 期间继续执行后续模拟按键
-- 在 `SHORTCUT_ACTIONS` 中查找对应动作名，找到则 `emit("hotkey-action", action)`
-- 延迟 120ms emit，让操作系统先完成键盘事件分发
+- 只在 `ShortcutState::Pressed` 触发。**为什么不是 Released？** 在 macOS 上，当快捷键动作会抢占键盘焦点（例如打开截图覆盖层）时，用户后续松开修饰键（Alt/Option）的事件可能被送到新的前台应用，而不是 Carbon `RegisterEventHotKey` 系统。一旦 Carbon 漏收一次 Release，它会认为快捷键仍处于按下状态，**之后所有的相同按键都收不到 Pressed 事件**（典型症状：首次正常、后续失灵）。改用 Pressed 即可绕过这个状态机问题
+- 在 `SHORTCUT_ACTIONS` 中查找对应动作名，找到则交给 `emit_hotkey_action` 异步发送
+- 修饰键仍然按下的问题由 `emit_hotkey_action` 内部主动轮询处理，不依赖事件传递
+
+### `emit_hotkey_action(AppHandle, String)`
+
+后台线程中等待 Alt/Option 真正释放后再 `emit("hotkey-action", action)`：
+
+- **macOS**：调用 `CGEventSourceFlagsState(1)` 轮询底层修饰键状态，最长等待 500ms（20 × 25ms）。这样保证后续创建覆盖层、模拟按键等 OS 操作不会被残留的 Alt 状态污染
+- **Windows/Linux**：使用固定 120ms 延迟即可（这两个平台的全局快捷键不会出现 macOS 那种 Carbon 状态卡死问题）
 
 ### `parse_shortcut(&str) -> Result<Shortcut, String>`
 
@@ -89,3 +96,4 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 - `SHORTCUT_ACTIONS` 写入与 `register_multiple` 之间存在极短窗口期，事件回调中找不到 mapping 时静默忽略，不会 panic
 - 若需要在快捷键解析失败时阻断保存，前端 `SettingsPanel.save` 已做空值校验，可扩展为字符串格式校验
 - 不要在 `handle_shortcut_event` 内做耗时操作（如 IO / 锁等待），避免阻塞全局键盘事件循环
+- **不要把 handler 改回监听 `Released`**：这会重新引入"首次正常、后续失灵"的问题（详见 `handle_shortcut_event` 注释）。修饰键残留问题应通过 `emit_hotkey_action` 内部主动轮询解决，而不是依赖 OS 事件传递
