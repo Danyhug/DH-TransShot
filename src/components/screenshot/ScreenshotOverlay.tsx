@@ -1188,11 +1188,12 @@ export function ScreenshotOverlay() {
                       }
                     }}
                     onBlur={() => commitTextInput()}
-                    className="absolute text-white bg-black/60 border border-white/40 rounded px-2 py-1 outline-none"
+                    className="absolute bg-black/60 border border-white/40 rounded px-2 py-1 outline-none"
                     style={{
                       left: inputLeft,
                       top: inputTop,
                       fontSize: `${inputFontPx}px`,
+                      color,
                       minWidth: "120px",
                       zIndex: 60,
                     }}
