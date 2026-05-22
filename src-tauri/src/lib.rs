@@ -29,9 +29,7 @@ pub fn run() {
                 ])
                 .build(),
         )
-        .plugin(tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(hotkey::handle_shortcut_event)
-            .build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)

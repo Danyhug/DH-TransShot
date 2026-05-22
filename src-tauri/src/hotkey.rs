@@ -121,7 +121,13 @@ fn apply_hotkeys(app: &AppHandle, cfg: &HotkeyConfig) {
     }
 
     let gs = app.global_shortcut();
-    if let Err(e) = gs.register_multiple(to_register.iter().copied()) {
+    // Use on_shortcuts (per-shortcut handler stored in plugin) instead of
+    // register_multiple + with_handler (global handler). Both code paths walk
+    // the same `shortcuts_.lock().get(&e.id)` lookup inside the plugin, but in
+    // practice the per-shortcut path proved more reliable — switching to the
+    // global-handler architecture in commit d8a9e23 introduced occasional
+    // dropped events on macOS that the per-shortcut path didn't have.
+    if let Err(e) = gs.on_shortcuts(to_register.iter().copied(), handle_shortcut_event) {
         warn!("[Hotkey] 注册失败: {}", e);
     } else {
         info!(

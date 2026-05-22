@@ -22,7 +22,7 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 ### `handle_shortcut_event(&AppHandle, &Shortcut, ShortcutEvent)`
 
-注册为 plugin builder 级别的全局 handler（在 `lib.rs` 中通过 `Builder::with_handler` 装载）。
+注册为 per-shortcut handler（在 `apply_hotkeys` 中通过 `on_shortcuts(shortcuts, handle_shortcut_event)` 装载）。
 
 - 只在 `ShortcutState::Pressed` 触发。**为什么不是 Released？** 在 macOS 上，当快捷键动作会抢占键盘焦点（例如打开截图覆盖层）时，用户后续松开修饰键（Alt/Option）的事件可能被送到新的前台应用，而不是 Carbon `RegisterEventHotKey` 系统。一旦 Carbon 漏收一次 Release，它会认为快捷键仍处于按下状态，**之后所有的相同按键都收不到 Pressed 事件**（典型症状：首次正常、后续失灵）。改用 Pressed 即可绕过这个状态机问题
 - 在 `SHORTCUT_ACTIONS` 中查找对应动作名，找到则交给 `emit_hotkey_action` 异步发送
@@ -45,7 +45,9 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 - 遍历 `screenshot` / `ocr_translate` / `clipboard_translate` 三个动作
 - 解析失败 / 与同一批次内其他快捷键冲突 → 打 `warn` 日志并跳过该项（其他仍正常注册，避免一项错配置导致用户无快捷键可用）
-- 用新映射整体替换 `SHORTCUT_ACTIONS`，然后调用 `global_shortcut().register_multiple()` 批量注册
+- 用新映射整体替换 `SHORTCUT_ACTIONS`，然后调用 `global_shortcut().on_shortcuts(shortcuts, handle_shortcut_event)` 批量注册
+
+**为什么用 `on_shortcuts` 而不是 `register_multiple` + `with_handler`？** plugin 内部两条路径都走同一个 `shortcuts_.lock().get(&e.id)` 查表，理论上等价；但实测在 macOS 上 v2.3.1 的 global handler 路径偶尔会丢事件（提交 d8a9e23 切到 global handler 后引入的回归），per-shortcut handler 路径更稳定。
 
 ### `setup_hotkeys(&tauri::App) -> Result<()>`
 
@@ -85,15 +87,15 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 - **依赖**：`tauri::{AppHandle, Emitter, Manager}`、`tauri_plugin_global_shortcut`、`crate::config::{AppState, HotkeyConfig}`
 - **被依赖**：
-  - `lib.rs::run()` — `Builder::with_handler(hotkey::handle_shortcut_event)` 装载全局 handler；`setup()` 调用 `setup_hotkeys`
+  - `lib.rs::run()` — 构建 plugin 时**不再使用** `with_handler`；handler 改在 `apply_hotkeys` 中通过 `on_shortcuts` 按 shortcut 装载；`setup()` 调用 `setup_hotkeys`
   - `commands/settings.rs::save_settings` — 保存后调用 `reload_hotkeys` 立即生效
 - **事件消费者**：前端 `App.tsx` 监听 `"hotkey-action"` 事件
 
 ## 修改指南
 
 - 新增快捷键动作：在 `HotkeyConfig` 中加字段 → 在 `apply_hotkeys` 的 `entries` 数组追加条目 → 前端 `types/index.ts` 和 `SettingsPanel` 同步
-- 快捷键冲突（与系统或其他应用）会导致 `register_multiple` 返回 Err，目前只打 `warn` 日志，不阻断应用
-- `SHORTCUT_ACTIONS` 写入与 `register_multiple` 之间存在极短窗口期，事件回调中找不到 mapping 时静默忽略，不会 panic
+- 快捷键冲突（与系统或其他应用）会导致 `on_shortcuts` 返回 Err，目前只打 `warn` 日志，不阻断应用
+- `SHORTCUT_ACTIONS` 写入与 `on_shortcuts` 之间存在极短窗口期，事件回调中找不到 mapping 时静默忽略，不会 panic
 - 若需要在快捷键解析失败时阻断保存，前端 `SettingsPanel.save` 已做空值校验，可扩展为字符串格式校验
 - 不要在 `handle_shortcut_event` 内做耗时操作（如 IO / 锁等待），避免阻塞全局键盘事件循环
 - **不要把 handler 改回监听 `Released`**：这会重新引入"首次正常、后续失灵"的问题（详见 `handle_shortcut_event` 注释）。修饰键残留问题应通过 `emit_hotkey_action` 内部主动轮询解决，而不是依赖 OS 事件传递
