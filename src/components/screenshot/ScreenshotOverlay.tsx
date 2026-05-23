@@ -14,18 +14,47 @@ interface Point {
 }
 
 type Shape =
-  | { type: "rect"; x: number; y: number; w: number; h: number; color: string; strokeWidth: number }
+  | { type: "rect"; x: number; y: number; w: number; h: number; color: string; strokeWidth: number; radius: number }
   | { type: "arrow"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number }
   | { type: "pen"; points: Point[]; color: string; strokeWidth: number }
-  | { type: "text"; x: number; y: number; text: string; color: string; fontSize: number };
+  | { type: "text"; x: number; y: number; text: string; color: string; fontSize: number; bold: boolean };
 
 type Tool = "rect" | "arrow" | "pen" | "text";
 
 const PRESET_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#ffffff"];
 const DEFAULT_STROKE_WIDTH = 3;
 const DEFAULT_FONT_SIZE_RATIO = 8;
+const DEFAULT_RECT_RADIUS = 4;
+const DEFAULT_TEXT_BOLD = false;
 const ANNOTATION_TOOLBAR_MIN_WIDTH = 420;
 const COLOR_TOOLTIP_OFFSET = 14;
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  ctx.beginPath();
+  if (radius <= 0) {
+    ctx.rect(x, y, w, h);
+  } else {
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+  ctx.stroke();
+}
 
 // --- Selection types ---
 
@@ -61,7 +90,9 @@ export function ScreenshotOverlay() {
   const [tool, setTool] = useState<Tool>("rect");
   const [color, setColor] = useState("#ef4444");
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_STROKE_WIDTH);
+  const [rectRadius, setRectRadius] = useState(DEFAULT_RECT_RADIUS);
   const [fontSize, setFontSize] = useState(30);
+  const [textBold, setTextBold] = useState(DEFAULT_TEXT_BOLD);
   const [showStylePicker, setShowStylePicker] = useState(false);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [currentShape, setCurrentShape] = useState<Shape | null>(null);
@@ -96,7 +127,9 @@ export function ScreenshotOverlay() {
   const toolRef = useRef<Tool>("rect");
   const colorRef = useRef("#ef4444");
   const strokeWidthRef = useRef(DEFAULT_STROKE_WIDTH);
+  const rectRadiusRef = useRef(DEFAULT_RECT_RADIUS);
   const fontSizeRef = useRef(30);
+  const textBoldRef = useRef(DEFAULT_TEXT_BOLD);
   const drawingRef = useRef(false);
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
@@ -118,7 +151,9 @@ export function ScreenshotOverlay() {
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { strokeWidthRef.current = strokeWidth; }, [strokeWidth]);
+  useEffect(() => { rectRadiusRef.current = rectRadius; }, [rectRadius]);
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
+  useEffect(() => { textBoldRef.current = textBold; }, [textBold]);
   useEffect(() => { croppedImageElRef.current = croppedImageEl; }, [croppedImageEl]);
   useEffect(() => { textInputRef.current = textInput; }, [textInput]);
   useEffect(() => { selectedTextIndexRef.current = selectedTextIndex; }, [selectedTextIndex]);
@@ -141,6 +176,15 @@ export function ScreenshotOverlay() {
       prev.map((s, k) => (k === i && s.type === "text" ? { ...s, color } : s))
     );
   }, [color]);
+
+  useEffect(() => {
+    if (selectingShapeRef.current) return;
+    const i = selectedTextIndexRef.current;
+    if (i == null) return;
+    setShapes((prev) =>
+      prev.map((s, k) => (k === i && s.type === "text" ? { ...s, bold: textBold } : s))
+    );
+  }, [textBold]);
 
   useEffect(() => {
     if (selectedTextIndex == null) return;
@@ -467,7 +511,7 @@ export function ScreenshotOverlay() {
         case "rect": {
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = shape.strokeWidth;
-          ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
+          drawRoundedRect(ctx, shape.x, shape.y, shape.w, shape.h, shape.radius);
           break;
         }
         case "arrow": {
@@ -515,7 +559,7 @@ export function ScreenshotOverlay() {
         case "text": {
           if (editingTextIndex !== null && idx === editingTextIndex) break;
           ctx.fillStyle = shape.color;
-          ctx.font = `${shape.fontSize}px sans-serif`;
+          ctx.font = `${shape.bold ? "bold " : ""}${shape.fontSize}px sans-serif`;
           ctx.textBaseline = "top";
           ctx.fillText(shape.text, shape.x, shape.y);
           if (
@@ -559,7 +603,7 @@ export function ScreenshotOverlay() {
         case "rect": {
           ctx.strokeStyle = shape.color;
           ctx.lineWidth = shape.strokeWidth;
-          ctx.strokeRect(shape.x, shape.y, shape.w, shape.h);
+          drawRoundedRect(ctx, shape.x, shape.y, shape.w, shape.h, shape.radius);
           break;
         }
         case "arrow": {
@@ -598,7 +642,7 @@ export function ScreenshotOverlay() {
         }
         case "text": {
           ctx.fillStyle = shape.color;
-          ctx.font = `${shape.fontSize}px sans-serif`;
+          ctx.font = `${shape.bold ? "bold " : ""}${shape.fontSize}px sans-serif`;
           ctx.textBaseline = "top";
           ctx.fillText(shape.text, shape.x, shape.y);
           break;
@@ -722,7 +766,7 @@ export function ScreenshotOverlay() {
         setShapes((prev) =>
           prev.map((s, i) =>
             i === editingIdx && s.type === "text"
-              ? { ...s, text: value, fontSize: fontSizeRef.current, color: colorRef.current }
+              ? { ...s, text: value, fontSize: fontSizeRef.current, color: colorRef.current, bold: textBoldRef.current }
               : s
           )
         );
@@ -741,6 +785,7 @@ export function ScreenshotOverlay() {
         text: value,
         color: colorRef.current,
         fontSize: fontSizeRef.current,
+        bold: textBoldRef.current,
       },
     ]);
   }, []);
@@ -934,7 +979,7 @@ export function ScreenshotOverlay() {
       const s = shapesRef.current[i];
       if (s.type !== "text") continue;
       ctx.save();
-      ctx.font = `${s.fontSize}px sans-serif`;
+      ctx.font = `${s.bold ? "bold " : ""}${s.fontSize}px sans-serif`;
       const w = ctx.measureText(s.text).width;
       ctx.restore();
       const h = s.fontSize * 1.2;
@@ -962,6 +1007,7 @@ export function ScreenshotOverlay() {
           setSelectedTextIndex(hit);
           setFontSize(s.fontSize);
           setColor(s.color);
+          setTextBold(s.bold);
           queueMicrotask(() => { selectingShapeRef.current = false; });
           draggingTextRef.current = {
             index: hit,
@@ -998,6 +1044,7 @@ export function ScreenshotOverlay() {
         x: pos.x, y: pos.y, w: 0, h: 0,
         color: colorRef.current,
         strokeWidth: strokeWidthRef.current,
+        radius: rectRadiusRef.current,
       });
       penPointsRef.current = [pos]; // Store start point
     } else if (toolRef.current === "arrow") {
@@ -1048,6 +1095,7 @@ export function ScreenshotOverlay() {
         h: Math.abs(pos.y - start.y),
         color: colorRef.current,
         strokeWidth: strokeWidthRef.current,
+        radius: rectRadiusRef.current,
       });
     } else if (toolRef.current === "arrow") {
       const start = penPointsRef.current[0];
@@ -1089,6 +1137,7 @@ export function ScreenshotOverlay() {
     selectingShapeRef.current = true;
     setFontSize(s.fontSize);
     setColor(s.color);
+    setTextBold(s.bold);
     queueMicrotask(() => { selectingShapeRef.current = false; });
     editingTextIndexRef.current = hit;
     setEditingTextIndex(hit);
@@ -1193,6 +1242,7 @@ export function ScreenshotOverlay() {
                       left: inputLeft,
                       top: inputTop,
                       fontSize: `${inputFontPx}px`,
+                      fontWeight: textBold ? 700 : 400,
                       color,
                       minWidth: "120px",
                       zIndex: 60,
@@ -1279,9 +1329,23 @@ export function ScreenshotOverlay() {
                   {tool === "text" ? fontSize : strokeWidth}
                 </span>
                 <span
-                  className="w-3.5 h-3.5 rounded-full border border-white/60"
-                  style={{ background: color }}
-                />
+                  className="inline-flex flex-col items-stretch rounded-[5px] overflow-hidden shrink-0"
+                  style={{
+                    width: 18,
+                    height: 18,
+                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.25), 0 0 0 1px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <span className="block" style={{ height: 12, background: color }} />
+                  <span
+                    className="flex items-center justify-center"
+                    style={{ height: 6, background: "rgba(255,255,255,0.16)" }}
+                  >
+                    <svg viewBox="0 0 8 4" width="7" height="3.5" fill="rgba(255,255,255,0.8)">
+                      <path d="M0 0l4 4 4-4z" />
+                    </svg>
+                  </span>
+                </span>
               </button>
 
               {showStylePicker && (
@@ -1347,6 +1411,33 @@ export function ScreenshotOverlay() {
                           }}
                         />
                       </div>
+                      {tool === "rect" && (
+                        <>
+                          <div className="flex items-center justify-between text-white/60 text-xs mt-3 mb-2">
+                            <span>圆角</span>
+                            <span>{rectRadius}px</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0"
+                            max="40"
+                            step="1"
+                            value={rectRadius}
+                            onChange={(e) => setRectRadius(Number(e.target.value))}
+                            className="w-full accent-blue-500"
+                          />
+                          <div className="mt-3 h-10 rounded bg-white/5 flex items-center justify-center">
+                            <div
+                              style={{
+                                width: 80,
+                                height: 28,
+                                border: `${Math.max(1, Math.min(strokeWidth, 4))}px solid ${color}`,
+                                borderRadius: Math.min(rectRadius, 14),
+                              }}
+                            />
+                          </div>
+                        </>
+                      )}
                     </>
                   ) : (() => {
                     const imgH = croppedImageEl?.naturalHeight ?? 240;
@@ -1367,12 +1458,27 @@ export function ScreenshotOverlay() {
                           onChange={(e) => setFontSize(Number(e.target.value))}
                           className="w-full accent-blue-500"
                         />
+                        <div className="flex items-center justify-between mt-3">
+                          <span className="text-white/60 text-xs">加粗</span>
+                          <button
+                            onClick={() => setTextBold((v) => !v)}
+                            title={textBold ? "已加粗" : "未加粗"}
+                            className="w-8 h-6 flex items-center justify-center rounded text-xs font-bold transition-colors"
+                            style={{
+                              background: textBold ? "rgba(59,130,246,0.8)" : "rgba(255,255,255,0.08)",
+                              color: textBold ? "#fff" : "rgba(255,255,255,0.65)",
+                            }}
+                          >
+                            B
+                          </button>
+                        </div>
                         <div className="mt-3 h-8 rounded bg-white/5 flex items-center justify-center overflow-hidden">
                           <span
-                            className="font-medium truncate"
+                            className="truncate"
                             style={{
                               fontSize: Math.min(fontSize, maxFs) * (canvasRef.current ? canvasRef.current.clientWidth / canvasRef.current.width : 0.5),
                               color,
+                              fontWeight: textBold ? 700 : 500,
                             }}
                           >
                             Aa 文字预览
