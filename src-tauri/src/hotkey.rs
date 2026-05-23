@@ -2,6 +2,7 @@ use crate::config::{AppState, HotkeyConfig};
 use log::{info, warn};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -10,18 +11,35 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 /// Populated by setup_hotkeys / reload_hotkeys; consulted by the global handler.
 static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::new();
 
+/// When true, `reload_hotkeys` is a no-op. Set by `suspend_hotkeys` while the
+/// settings panel is recording new combinations, and cleared by `resume_hotkeys`.
+/// Without this guard, the delayed re-registration scheduled by
+/// `emit_hotkey_action` (or by overlay close) could fire during recording and
+/// re-arm the OLD shortcuts, blocking the user from capturing the new combo.
+static HOTKEYS_SUSPENDED: AtomicBool = AtomicBool::new(false);
+
 fn shortcut_actions() -> &'static Mutex<HashMap<Shortcut, String>> {
     SHORTCUT_ACTIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Poll the OS-level modifier state until Alt/Option is no longer held, then emit.
-/// This replaces a naive sleep — we don't depend on the Released ShortcutEvent
-/// (which can be dropped on macOS when focus shifts during the press), and we
-/// guarantee subsequent OS operations don't see a stale modifier state.
+/// Wait for Alt to release, emit the action, then schedule a deferred
+/// re-registration of all hotkeys.
+///
+/// Re-registration: macOS Carbon `RegisterEventHotKey` occasionally loses our
+/// bindings after the action's OS-level operations (window creation, osascript,
+/// CGEvent posting, etc.). Symptom: next press of the hotkey types the literal
+/// character (Option+S → ß) instead of firing. We refresh the registration
+/// 2s after each hotkey to mask this. `reload_hotkeys` skips silently if the
+/// settings panel has hotkeys suspended.
 fn emit_hotkey_action(app: AppHandle, action: String) {
     std::thread::spawn(move || {
         wait_for_modifier_release();
         let _ = app.emit("hotkey-action", action);
+
+        // Defer re-registration until the action's OS-disruptive operations
+        // have completed. 2s comfortably covers osascript / window creation.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        reload_hotkeys(&app);
     });
 }
 
@@ -153,7 +171,15 @@ pub fn setup_hotkeys(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>>
 }
 
 /// Re-register hotkeys after settings change. Safe to call from command handlers.
+///
+/// No-op while `HOTKEYS_SUSPENDED` is set — see that static's doc comment for
+/// why this matters. Callers that need an unconditional reload should clear
+/// the flag first (as `resume_hotkeys` does).
 pub fn reload_hotkeys(app: &AppHandle) {
+    if HOTKEYS_SUSPENDED.load(Ordering::Acquire) {
+        info!("[Hotkey] reload 跳过：hotkeys 已挂起（设置面板录入中）");
+        return;
+    }
     info!("[Hotkey] 重新加载快捷键...");
     let gs = app.global_shortcut();
     if let Err(e) = gs.unregister_all() {
@@ -176,6 +202,7 @@ pub fn reload_hotkeys(app: &AppHandle) {
 #[tauri::command]
 pub async fn suspend_hotkeys(app: AppHandle) -> Result<(), String> {
     info!("[Hotkey] 挂起所有快捷键");
+    HOTKEYS_SUSPENDED.store(true, Ordering::Release);
     app.global_shortcut()
         .unregister_all()
         .map_err(|e| e.to_string())
@@ -184,6 +211,7 @@ pub async fn suspend_hotkeys(app: AppHandle) -> Result<(), String> {
 /// Re-arm hotkeys from current settings. Called when the settings panel closes.
 #[tauri::command]
 pub async fn resume_hotkeys(app: AppHandle) -> Result<(), String> {
+    HOTKEYS_SUSPENDED.store(false, Ordering::Release);
     reload_hotkeys(&app);
     Ok(())
 }

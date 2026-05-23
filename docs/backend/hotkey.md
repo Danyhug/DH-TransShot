@@ -16,9 +16,11 @@
 
 ```rust
 static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::new();
+static HOTKEYS_SUSPENDED: AtomicBool = AtomicBool::new(false);
 ```
 
-`SHORTCUT_ACTIONS` 是进程级单例的快捷键 → 动作名映射表，由 `apply_hotkeys` 写入，由 `handle_shortcut_event` 读取。`Shortcut` 实现 `Hash + Eq + Copy`，可直接作为 HashMap 键。
+- `SHORTCUT_ACTIONS` — 进程级单例的快捷键 → 动作名映射表，由 `apply_hotkeys` 写入，由 `handle_shortcut_event` 读取。`Shortcut` 实现 `Hash + Eq + Copy`，可直接作为 HashMap 键
+- `HOTKEYS_SUSPENDED` — `reload_hotkeys` 的"挂起"门禁。`suspend_hotkeys` 置 true、`resume_hotkeys` 清 false。`reload_hotkeys` 在 true 时直接 no-op，防止 `emit_hotkey_action` 或覆盖层关闭的延迟重注册在用户录入新快捷键时把旧快捷键又装回去
 
 ### `handle_shortcut_event(&AppHandle, &Shortcut, ShortcutEvent)`
 
@@ -30,10 +32,13 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 ### `emit_hotkey_action(AppHandle, String)`
 
-后台线程中等待 Alt/Option 真正释放后再 `emit("hotkey-action", action)`：
+后台线程中:
 
-- **macOS**：调用 `CGEventSourceFlagsState(1)` 轮询底层修饰键状态，最长等待 500ms（20 × 25ms）。这样保证后续创建覆盖层、模拟按键等 OS 操作不会被残留的 Alt 状态污染
-- **Windows/Linux**：使用固定 120ms 延迟即可（这两个平台的全局快捷键不会出现 macOS 那种 Carbon 状态卡死问题）
+1. 等待 Alt/Option 真正释放(macOS 用 `CGEventSourceFlagsState(1)` 轮询;Windows/Linux 用 120ms 固定 sleep)
+2. `emit("hotkey-action", action)` 通知前端
+3. **再 sleep 2s,然后调用 `reload_hotkeys`** —— 主动刷新 Carbon hotkey 注册,防止动作中创建的窗口、osascript、CGEvent 等 OS 操作把绑定弄丢。2s 足够覆盖大多数动作的 OS 阶段;`reload_hotkeys` 在 suspended 状态下会跳过,所以不会干扰设置面板录入
+
+为什么 Step 3 必要:macOS Carbon `RegisterEventHotKey` 在我们的覆盖层/AppleScript 操作后会偶发"丢绑定" —— plugin 内部 HashMap 还认为快捷键已注册,但 OS 层已经把绑定弄丢了,按键直接透传到当前焦点应用(典型症状:在文本框里按 Alt+S 输入了 ß 而不是触发截图)。每次触发后主动重注册一次能 mask 这个问题。
 
 ### `parse_shortcut(&str) -> Result<Shortcut, String>`
 
@@ -55,23 +60,28 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 
 ### `reload_hotkeys(&AppHandle)`
 
-设置保存后调用（`commands/settings.rs::save_settings()` 末尾）。
+读取 `AppState.settings.hotkeys` 后重新调用 `apply_hotkeys`。**`HOTKEYS_SUSPENDED` 为 true 时直接 no-op**。
 
-1. `global_shortcut().unregister_all()` 清理旧绑定
-2. 从 `AppState.settings.hotkeys` 读取最新配置
-3. 调用 `apply_hotkeys` 重新写入映射表并注册
+调用时机:
 
-### `suspend_hotkeys` / `resume_hotkeys`（Tauri 命令）
+1. `commands/settings.rs::save_settings()` 末尾 —— 设置保存后立即生效(但若此时 suspended,实际生效由 `resume_hotkeys` 承担)
+2. `commands/screenshot.rs` 覆盖层 `WindowEvent::Destroyed` —— 覆盖层关闭后的 Carbon 状态刷新(详见前述"Carbon 丢绑定"问题)
+3. `emit_hotkey_action` 末尾 —— 每个快捷键触发完成 2s 后自动刷新
 
-为 SettingsPanel 录入新快捷键服务。
+注意第 2、3 两处必须在**后台线程**调用(`std::thread::spawn`),因为 `reload_hotkeys` 内部通过 `run_on_main_thread` 派任务,而 `on_window_event` 等回调可能本身已在主线程,直接调会死锁。
 
-**问题背景：** 当某个组合（如 `Alt+Q`）已被注册为全局快捷键时，操作系统会在按键到达浏览器前把事件拦截给全局 handler，导致前端 `HotkeyInput` 的 `keydown` 监听器收不到事件，UI 一直停留在"按下组合键..."状态。
+### `suspend_hotkeys` / `resume_hotkeys`(Tauri 命令)
 
-**方案：**
-- `suspend_hotkeys` — 调用 `global_shortcut().unregister_all()`，让键盘事件能被浏览器接收
-- `resume_hotkeys` — 调用 `reload_hotkeys`，从最新 settings 重新注册（无论 settings 是否已保存）
+为 SettingsPanel 录入新快捷键服务,并保证延迟重注册不会"撤回"用户的新设置。
 
-前端 `SettingsPanel` 在 mount 时调用 `suspend_hotkeys`，在 unmount 时调用 `resume_hotkeys`。配合 `save_settings` 自身也会触发 `reload_hotkeys`，从而做到：保存 → 新快捷键立即生效；取消 → 仍恢复旧快捷键。
+**问题背景:** 当某个组合(如 `Alt+Q`)已被注册为全局快捷键时,操作系统会在按键到达浏览器前把事件拦截给全局 handler,导致前端 `HotkeyInput` 的 `keydown` 监听器收不到事件,UI 一直停留在"按下组合键..."状态。
+
+**方案:**
+
+- `suspend_hotkeys` — 置 `HOTKEYS_SUSPENDED=true`,然后 `global_shortcut().unregister_all()`。此后所有 `reload_hotkeys` 调用都会跳过,直到 resume(这点很重要 —— `emit_hotkey_action` 在动作触发 2s 后会调 reload,如果不被门禁拦住,会把用户正在录入的 UI 状态毁掉)
+- `resume_hotkeys` — 清 `HOTKEYS_SUSPENDED=false`,再调用 `reload_hotkeys`(此时已从最新 settings 读取新组合)
+
+前端 `SettingsPanel` 在 mount 时调用 `suspend_hotkeys`,在 unmount 时调用 `resume_hotkeys`。配合 `save_settings` 自身在末尾也会触发 reload(suspended 状态下是 no-op,但 unmount 时的 resume 会重做),从而做到:保存 → 新快捷键 unmount 时立即生效;取消 → 仍恢复旧快捷键。
 
 ## 事件载荷
 
