@@ -26,12 +26,8 @@ pub async fn synthesize_speech(
 
     let (base_url, api_key, model, extra) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        (
-            settings.base_url.clone(),
-            settings.api_key.clone(),
-            settings.tts.model.clone(),
-            settings.tts.extra.clone(),
-        )
+        let (b, k, m) = settings.tts.resolved(&settings.base_url, &settings.api_key);
+        (b, k, m, settings.tts.extra.clone())
     };
     let client = state.http_client.clone();
     info!("[TTS] 使用 model={}, base_url={}", model, base_url);

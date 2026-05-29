@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { synthesizeSpeech } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { useSettingsStore, resolveActiveProvider } from "../../stores/settingsStore";
 
 interface Props {
   text: string;
@@ -63,9 +63,10 @@ export function ActionButtons({ text }: Props) {
     appLog.info("[TTS] 准备朗读, 原始文本长度=" + text.length + ", 规范化后长度=" + normalizedText.length);
 
     try {
+      const tts = resolveActiveProvider(settings, "tts");
       const cacheKey = getTtsCacheKey(
-        settings.base_url,
-        settings.tts.model,
+        tts.base_url,
+        tts.model,
         settings.tts.extra,
         normalizedText
       );

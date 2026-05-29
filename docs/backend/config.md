@@ -15,14 +15,27 @@
 
 ### settings.rs
 
+**`ExtraProvider` — 额外模型提供商**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | String | 显示名（用于 UI 区分） |
+| `base_url` | String | API 基础 URL；为空时回退到全局 `Settings.base_url` |
+| `api_key` | String | API 密钥；为空时回退到全局 `Settings.api_key` |
+| `model` | String | 模型名称；为空时回退到 `ServiceConfig.model`（默认模型） |
+
 **`ServiceConfig` — 服务配置（翻译/OCR/TTS 通用）**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `model` | String | 模型名称 |
-| `extra` | String | JSON 字符串，合并到请求体（可覆盖 temperature 等参数） |
+| `model` | String | 默认提供商使用的模型名称 |
+| `extra` | String | JSON 字符串，合并到请求体（所有提供商共享，可覆盖 temperature 等参数） |
+| `providers` | `Vec<ExtraProvider>` | 额外的模型提供商列表（默认空数组） |
+| `active` | i32 | 当前生效的提供商索引：`-1`（默认值）= 使用全局 base_url+api_key+model；`0+` = `providers[active]` |
 
-`ServiceConfig::with_model(model)` 工厂方法：设置 model，extra 默认为空。
+`ServiceConfig::with_model_and_extra(model, extra)` 工厂方法：设置 model 和 extra，providers 为空、active=-1。
+
+`ServiceConfig::resolved(default_base_url, default_api_key) -> (String, String, String)` 解析当前生效的 `(base_url, api_key, model)`，根据 `active` 字段选择默认或某个额外提供商，并对额外提供商的空字段做全局回退。
 
 **`Settings` — 完整用户配置**
 
@@ -48,6 +61,7 @@
 - 修改后由 `save_settings` 触发 `hotkey::reload_hotkeys` 立即生效
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
+- `ServiceConfig.providers` 默认空数组、`active` 默认 -1，旧版 settings.json（无这两个字段）能正常反序列化并保持默认行为
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`
 
 **`merge_extra(body, extra, tag)` — 请求体合并工具函数**

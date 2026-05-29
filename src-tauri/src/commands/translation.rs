@@ -14,12 +14,10 @@ pub async fn translate_text(
     info!("[Translation] translate_text 开始, {} → {}, 文本长度={}", source_lang, target_lang, text.len());
     let (base_url, api_key, model, extra) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        (
-            settings.base_url.clone(),
-            settings.api_key.clone(),
-            settings.translation.model.clone(),
-            settings.translation.extra.clone(),
-        )
+        let (b, k, m) = settings
+            .translation
+            .resolved(&settings.base_url, &settings.api_key);
+        (b, k, m, settings.translation.extra.clone())
     };
     let client = state.http_client.clone();
     info!("[Translation] 使用 model={}, base_url={}", model, base_url);

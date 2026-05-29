@@ -5,7 +5,7 @@ import { getSettings, saveSettings, suspendHotkeys, resumeHotkeys } from "../../
 import { appLog } from "../../stores/logStore";
 import { defaultSettings } from "../../stores/settingsStore";
 import { HotkeyInput } from "./HotkeyInput";
-import type { Settings, ServiceConfig, HotkeyConfig } from "../../types";
+import type { Settings, ServiceConfig, ExtraProvider, HotkeyConfig } from "../../types";
 
 type TabName = "translation" | "ocr" | "tts";
 
@@ -43,10 +43,14 @@ function ServiceFields({
   config,
   activeTab,
   onChange,
+  onProvidersChange,
+  onActiveChange,
 }: {
   config: ServiceConfig;
   activeTab: TabName;
-  onChange: (key: keyof ServiceConfig, value: string) => void;
+  onChange: (key: "model" | "extra", value: string) => void;
+  onProvidersChange: (providers: ExtraProvider[]) => void;
+  onActiveChange: (active: number) => void;
 }) {
   const inputStyle = {
     backgroundColor: "var(--color-surface)",
@@ -57,24 +61,182 @@ function ServiceFields({
     border: "none",
   };
 
+  const isDefault = config.active < 0;
+  const activeProvider =
+    !isDefault && config.providers[config.active] ? config.providers[config.active] : null;
+
+  const updateActiveProvider = (key: keyof ExtraProvider, value: string) => {
+    if (isDefault) return;
+    const idx = config.active;
+    const next = config.providers.map((p, i) => (i === idx ? { ...p, [key]: value } : p));
+    onProvidersChange(next);
+  };
+
+  const addProvider = () => {
+    const next: ExtraProvider[] = [
+      ...config.providers,
+      { name: `提供商 ${config.providers.length + 1}`, base_url: "", api_key: "", model: "" },
+    ];
+    onProvidersChange(next);
+    onActiveChange(next.length - 1);
+  };
+
+  const removeActiveProvider = () => {
+    if (isDefault) return;
+    const idx = config.active;
+    const next = config.providers.filter((_, i) => i !== idx);
+    onProvidersChange(next);
+    onActiveChange(-1);
+  };
+
   return (
     <div className="space-y-2">
-      <label className="block">
+      {/* Provider chips */}
+      <div>
         <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-          模型
+          模型提供商
         </span>
-        <input
-          type="text"
-          value={config.model}
-          onChange={(e) => onChange("model", e.target.value)}
-          className="w-full text-sm outline-none"
-          style={inputStyle}
-          placeholder="gpt-4o-mini"
-        />
-      </label>
+        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+          <button
+            onClick={() => onActiveChange(-1)}
+            className="text-xs transition-colors"
+            style={{
+              padding: "3px 10px",
+              borderRadius: "9999px",
+              border: "none",
+              cursor: "pointer",
+              backgroundColor: isDefault ? "var(--color-primary)" : "var(--color-surface)",
+              color: isDefault ? "#fff" : "var(--color-text-secondary)",
+            }}
+          >
+            默认
+          </button>
+          {config.providers.map((p, i) => (
+            <button
+              key={i}
+              onClick={() => onActiveChange(i)}
+              className="text-xs transition-colors"
+              style={{
+                padding: "3px 10px",
+                borderRadius: "9999px",
+                border: "none",
+                cursor: "pointer",
+                backgroundColor: config.active === i ? "var(--color-primary)" : "var(--color-surface)",
+                color: config.active === i ? "#fff" : "var(--color-text-secondary)",
+              }}
+            >
+              {p.name?.trim() || `提供商 ${i + 1}`}
+            </button>
+          ))}
+          <button
+            onClick={addProvider}
+            title="添加提供商"
+            className="text-xs transition-colors"
+            style={{
+              padding: "3px 10px",
+              borderRadius: "9999px",
+              border: "1px dashed var(--color-text-secondary)",
+              cursor: "pointer",
+              backgroundColor: "transparent",
+              color: "var(--color-text-secondary)",
+              opacity: 0.7,
+            }}
+          >
+            + 新增
+          </button>
+        </div>
+      </div>
+
+      {/* Provider-specific fields */}
+      {isDefault ? (
+        <label className="block">
+          <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+            模型（使用顶部 API 地址 / API 密钥）
+          </span>
+          <input
+            type="text"
+            value={config.model}
+            onChange={(e) => onChange("model", e.target.value)}
+            className="w-full text-sm outline-none"
+            style={inputStyle}
+            placeholder="gpt-4o-mini"
+          />
+        </label>
+      ) : activeProvider ? (
+        <div className="space-y-2">
+          <label className="block">
+            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              名称
+            </span>
+            <input
+              type="text"
+              value={activeProvider.name}
+              onChange={(e) => updateActiveProvider("name", e.target.value)}
+              className="w-full text-sm outline-none"
+              style={inputStyle}
+              placeholder="OpenAI"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              API 地址（留空则用顶部全局）
+            </span>
+            <input
+              type="text"
+              value={activeProvider.base_url}
+              onChange={(e) => updateActiveProvider("base_url", e.target.value)}
+              className="w-full text-sm outline-none"
+              style={inputStyle}
+              placeholder="https://api.openai.com"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              API 密钥（留空则用顶部全局）
+            </span>
+            <input
+              type="password"
+              value={activeProvider.api_key}
+              onChange={(e) => updateActiveProvider("api_key", e.target.value)}
+              className="w-full text-sm outline-none"
+              style={inputStyle}
+              placeholder="sk-..."
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+              模型
+            </span>
+            <input
+              type="text"
+              value={activeProvider.model}
+              onChange={(e) => updateActiveProvider("model", e.target.value)}
+              className="w-full text-sm outline-none"
+              style={inputStyle}
+              placeholder="gpt-4o-mini"
+            />
+          </label>
+          <button
+            onClick={removeActiveProvider}
+            className="text-xs transition-colors"
+            style={{
+              padding: "4px 10px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+              backgroundColor: "var(--color-surface)",
+              color: "#ef4444",
+            }}
+          >
+            删除此提供商
+          </button>
+        </div>
+      ) : null}
+
+      {/* Shared extra params */}
       <label className="block">
         <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-          自定义参数
+          自定义参数（所有提供商共享）
         </span>
         <textarea
           value={config.extra}
@@ -159,10 +321,24 @@ export function SettingsPanel() {
     };
   }, []);
 
-  const updateService = useCallback((service: TabName, key: keyof ServiceConfig, value: string) => {
+  const updateService = useCallback((service: TabName, key: "model" | "extra", value: string) => {
     setSettings((prev) => ({
       ...prev,
       [service]: { ...prev[service], [key]: value },
+    }));
+  }, []);
+
+  const updateProviders = useCallback((service: TabName, providers: ExtraProvider[]) => {
+    setSettings((prev) => ({
+      ...prev,
+      [service]: { ...prev[service], providers },
+    }));
+  }, []);
+
+  const updateActive = useCallback((service: TabName, active: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      [service]: { ...prev[service], active },
     }));
   }, []);
 
@@ -294,6 +470,8 @@ export function SettingsPanel() {
           config={settings[activeTab]}
           activeTab={activeTab}
           onChange={(key, value) => updateService(activeTab, key, value)}
+          onProvidersChange={(providers) => updateProviders(activeTab, providers)}
+          onActiveChange={(active) => updateActive(activeTab, active)}
         />
 
         {/* Hotkeys */}

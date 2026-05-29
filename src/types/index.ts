@@ -7,9 +7,19 @@ export interface Settings {
   hotkeys: HotkeyConfig;
 }
 
+export interface ExtraProvider {
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
 export interface ServiceConfig {
   model: string;
   extra: string;
+  providers: ExtraProvider[];
+  /** -1 = 默认（使用顶层 base_url/api_key + model）；0+ = providers 索引 */
+  active: number;
 }
 
 export interface HotkeyConfig {

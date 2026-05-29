@@ -21,6 +21,8 @@ export const defaultSettings: Settings = {
   "max_tokens": 4096,
   "enable_thinking": false
 }`,
+    providers: [],
+    active: -1,
   },
   ocr: {
     model: "Qwen/Qwen3.5-4B",
@@ -30,6 +32,8 @@ export const defaultSettings: Settings = {
   "max_tokens": 4096,
   "enable_thinking": false
 }`,
+    providers: [],
+    active: -1,
   },
   tts: {
     model: "FunAudioLLM/CosyVoice2-0.5B",
@@ -40,6 +44,8 @@ export const defaultSettings: Settings = {
   "sample_rate": 44100,
   "enable_thinking": false
 }`,
+    providers: [],
+    active: -1,
   },
   hotkeys: {
     screenshot: "Alt+A",
@@ -47,6 +53,31 @@ export const defaultSettings: Settings = {
     clipboard_translate: "Alt+Q",
   },
 };
+
+/**
+ * Resolve the currently-active (base_url, api_key, model) for a given service.
+ * `active < 0` or out-of-range falls back to the default (global creds + svc.model).
+ * For extra providers, blank fields fall back to the global ones.
+ */
+export function resolveActiveProvider(
+  settings: Settings,
+  service: ServiceName,
+): { base_url: string; api_key: string; model: string } {
+  const svc = settings[service];
+  const fallback = {
+    base_url: settings.base_url,
+    api_key: settings.api_key,
+    model: svc.model,
+  };
+  if (svc.active < 0) return fallback;
+  const p = svc.providers[svc.active];
+  if (!p) return fallback;
+  return {
+    base_url: p.base_url.trim() ? p.base_url : settings.base_url,
+    api_key: p.api_key.trim() ? p.api_key : settings.api_key,
+    model: p.model.trim() ? p.model : svc.model,
+  };
+}
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: defaultSettings,

@@ -4,10 +4,30 @@ use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ExtraProvider {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServiceConfig {
     pub model: String,
     pub extra: String,
+    #[serde(default)]
+    pub providers: Vec<ExtraProvider>,
+    #[serde(default = "default_active_provider")]
+    pub active: i32,
+}
+
+fn default_active_provider() -> i32 {
+    -1
 }
 
 impl ServiceConfig {
@@ -15,6 +35,51 @@ impl ServiceConfig {
         Self {
             model: model.to_string(),
             extra: extra.to_string(),
+            providers: Vec::new(),
+            active: -1,
+        }
+    }
+
+    /// Resolve the active (base_url, api_key, model) based on `active` index.
+    /// `active < 0` or out-of-range falls back to the default (global creds + self.model).
+    /// For extra providers, empty `base_url`/`api_key` fall back to the global ones.
+    pub fn resolved(
+        &self,
+        default_base_url: &str,
+        default_api_key: &str,
+    ) -> (String, String, String) {
+        if self.active < 0 {
+            return (
+                default_base_url.to_string(),
+                default_api_key.to_string(),
+                self.model.clone(),
+            );
+        }
+        let idx = self.active as usize;
+        match self.providers.get(idx) {
+            Some(p) => {
+                let base = if p.base_url.trim().is_empty() {
+                    default_base_url.to_string()
+                } else {
+                    p.base_url.clone()
+                };
+                let key = if p.api_key.trim().is_empty() {
+                    default_api_key.to_string()
+                } else {
+                    p.api_key.clone()
+                };
+                let model = if p.model.trim().is_empty() {
+                    self.model.clone()
+                } else {
+                    p.model.clone()
+                };
+                (base, key, model)
+            }
+            None => (
+                default_base_url.to_string(),
+                default_api_key.to_string(),
+                self.model.clone(),
+            ),
         }
     }
 }

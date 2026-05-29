@@ -83,17 +83,19 @@
 
 **标注阶段状态：**
 - `croppedImageEl` — 裁切后的截图 Image 元素（canvas 渲染背景）
-- `tool` — 当前工具（"rect" / "arrow" / "pen" / "text"）
+- `tool` — 当前工具（"rect" / "arrow" / "pen" / "mosaic" / "text"）
 - `color` — 标注颜色（预设：红/蓝/绿/黄/白）
 - `shapes` — 已确认的标注图形列表（支持撤销）
 - `currentShape` — 正在绘制的图形
 - `textInput` — 文字输入状态（位置 + 当前输入值）
+- 进入标注时会基于裁切图预生成一份打码版 canvas（`buildMosaicCanvas`），按图像短边的 1/40 作为像素块大小，用于马赛克工具实时合成
 
 **Shape 类型：**
-- `rect` — 矩形（x, y, w, h, color, strokeWidth）
+- `rect` — 矩形（x, y, w, h, color, strokeWidth, radius）
 - `arrow` — 箭头（x1, y1, x2, y2, color, strokeWidth）
 - `pen` — 画笔（points[], color, strokeWidth）
-- `text` — 文字（x, y, text, color, fontSize）
+- `mosaic` — 马赛克（points[], strokeWidth；以画笔轨迹为掩码揭示预生成的打码版图像）
+- `text` — 文字（x, y, text, color, fontSize, bold）
 
 **多显示器架构：**
 - 后端为每个显示器创建一个覆盖层窗口（label: `screenshot-overlay-0`, `screenshot-overlay-1`, ...）
@@ -114,9 +116,9 @@
 **交互流程（标注阶段 — 仅 screenshot 模式）：**
 1. 从冻结截图中前端裁切选区区域，创建裁切后的 Image 元素
 2. Canvas 渲染：背景图 + 已有标注 + 当前绘制中的图形
-3. 工具栏浮动在画面上方：矩形/箭头/画笔/文字工具切换 + 颜色选择 + 确认/取消
+3. 工具栏浮动在画面上方：矩形/箭头/画笔/马赛克/文字工具切换 + 颜色选择 + 确认/取消
 4. 矩形/箭头：mousedown 起点 → mousemove 更新 → mouseup 确认
-5. 画笔：mousedown 开始 → mousemove 逐点收集 → mouseup 整条笔画确认
+5. 画笔/马赛克：mousedown 开始 → mousemove 逐点收集 → mouseup 整条笔画确认；马赛克渲染时以轨迹为蒙版抠出预生成的打码版图像
 6. 文字：
    - 点击空白处 → 弹出定位输入框，旁边带 `Enter 确认 · Esc 取消` 提示；空值时失焦/ESC 都会取消（不再卡死）
    - 点击已有文字 → 进入选中态（蓝色虚线包围框），可按住拖动改位置；工具栏字号/颜色滑块实时改该 shape
@@ -132,7 +134,7 @@
 - `Escape` — 三段式：先关 textInput → 再清文字选中 → 否则关闭覆盖层
 - `Ctrl/Cmd+Z` — 撤销
 - `C` — 复制鼠标当前位置 HEX 色值
-- `1` `2` `3` `4` — 切换工具（rect/arrow/pen/text）；非 text 同时清文字选中
+- `1` `2` `3` `4` `5` — 切换工具（rect/arrow/pen/mosaic/text）；非 text 同时清文字选中
 
 **键盘快捷键（选区阶段）：**
 - `Escape` — 取消
@@ -157,7 +159,12 @@
 
 - 独立设置窗口（非模态弹窗）
 - 标签页切换：翻译 / OCR / TTS 服务配置
-- 表单字段：API 地址、API 密钥（password）、模型、自定义参数
+- 顶部全局字段：API 地址、API 密钥（password）
+- **多模型提供商支持**：每个服务 Tab 内顶部有一个 chip 切换条：「默认」+ 已添加的额外提供商 + `+ 新增`
+  - 选中「默认」时显示模型字段，使用顶部全局 base_url/api_key
+  - 选中额外提供商时显示该提供商的 name/base_url/api_key/model 编辑器 + 删除按钮；其中 base_url/api_key 留空会回退到全局
+  - `自定义参数` (extra) 在所有提供商间共享
+  - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发到后端
 - 快捷键区：使用 `HotkeyInput` 组件可视化录入三个动作的快捷键（screenshot / ocr_translate / clipboard_translate）
 - 保存前校验三个快捷键非空，否则 alert 阻断
 - mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`），unmount 时调用 `resume_hotkeys` 恢复

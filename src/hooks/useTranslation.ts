@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useTranslationStore } from "../stores/translationStore";
-import { useSettingsStore } from "../stores/settingsStore";
+import { useSettingsStore, resolveActiveProvider } from "../stores/settingsStore";
 import { translateText } from "../lib/invoke";
 import { appLog } from "../stores/logStore";
 
@@ -38,8 +38,9 @@ export function useTranslation() {
 
       // Read latest settings from store to avoid stale closure
       const { settings } = useSettingsStore.getState();
+      const active = resolveActiveProvider(settings, "translation");
 
-      if (!settings.api_key && !settings.base_url.includes("localhost")) {
+      if (!active.api_key && !active.base_url.includes("localhost")) {
         appLog.warn("[Translate] 未配置 API Key，且非本地服务");
         setError("Please configure your API key in settings");
         return;

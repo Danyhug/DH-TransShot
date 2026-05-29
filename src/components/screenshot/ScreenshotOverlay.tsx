@@ -17,17 +17,73 @@ type Shape =
   | { type: "rect"; x: number; y: number; w: number; h: number; color: string; strokeWidth: number; radius: number }
   | { type: "arrow"; x1: number; y1: number; x2: number; y2: number; color: string; strokeWidth: number }
   | { type: "pen"; points: Point[]; color: string; strokeWidth: number }
+  | { type: "mosaic"; points: Point[]; strokeWidth: number }
   | { type: "text"; x: number; y: number; text: string; color: string; fontSize: number; bold: boolean };
 
-type Tool = "rect" | "arrow" | "pen" | "text";
+type Tool = "rect" | "arrow" | "pen" | "mosaic" | "text";
 
 const PRESET_COLORS = ["#ef4444", "#3b82f6", "#22c55e", "#eab308", "#ffffff"];
 const DEFAULT_STROKE_WIDTH = 3;
+const DEFAULT_MOSAIC_WIDTH = 24;
 const DEFAULT_FONT_SIZE_RATIO = 8;
 const DEFAULT_RECT_RADIUS = 4;
 const DEFAULT_TEXT_BOLD = false;
-const ANNOTATION_TOOLBAR_MIN_WIDTH = 420;
+const ANNOTATION_TOOLBAR_MIN_WIDTH = 460;
 const COLOR_TOOLTIP_OFFSET = 14;
+
+function buildMosaicCanvas(img: HTMLImageElement, blockSize: number): HTMLCanvasElement {
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const small = document.createElement("canvas");
+  const sw = Math.max(1, Math.floor(w / blockSize));
+  const sh = Math.max(1, Math.floor(h / blockSize));
+  small.width = sw;
+  small.height = sh;
+  const sctx = small.getContext("2d")!;
+  sctx.imageSmoothingEnabled = true;
+  sctx.drawImage(img, 0, 0, sw, sh);
+
+  const out = document.createElement("canvas");
+  out.width = w;
+  out.height = h;
+  const octx = out.getContext("2d")!;
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(small, 0, 0, w, h);
+  return out;
+}
+
+function drawMosaicShape(
+  ctx: CanvasRenderingContext2D,
+  shape: { points: Point[]; strokeWidth: number },
+  mosaicCanvas: HTMLCanvasElement,
+) {
+  if (shape.points.length < 1) return;
+  const tmp = document.createElement("canvas");
+  tmp.width = ctx.canvas.width;
+  tmp.height = ctx.canvas.height;
+  const tctx = tmp.getContext("2d")!;
+  tctx.drawImage(mosaicCanvas, 0, 0);
+  tctx.globalCompositeOperation = "destination-in";
+  tctx.strokeStyle = "#000";
+  tctx.fillStyle = "#000";
+  tctx.lineWidth = shape.strokeWidth;
+  tctx.lineCap = "round";
+  tctx.lineJoin = "round";
+  if (shape.points.length === 1) {
+    const p = shape.points[0];
+    tctx.beginPath();
+    tctx.arc(p.x, p.y, shape.strokeWidth / 2, 0, Math.PI * 2);
+    tctx.fill();
+  } else {
+    tctx.beginPath();
+    tctx.moveTo(shape.points[0].x, shape.points[0].y);
+    for (let i = 1; i < shape.points.length; i++) {
+      tctx.lineTo(shape.points[i].x, shape.points[i].y);
+    }
+    tctx.stroke();
+  }
+  ctx.drawImage(tmp, 0, 0);
+}
 
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
@@ -90,6 +146,7 @@ export function ScreenshotOverlay() {
   const [tool, setTool] = useState<Tool>("rect");
   const [color, setColor] = useState("#ef4444");
   const [strokeWidth, setStrokeWidth] = useState(DEFAULT_STROKE_WIDTH);
+  const [mosaicWidth, setMosaicWidth] = useState(DEFAULT_MOSAIC_WIDTH);
   const [rectRadius, setRectRadius] = useState(DEFAULT_RECT_RADIUS);
   const [fontSize, setFontSize] = useState(30);
   const [textBold, setTextBold] = useState(DEFAULT_TEXT_BOLD);
@@ -127,12 +184,14 @@ export function ScreenshotOverlay() {
   const toolRef = useRef<Tool>("rect");
   const colorRef = useRef("#ef4444");
   const strokeWidthRef = useRef(DEFAULT_STROKE_WIDTH);
+  const mosaicWidthRef = useRef(DEFAULT_MOSAIC_WIDTH);
   const rectRadiusRef = useRef(DEFAULT_RECT_RADIUS);
   const fontSizeRef = useRef(30);
   const textBoldRef = useRef(DEFAULT_TEXT_BOLD);
   const drawingRef = useRef(false);
   const penPointsRef = useRef<Point[]>([]);
   const croppedImageElRef = useRef<HTMLImageElement | null>(null);
+  const mosaicCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const textInputRef = useRef<typeof textInput>(null);
   const selectedTextIndexRef = useRef<number | null>(null);
   const editingTextIndexRef = useRef<number | null>(null);
@@ -151,6 +210,7 @@ export function ScreenshotOverlay() {
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { colorRef.current = color; }, [color]);
   useEffect(() => { strokeWidthRef.current = strokeWidth; }, [strokeWidth]);
+  useEffect(() => { mosaicWidthRef.current = mosaicWidth; }, [mosaicWidth]);
   useEffect(() => { rectRadiusRef.current = rectRadius; }, [rectRadius]);
   useEffect(() => { fontSizeRef.current = fontSize; }, [fontSize]);
   useEffect(() => { textBoldRef.current = textBold; }, [textBold]);
@@ -472,6 +532,8 @@ export function ScreenshotOverlay() {
       });
       croppedBlobUrlRef.current = url;
       setCroppedImageEl(img);
+      const blockSize = Math.max(6, Math.round(Math.min(img.naturalWidth, img.naturalHeight) / 40));
+      mosaicCanvasRef.current = buildMosaicCanvas(img, blockSize);
       setCanvasDisplaySize({ width: sel.width, height: sel.height });
       // Keep the full-screen overlay window as-is (no resize).
       // selRect from the select phase is already in the correct coordinate space,
@@ -556,6 +618,12 @@ export function ScreenshotOverlay() {
           ctx.stroke();
           break;
         }
+        case "mosaic": {
+          const mc = mosaicCanvasRef.current;
+          if (!mc) break;
+          drawMosaicShape(ctx, shape, mc);
+          break;
+        }
         case "text": {
           if (editingTextIndex !== null && idx === editingTextIndex) break;
           ctx.fillStyle = shape.color;
@@ -638,6 +706,12 @@ export function ScreenshotOverlay() {
             ctx.lineTo(shape.points[i].x, shape.points[i].y);
           }
           ctx.stroke();
+          break;
+        }
+        case "mosaic": {
+          const mc = mosaicCanvasRef.current;
+          if (!mc) break;
+          drawMosaicShape(ctx, shape, mc);
           break;
         }
         case "text": {
@@ -738,7 +812,8 @@ export function ScreenshotOverlay() {
         if (e.key === "1") { setTool("rect"); setSelectedTextIndex(null); }
         if (e.key === "2") { setTool("arrow"); setSelectedTextIndex(null); }
         if (e.key === "3") { setTool("pen"); setSelectedTextIndex(null); }
-        if (e.key === "4") setTool("text");
+        if (e.key === "4") { setTool("mosaic"); setSelectedTextIndex(null); }
+        if (e.key === "5") setTool("text");
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -1038,6 +1113,13 @@ export function ScreenshotOverlay() {
         color: colorRef.current,
         strokeWidth: strokeWidthRef.current,
       });
+    } else if (toolRef.current === "mosaic") {
+      penPointsRef.current = [pos];
+      setCurrentShape({
+        type: "mosaic",
+        points: [pos],
+        strokeWidth: mosaicWidthRef.current,
+      });
     } else if (toolRef.current === "rect") {
       setCurrentShape({
         type: "rect",
@@ -1084,6 +1166,13 @@ export function ScreenshotOverlay() {
         points: [...penPointsRef.current],
         color: colorRef.current,
         strokeWidth: strokeWidthRef.current,
+      });
+    } else if (toolRef.current === "mosaic") {
+      penPointsRef.current.push(pos);
+      setCurrentShape({
+        type: "mosaic",
+        points: [...penPointsRef.current],
+        strokeWidth: mosaicWidthRef.current,
       });
     } else if (toolRef.current === "rect") {
       const start = penPointsRef.current[0];
@@ -1277,7 +1366,8 @@ export function ScreenshotOverlay() {
               { id: "rect" as Tool, label: "□", title: "矩形 (1)" },
               { id: "arrow" as Tool, label: "→", title: "箭头 (2)" },
               { id: "pen" as Tool, label: "✏", title: "画笔 (3)" },
-              { id: "text" as Tool, label: "T", title: "文字 (4)" },
+              { id: "mosaic" as Tool, label: "▦", title: "马赛克 (4)" },
+              { id: "text" as Tool, label: "T", title: "文字 (5)" },
             ].map((t) => (
               <button
                 key={t.id}
@@ -1303,7 +1393,13 @@ export function ScreenshotOverlay() {
             {/* Color and stroke picker */}
             <div className="relative">
               <button
-                title={tool === "text" ? "颜色 · 字号" : "颜色 · 线宽"}
+                title={
+                  tool === "text"
+                    ? "颜色 · 字号"
+                    : tool === "mosaic"
+                      ? "笔刷大小"
+                      : "颜色 · 线宽"
+                }
                 onClick={() => setShowStylePicker((prev) => !prev)}
                 className="h-8 px-2 gap-1.5 inline-flex items-center rounded-md hover:bg-white/10 transition-colors"
                 style={{
@@ -1320,32 +1416,46 @@ export function ScreenshotOverlay() {
                   strokeLinejoin="round"
                   style={{ color: "rgba(255,255,255,0.85)" }}
                 >
-                  <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.9-.5-1.4 0-1.1.9-2 2-2H17a4 4 0 0 0 4-4c0-4-4-7-9-7z" />
-                  <circle cx="7.5" cy="10.5" r="1" fill="currentColor" />
-                  <circle cx="12" cy="7.5" r="1" fill="currentColor" />
-                  <circle cx="16.5" cy="10.5" r="1" fill="currentColor" />
+                  {tool === "mosaic" ? (
+                    <>
+                      <rect x="3" y="3" width="6" height="6" />
+                      <rect x="15" y="3" width="6" height="6" />
+                      <rect x="9" y="9" width="6" height="6" />
+                      <rect x="3" y="15" width="6" height="6" />
+                      <rect x="15" y="15" width="6" height="6" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.8-.9 1.8-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.9-.5-1.4 0-1.1.9-2 2-2H17a4 4 0 0 0 4-4c0-4-4-7-9-7z" />
+                      <circle cx="7.5" cy="10.5" r="1" fill="currentColor" />
+                      <circle cx="12" cy="7.5" r="1" fill="currentColor" />
+                      <circle cx="16.5" cy="10.5" r="1" fill="currentColor" />
+                    </>
+                  )}
                 </svg>
                 <span className="text-white/90 text-xs tabular-nums leading-none">
-                  {tool === "text" ? fontSize : strokeWidth}
+                  {tool === "text" ? fontSize : tool === "mosaic" ? mosaicWidth : strokeWidth}
                 </span>
-                <span
-                  className="inline-flex flex-col items-stretch rounded-[5px] overflow-hidden shrink-0"
-                  style={{
-                    width: 18,
-                    height: 18,
-                    boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.25), 0 0 0 1px rgba(0,0,0,0.3)",
-                  }}
-                >
-                  <span className="block" style={{ height: 12, background: color }} />
+                {tool !== "mosaic" && (
                   <span
-                    className="flex items-center justify-center"
-                    style={{ height: 6, background: "rgba(255,255,255,0.16)" }}
+                    className="inline-flex flex-col items-stretch rounded-[5px] overflow-hidden shrink-0"
+                    style={{
+                      width: 18,
+                      height: 18,
+                      boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.25), 0 0 0 1px rgba(0,0,0,0.3)",
+                    }}
                   >
-                    <svg viewBox="0 0 8 4" width="7" height="3.5" fill="rgba(255,255,255,0.8)">
-                      <path d="M0 0l4 4 4-4z" />
-                    </svg>
+                    <span className="block" style={{ height: 12, background: color }} />
+                    <span
+                      className="flex items-center justify-center"
+                      style={{ height: 6, background: "rgba(255,255,255,0.16)" }}
+                    >
+                      <svg viewBox="0 0 8 4" width="7" height="3.5" fill="rgba(255,255,255,0.8)">
+                        <path d="M0 0l4 4 4-4z" />
+                      </svg>
+                    </span>
                   </span>
-                </span>
+                )}
               </button>
 
               {showStylePicker && (
@@ -1357,36 +1467,65 @@ export function ScreenshotOverlay() {
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                 >
-                  <div className="text-white/60 text-xs mb-2">颜色</div>
-                  <div className="flex items-center gap-2 mb-3">
-                    {PRESET_COLORS.map((presetColor) => (
-                      <button
-                        key={presetColor}
-                        title={presetColor}
-                        onClick={() => setColor(presetColor)}
-                        className="w-6 h-6 rounded-full border-2 transition-transform"
-                        style={{
-                          background: presetColor,
-                          borderColor: color === presetColor ? "#fff" : "transparent",
-                          transform: color === presetColor ? "scale(1.15)" : "scale(1)",
-                        }}
-                      />
-                    ))}
-                    <label
-                      className="w-7 h-7 rounded-md border border-white/20 overflow-hidden cursor-pointer"
-                      title="自定义颜色"
-                      style={{ background: color }}
-                    >
+                  {tool === "mosaic" ? (
+                    <>
+                      <div className="flex items-center justify-between text-white/60 text-xs mb-2">
+                        <span>笔刷大小</span>
+                        <span>{mosaicWidth}px</span>
+                      </div>
                       <input
-                        type="color"
-                        value={color}
-                        onChange={(e) => setColor(e.target.value)}
-                        className="w-10 h-10 opacity-0 cursor-pointer"
+                        type="range"
+                        min="8"
+                        max="80"
+                        step="1"
+                        value={mosaicWidth}
+                        onChange={(e) => setMosaicWidth(Number(e.target.value))}
+                        className="w-full accent-blue-500"
                       />
-                    </label>
-                  </div>
+                      <div className="mt-3 h-10 rounded bg-white/5 flex items-center justify-center">
+                        <div
+                          className="rounded-full"
+                          style={{
+                            width: mosaicWidth,
+                            height: mosaicWidth,
+                            background:
+                              "repeating-conic-gradient(#777 0% 25%, #aaa 0% 50%) 50% / 6px 6px",
+                          }}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-white/60 text-xs mb-2">颜色</div>
+                      <div className="flex items-center gap-2 mb-3">
+                        {PRESET_COLORS.map((presetColor) => (
+                          <button
+                            key={presetColor}
+                            title={presetColor}
+                            onClick={() => setColor(presetColor)}
+                            className="w-6 h-6 rounded-full border-2 transition-transform"
+                            style={{
+                              background: presetColor,
+                              borderColor: color === presetColor ? "#fff" : "transparent",
+                              transform: color === presetColor ? "scale(1.15)" : "scale(1)",
+                            }}
+                          />
+                        ))}
+                        <label
+                          className="w-7 h-7 rounded-md border border-white/20 overflow-hidden cursor-pointer"
+                          title="自定义颜色"
+                          style={{ background: color }}
+                        >
+                          <input
+                            type="color"
+                            value={color}
+                            onChange={(e) => setColor(e.target.value)}
+                            className="w-10 h-10 opacity-0 cursor-pointer"
+                          />
+                        </label>
+                      </div>
 
-                  {tool !== "text" ? (
+                      {tool !== "text" ? (
                     <>
                       <div className="flex items-center justify-between text-white/60 text-xs mb-2">
                         <span>线宽</span>
@@ -1487,6 +1626,8 @@ export function ScreenshotOverlay() {
                       </>
                     );
                   })()}
+                    </>
+                  )}
                 </div>
               )}
             </div>
