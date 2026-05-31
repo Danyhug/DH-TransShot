@@ -21,14 +21,25 @@ static HOTKEYS_SUSPENDED: AtomicBool = AtomicBool::new(false);
 
 - `SHORTCUT_ACTIONS` — 进程级单例的快捷键 → 动作名映射表，由 `apply_hotkeys` 写入，由 `handle_shortcut_event` 读取。`Shortcut` 实现 `Hash + Eq + Copy`，可直接作为 HashMap 键
 - `HOTKEYS_SUSPENDED` — `reload_hotkeys` 的"挂起"门禁。`suspend_hotkeys` 置 true、`resume_hotkeys` 清 false。`reload_hotkeys` 在 true 时直接 no-op，防止 `emit_hotkey_action` 或覆盖层关闭的延迟重注册在用户录入新快捷键时把旧快捷键又装回去
+- `LAST_HOTKEY_DISPATCH` — macOS Carbon 和 `CGEventTap` 兜底同时观察到同一次按键时的短窗口去重，避免同一动作被发两次
 
 ### `handle_shortcut_event(&AppHandle, &Shortcut, ShortcutEvent)`
 
 注册为 per-shortcut handler（在 `apply_hotkeys` 中通过 `on_shortcuts(shortcuts, handle_shortcut_event)` 装载）。
 
 - 只在 `ShortcutState::Pressed` 触发。**为什么不是 Released？** 在 macOS 上，当快捷键动作会抢占键盘焦点（例如打开截图覆盖层）时，用户后续松开修饰键（Alt/Option）的事件可能被送到新的前台应用，而不是 Carbon `RegisterEventHotKey` 系统。一旦 Carbon 漏收一次 Release，它会认为快捷键仍处于按下状态，**之后所有的相同按键都收不到 Pressed 事件**（典型症状：首次正常、后续失灵）。改用 Pressed 即可绕过这个状态机问题
-- 在 `SHORTCUT_ACTIONS` 中查找对应动作名，找到则交给 `emit_hotkey_action` 异步发送
+- 在 `SHORTCUT_ACTIONS` 中查找对应动作名，找到则交给 `dispatch_hotkey_action` 去重后异步发送
 - 修饰键仍然按下的问题由 `emit_hotkey_action` 内部主动轮询处理，不依赖事件传递
+
+### macOS `CGEventTap` 兜底
+
+`macos_event_tap` 在 macOS 上额外安装一个 `CGEventTap`，监听 `KeyDown` 并按当前 `SHORTCUT_ACTIONS` 同步出的 scancode + modifier flags 匹配快捷键。匹配成功时：
+
+1. 非自动重复按键会调用 `dispatch_hotkey_action`
+2. 返回 `null` 吞掉该按键，避免 Carbon 丢绑定时 `Option+S` 继续透传给前台输入框并输入 `ß`
+3. 设置面板录入快捷键期间，`HOTKEYS_SUSPENDED` 为 true，event tap 直接放行按键
+
+如果 `CGEventTapCreate` 返回 null（通常是缺少辅助功能或输入监控权限），应用会打 warn 日志并继续使用原 Carbon 全局快捷键路径。
 
 ### `emit_hotkey_action(AppHandle, String)`
 
