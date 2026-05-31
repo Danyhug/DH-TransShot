@@ -130,8 +130,7 @@ pub struct Settings {
 }
 
 fn default_base_url() -> String {
-    std::env::var("DEFAULT_BASE_URL")
-        .unwrap_or_else(|_| "https://api.siliconflow.cn".to_string())
+    std::env::var("DEFAULT_BASE_URL").unwrap_or_else(|_| "https://api.siliconflow.cn".to_string())
 }
 
 fn default_api_key() -> String {

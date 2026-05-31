@@ -45,6 +45,14 @@ impl OpenAiCompatProvider {
             "temperature": 0.3
         });
 
-        crate::api_client::send_chat_completion(&self.client, base_url, api_key, extra, request_body, "Translation").await
+        crate::api_client::send_chat_completion(
+            &self.client,
+            base_url,
+            api_key,
+            extra,
+            request_body,
+            "Translation",
+        )
+        .await
     }
 }

@@ -13,10 +13,7 @@ fn tts_cache_key(base_url: &str, model: &str, extra: &str, text: &str) -> String
 /// Synthesize speech from text using the configured TTS service.
 /// Returns base64-encoded audio data (mp3).
 #[tauri::command]
-pub async fn synthesize_speech(
-    state: State<'_, AppState>,
-    text: String,
-) -> Result<String, String> {
+pub async fn synthesize_speech(state: State<'_, AppState>, text: String) -> Result<String, String> {
     let normalized_text = normalize_tts_text(&text);
     info!(
         "[TTS] synthesize_speech 开始, 原始文本长度={}, 规范化后长度={}",
@@ -44,9 +41,16 @@ pub async fn synthesize_speech(
     }
     info!("[TTS] 缓存未命中，发起语音合成");
 
-    let result = crate::tts::synthesize(&client, &base_url, &api_key, &model, &extra, &normalized_text)
-        .await
-        .map_err(|e| e.to_string());
+    let result = crate::tts::synthesize(
+        &client,
+        &base_url,
+        &api_key,
+        &model,
+        &extra,
+        &normalized_text,
+    )
+    .await
+    .map_err(|e| e.to_string());
 
     match &result {
         Ok(b64) => {

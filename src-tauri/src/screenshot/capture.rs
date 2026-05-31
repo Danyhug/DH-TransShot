@@ -53,11 +53,8 @@ fn list_window_rects_macos() -> Vec<WindowRect> {
         fn CFRelease(cf: *const c_void);
 
         // CFNumber
-        fn CFNumberGetValue(
-            number: *const c_void,
-            the_type: isize,
-            value_ptr: *mut c_void,
-        ) -> bool;
+        fn CFNumberGetValue(number: *const c_void, the_type: isize, value_ptr: *mut c_void)
+            -> bool;
 
         // CFBoolean
         fn CFBooleanGetValue(boolean: *const c_void) -> bool;
@@ -182,13 +179,22 @@ fn capture_monitors_macos(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<V
 
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGPoint { x: f64, y: f64 }
+    struct CGPoint {
+        x: f64,
+        y: f64,
+    }
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGSize { width: f64, height: f64 }
+    struct CGSize {
+        width: f64,
+        height: f64,
+    }
     #[repr(C)]
     #[derive(Copy, Clone)]
-    struct CGRect { origin: CGPoint, size: CGSize }
+    struct CGRect {
+        origin: CGPoint,
+        size: CGSize,
+    }
 
     // Capture all monitors in parallel — CGImage capture + BGRA→RGBA + PNG encode
     let handles: Vec<_> = monitors
@@ -250,7 +256,10 @@ fn cgimage_to_base64(cg_image: *const std::ffi::c_void) -> anyhow::Result<String
         let bytes_per_row = CGImageGetBytesPerRow(cg_image);
         let bits_per_pixel = CGImageGetBitsPerPixel(cg_image);
 
-        info!("[Capture] CGImage: {}x{}, bpp={}, bpr={}", img_width, img_height, bits_per_pixel, bytes_per_row);
+        info!(
+            "[Capture] CGImage: {}x{}, bpp={}, bpr={}",
+            img_width, img_height, bits_per_pixel, bytes_per_row
+        );
 
         let provider = CGImageGetDataProvider(cg_image);
         if provider.is_null() {
@@ -309,18 +318,30 @@ fn capture_monitors_xcap(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Ve
         anyhow::bail!("No monitor found");
     }
 
-    info!("[Capture] xcap per-monitor 截图, tauri_count={}, xcap_count={}", monitors.len(), xcap_monitors.len());
+    info!(
+        "[Capture] xcap per-monitor 截图, tauri_count={}, xcap_count={}",
+        monitors.len(),
+        xcap_monitors.len()
+    );
     if monitors.len() != xcap_monitors.len() {
         info!("[Capture] ⚠ Tauri 与 xcap 显示器数量不一致，截图可能错位");
     }
     for (i, rect) in monitors.iter().enumerate() {
-        info!("[Capture] tauri 显示器[{}]: logical=({},{},{}x{})", i, rect.0, rect.1, rect.2, rect.3);
+        info!(
+            "[Capture] tauri 显示器[{}]: logical=({},{},{}x{})",
+            i, rect.0, rect.1, rect.2, rect.3
+        );
     }
 
     let mut results = Vec::with_capacity(xcap_monitors.len());
     for (i, mon) in xcap_monitors.iter().enumerate() {
         let img = mon.capture_image()?;
-        info!("[Capture] xcap 显示器[{}]: size={}x{}", i, img.width(), img.height());
+        info!(
+            "[Capture] xcap 显示器[{}]: size={}x{}",
+            i,
+            img.width(),
+            img.height()
+        );
         let base64 = image_to_base64(&img)?;
         results.push(base64);
     }
@@ -337,10 +358,21 @@ pub fn capture_region_from_full(
     width: u32,
     height: u32,
 ) -> anyhow::Result<String> {
-    info!("[Capture] capture_region_from_full, region=({},{},{}x{}), full base64 size={}", x, y, width, height, full_base64.len());
+    info!(
+        "[Capture] capture_region_from_full, region=({},{},{}x{}), full base64 size={}",
+        x,
+        y,
+        width,
+        height,
+        full_base64.len()
+    );
     let bytes = base64::engine::general_purpose::STANDARD.decode(full_base64)?;
     let img = image::load_from_memory_with_format(&bytes, ImageFormat::Png)?;
-    info!("[Capture] 原图解码完成, 尺寸={}x{}", img.width(), img.height());
+    info!(
+        "[Capture] 原图解码完成, 尺寸={}x{}",
+        img.width(),
+        img.height()
+    );
     let cropped = img.crop_imm(x, y, width, height);
     image_to_jpeg_base64(&cropped)
 }

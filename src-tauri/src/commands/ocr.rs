@@ -1,5 +1,5 @@
 use crate::config::AppState;
-use log::{info, error};
+use log::{error, info};
 use tauri::State;
 
 /// Combined capture + OCR: crop region from frozen screenshot and recognize text in a single step.
@@ -13,7 +13,10 @@ pub async fn capture_and_ocr(
     height: u32,
     language: String,
 ) -> Result<String, String> {
-    info!("[OCR] capture_and_ocr 开始, monitor={}, region=({},{},{}x{}), language={}", monitor_index, x, y, width, height, language);
+    info!(
+        "[OCR] capture_and_ocr 开始, monitor={}, region=({},{},{}x{}), language={}",
+        monitor_index, x, y, width, height, language
+    );
 
     let base64 = {
         let guard = state.frozen_screenshots.lock().map_err(|e| e.to_string())?;
@@ -38,11 +41,22 @@ pub async fn capture_and_ocr(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())?;
 
-    info!("[OCR] 裁切完成, JPEG bytes={}, 开始 OCR 识别", image_bytes.len());
+    info!(
+        "[OCR] 裁切完成, JPEG bytes={}, 开始 OCR 识别",
+        image_bytes.len()
+    );
 
-    let result = crate::ocr::recognize(&client, &image_bytes, &language, &base_url, &api_key, &model, &extra)
-        .await
-        .map_err(|e| e.to_string());
+    let result = crate::ocr::recognize(
+        &client,
+        &image_bytes,
+        &language,
+        &base_url,
+        &api_key,
+        &model,
+        &extra,
+    )
+    .await
+    .map_err(|e| e.to_string());
 
     match &result {
         Ok(text) => info!("[OCR] capture_and_ocr 完成, 结果长度={}", text.len()),

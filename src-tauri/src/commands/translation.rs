@@ -1,6 +1,6 @@
 use crate::config::AppState;
 use crate::translation::OpenAiCompatProvider;
-use log::{info, error};
+use log::{error, info};
 use tauri::State;
 
 /// Translate text using the configured translation service.
@@ -11,7 +11,12 @@ pub async fn translate_text(
     source_lang: String,
     target_lang: String,
 ) -> Result<String, String> {
-    info!("[Translation] translate_text 开始, {} → {}, 文本长度={}", source_lang, target_lang, text.len());
+    info!(
+        "[Translation] translate_text 开始, {} → {}, 文本长度={}",
+        source_lang,
+        target_lang,
+        text.len()
+    );
     let (base_url, api_key, model, extra) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
         let (b, k, m) = settings
@@ -24,7 +29,15 @@ pub async fn translate_text(
 
     let provider = OpenAiCompatProvider::new(client);
     let result = provider
-        .translate(&text, &source_lang, &target_lang, &base_url, &api_key, &model, &extra)
+        .translate(
+            &text,
+            &source_lang,
+            &target_lang,
+            &base_url,
+            &api_key,
+            &model,
+            &extra,
+        )
         .await
         .map_err(|e| e.to_string());
     match &result {

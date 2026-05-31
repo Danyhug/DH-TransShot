@@ -56,7 +56,10 @@ pub fn run() {
             if let Ok(store) = app.store("settings.json") {
                 if let Some(value) = store.get("settings") {
                     if let Ok(settings) = serde_json::from_value::<Settings>(value) {
-                        info!("[Setup] 配置加载成功, translation.model={}, ocr.model={}", settings.translation.model, settings.ocr.model);
+                        info!(
+                            "[Setup] 配置加载成功, translation.model={}, ocr.model={}",
+                            settings.translation.model, settings.ocr.model
+                        );
                         let app_state = app.state::<AppState>();
                         let mut guard = app_state.settings.lock().unwrap();
                         *guard = settings;

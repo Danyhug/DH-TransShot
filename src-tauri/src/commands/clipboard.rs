@@ -1,4 +1,4 @@
-use log::{info, error, warn};
+use log::{error, info, warn};
 
 /// Helper: build a PowerShell Command with CREATE_NO_WINDOW on Windows to suppress the console window.
 #[cfg(target_os = "windows")]
@@ -119,7 +119,10 @@ pub async fn read_selected_text() -> Result<String, String> {
         {
             if let Ok(text) = get_selected_text_accessibility() {
                 if !text.is_empty() {
-                    info!("[Clipboard] Accessibility API 获取成功, 文本长度={}", text.len());
+                    info!(
+                        "[Clipboard] Accessibility API 获取成功, 文本长度={}",
+                        text.len()
+                    );
                     return Ok(text);
                 }
                 info!("[Clipboard] Accessibility API 返回空，尝试剪贴板回退...");
@@ -231,7 +234,8 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let new_clipboard: Result<String, String> = Err("Clipboard not supported on this platform".to_string());
+    let new_clipboard: Result<String, String> =
+        Err("Clipboard not supported on this platform".to_string());
 
     let new_text = new_clipboard?;
 
@@ -264,7 +268,10 @@ fn get_selected_text_clipboard_fallback() -> Result<String, String> {
         info!("[Clipboard] 原剪贴板内容已恢复");
     }
 
-    info!("[Clipboard] 选中文字已获取 (剪贴板回退), 文本长度={}", new_text.len());
+    info!(
+        "[Clipboard] 选中文字已获取 (剪贴板回退), 文本长度={}",
+        new_text.len()
+    );
     Ok(new_text)
 }
 
@@ -304,13 +311,16 @@ pub async fn read_clipboard() -> Result<String, String> {
 /// Save base64 PNG data to a file path chosen by the user.
 #[tauri::command]
 pub async fn save_file(path: String, base64_data: String) -> Result<(), String> {
-    info!("[Clipboard] save_file, path={}, base64 size={}", path, base64_data.len());
+    info!(
+        "[Clipboard] save_file, path={}, base64 size={}",
+        path,
+        base64_data.len()
+    );
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&base64_data)
         .map_err(|e| format!("base64 decode failed: {}", e))?;
-    std::fs::write(&path, &bytes)
-        .map_err(|e| format!("write file failed: {}", e))?;
+    std::fs::write(&path, &bytes).map_err(|e| format!("write file failed: {}", e))?;
     info!("[Clipboard] 文件已保存: {}, size={}", path, bytes.len());
     Ok(())
 }
@@ -318,7 +328,10 @@ pub async fn save_file(path: String, base64_data: String) -> Result<(), String> 
 /// Copy an image (base64 PNG) to the system clipboard.
 #[tauri::command]
 pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String> {
-    info!("[Clipboard] copy_image_to_clipboard, base64 size={}", image_base64.len());
+    info!(
+        "[Clipboard] copy_image_to_clipboard, base64 size={}",
+        image_base64.len()
+    );
     let result = tokio::task::spawn_blocking(move || {
         use base64::Engine;
 
@@ -332,7 +345,11 @@ pub async fn copy_image_to_clipboard(image_base64: String) -> Result<(), String>
         std::fs::write(&tmp_path, &png_bytes)
             .map_err(|e| format!("Failed to write temp file: {}", e))?;
 
-        info!("[Clipboard] 临时文件已写入: {:?}, size={}", tmp_path, png_bytes.len());
+        info!(
+            "[Clipboard] 临时文件已写入: {:?}, size={}",
+            tmp_path,
+            png_bytes.len()
+        );
 
         #[cfg(target_os = "macos")]
         {

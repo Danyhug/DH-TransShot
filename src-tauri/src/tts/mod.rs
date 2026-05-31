@@ -28,7 +28,12 @@ pub async fn synthesize(
     }
 
     let url = audio_speech_url(base_url);
-    info!("[TTS] 发送请求到 {}, model={}, 文本长度={}", url, model, text.len());
+    info!(
+        "[TTS] 发送请求到 {}, model={}, 文本长度={}",
+        url,
+        model,
+        text.len()
+    );
 
     // Default voice: "{model}:alex", can be overridden via extra
     let default_voice = format!("{}:alex", model);

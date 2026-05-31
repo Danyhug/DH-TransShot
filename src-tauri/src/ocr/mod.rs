@@ -76,8 +76,8 @@ pub async fn recognize(
     let url = crate::api_client::chat_completions_url(base_url);
     let original_size = image_bytes.len();
     let owned_bytes = image_bytes.to_vec();
-    let prepared = tokio::task::spawn_blocking(move || prepare_ocr_image_from_bytes(&owned_bytes))
-        .await??;
+    let prepared =
+        tokio::task::spawn_blocking(move || prepare_ocr_image_from_bytes(&owned_bytes)).await??;
     info!(
         "[OCR] 发送请求到 {}, model={}, image {}x{} -> {}x{}, media_type={}, size={} -> {}",
         url,
@@ -113,5 +113,6 @@ pub async fn recognize(
         "temperature": 0.1
     });
 
-    crate::api_client::send_chat_completion(client, base_url, api_key, extra, request_body, "OCR").await
+    crate::api_client::send_chat_completion(client, base_url, api_key, extra, request_body, "OCR")
+        .await
 }

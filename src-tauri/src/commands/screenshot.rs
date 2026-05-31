@@ -1,6 +1,6 @@
 use crate::config::AppState;
 use crate::config::MonitorInfo;
-use log::{info, error};
+use log::{error, info};
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// Close all existing screenshot overlay windows (labels matching "screenshot-overlay-*").
@@ -34,7 +34,10 @@ pub async fn start_region_select(
     info!("[Screenshot] start_region_select, mode={}", mode);
 
     // Guard: close any existing overlay windows
-    let has_existing = app.webview_windows().keys().any(|k| k.starts_with("screenshot-overlay"));
+    let has_existing = app
+        .webview_windows()
+        .keys()
+        .any(|k| k.starts_with("screenshot-overlay"));
     if has_existing {
         info!("[Screenshot] 覆盖层窗口已存在，先关闭旧窗口");
         close_all_overlays(&app);
@@ -59,11 +62,18 @@ pub async fn start_region_select(
     let window_rects = tokio::task::spawn_blocking(|| crate::screenshot::list_window_rects())
         .await
         .map_err(|e| e.to_string())?;
-    info!("[Screenshot] 窗口列表采集完成, count={}", window_rects.len());
+    info!(
+        "[Screenshot] 窗口列表采集完成, count={}",
+        window_rects.len()
+    );
 
     {
-        let rects_json = serde_json::to_value(&window_rects).unwrap_or(serde_json::Value::Array(vec![]));
-        let mut guard = state.frozen_window_rects.lock().map_err(|e| e.to_string())?;
+        let rects_json =
+            serde_json::to_value(&window_rects).unwrap_or(serde_json::Value::Array(vec![]));
+        let mut guard = state
+            .frozen_window_rects
+            .lock()
+            .map_err(|e| e.to_string())?;
         *guard = rects_json;
     }
 
@@ -99,16 +109,18 @@ pub async fn start_region_select(
 
     info!("[Screenshot] 检测到 {} 个显示器", monitor_infos.len());
     for (i, m) in monitor_infos.iter().enumerate() {
-        info!("[Screenshot] 显示器[{}]: name={}, pos=({},{}), size={}x{}, scale={}", i, m.name, m.x, m.y, m.width, m.height, m.scale_factor);
+        info!(
+            "[Screenshot] 显示器[{}]: name={}, pos=({},{}), size={}x{}, scale={}",
+            i, m.name, m.x, m.y, m.width, m.height, m.scale_factor
+        );
     }
 
     // 4. Capture each monitor individually (native resolution per monitor)
     info!("[Screenshot] 开始逐显示器截图...");
-    let capture_result = tokio::task::spawn_blocking(move || {
-        crate::screenshot::capture_monitors(&logical_rects)
-    })
-    .await
-    .map_err(|e| e.to_string())?;
+    let capture_result =
+        tokio::task::spawn_blocking(move || crate::screenshot::capture_monitors(&logical_rects))
+            .await
+            .map_err(|e| e.to_string())?;
 
     let screenshots = match capture_result {
         Ok(data) => {
@@ -155,22 +167,18 @@ pub async fn start_region_select(
         );
 
         let build_overlay = || {
-            WebviewWindowBuilder::new(
-                &app,
-                &label,
-                WebviewUrl::App("screenshot.html".into()),
-            )
-            .title("Screenshot")
-            .inner_size(logical_w, logical_h)
-            .position(pos.x as f64 / scale, pos.y as f64 / scale)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .visible(false)
-            .accept_first_mouse(true)
-            .build()
+            WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("screenshot.html".into()))
+                .title("Screenshot")
+                .inner_size(logical_w, logical_h)
+                .position(pos.x as f64 / scale, pos.y as f64 / scale)
+                .decorations(false)
+                .transparent(true)
+                .shadow(false)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .visible(false)
+                .accept_first_mouse(true)
+                .build()
         };
 
         let overlay = match build_overlay() {
@@ -209,7 +217,10 @@ pub async fn start_region_select(
         }
     }
 
-    info!("[Screenshot] 所有覆盖层窗口已创建, count={}", monitors.len());
+    info!(
+        "[Screenshot] 所有覆盖层窗口已创建, count={}",
+        monitors.len()
+    );
 
     Ok(())
 }
@@ -220,7 +231,10 @@ pub async fn get_frozen_screenshot(
     state: State<'_, AppState>,
     monitor_index: usize,
 ) -> Result<serde_json::Value, String> {
-    info!("[Screenshot] get_frozen_screenshot 请求, monitor_index={}", monitor_index);
+    info!(
+        "[Screenshot] get_frozen_screenshot 请求, monitor_index={}",
+        monitor_index
+    );
     let image = {
         let guard = state.frozen_screenshots.lock().map_err(|e| e.to_string())?;
         guard
@@ -233,7 +247,10 @@ pub async fn get_frozen_screenshot(
         guard.clone()
     };
     let window_rects = {
-        let guard = state.frozen_window_rects.lock().map_err(|e| e.to_string())?;
+        let guard = state
+            .frozen_window_rects
+            .lock()
+            .map_err(|e| e.to_string())?;
         guard.clone()
     };
     let monitors = {
@@ -261,7 +278,10 @@ pub async fn capture_region(
     width: u32,
     height: u32,
 ) -> Result<String, String> {
-    info!("[Screenshot] capture_region, monitor_index={}, region=({},{},{}x{})", monitor_index, x, y, width, height);
+    info!(
+        "[Screenshot] capture_region, monitor_index={}, region=({},{},{}x{})",
+        monitor_index, x, y, width, height
+    );
     let base64 = {
         let guard = state.frozen_screenshots.lock().map_err(|e| e.to_string())?;
         guard
@@ -277,7 +297,10 @@ pub async fn capture_region(
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string());
     match &result {
-        Ok(data) => info!("[Screenshot] capture_region 完成, 裁切后 base64 size={}", data.len()),
+        Ok(data) => info!(
+            "[Screenshot] capture_region 完成, 裁切后 base64 size={}",
+            data.len()
+        ),
         Err(e) => error!("[Screenshot] capture_region 失败: {}", e),
     }
     result

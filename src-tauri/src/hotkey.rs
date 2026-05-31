@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -18,8 +19,49 @@ static SHORTCUT_ACTIONS: OnceLock<Mutex<HashMap<Shortcut, String>>> = OnceLock::
 /// re-arm the OLD shortcuts, blocking the user from capturing the new combo.
 static HOTKEYS_SUSPENDED: AtomicBool = AtomicBool::new(false);
 
+/// Guard against duplicate delivery when macOS Carbon and the CGEventTap
+/// fallback both observe the same physical key press.
+static LAST_HOTKEY_DISPATCH: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+
+const HOTKEY_DEBOUNCE: Duration = Duration::from_millis(500);
+
 fn shortcut_actions() -> &'static Mutex<HashMap<Shortcut, String>> {
     SHORTCUT_ACTIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn last_hotkey_dispatch() -> &'static Mutex<Option<(String, Instant)>> {
+    LAST_HOTKEY_DISPATCH.get_or_init(|| Mutex::new(None))
+}
+
+fn should_dispatch_action(action: &str) -> bool {
+    let now = Instant::now();
+    let mut last = match last_hotkey_dispatch().lock() {
+        Ok(last) => last,
+        Err(e) => {
+            warn!("[Hotkey] LAST_HOTKEY_DISPATCH 锁失败: {}", e);
+            return true;
+        }
+    };
+
+    if let Some((last_action, last_at)) = last.as_ref() {
+        if last_action == action && now.duration_since(*last_at) < HOTKEY_DEBOUNCE {
+            info!("[Hotkey] 忽略重复触发: {}", action);
+            return false;
+        }
+    }
+
+    *last = Some((action.to_string(), now));
+    true
+}
+
+fn dispatch_hotkey_action(app: AppHandle, action: String) {
+    if HOTKEYS_SUSPENDED.load(Ordering::Acquire) {
+        info!("[Hotkey] 触发跳过：hotkeys 已挂起（设置面板录入中）");
+        return;
+    }
+    if should_dispatch_action(&action) {
+        emit_hotkey_action(app, action);
+    }
 }
 
 /// Wait for Alt to release, emit the action, then schedule a deferred
@@ -67,6 +109,413 @@ fn wait_for_modifier_release() {
     std::thread::sleep(std::time::Duration::from_millis(120));
 }
 
+#[cfg(target_os = "macos")]
+mod macos_event_tap {
+    #![allow(non_upper_case_globals)]
+
+    use super::{dispatch_hotkey_action, HOTKEYS_SUSPENDED};
+    use log::{info, warn};
+    use std::collections::HashMap;
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::sync::atomic::Ordering;
+    use std::sync::{mpsc, Arc, Mutex, OnceLock};
+    use std::time::Duration;
+    use tauri::AppHandle;
+    use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
+
+    type CGEventRef = *mut c_void;
+    type CGEventTapProxy = *mut c_void;
+    type CFMachPortRef = *mut c_void;
+    type CFRunLoopRef = *mut c_void;
+    type CFRunLoopSourceRef = *mut c_void;
+    type CFAllocatorRef = *const c_void;
+    type CFRunLoopMode = *const c_void;
+    type CFIndex = isize;
+
+    const KCG_SESSION_EVENT_TAP: u32 = 1;
+    const KCG_HEAD_INSERT_EVENT_TAP: u32 = 0;
+    const KCG_EVENT_TAP_OPTION_DEFAULT: u32 = 0;
+    const KCG_EVENT_KEY_DOWN: u32 = 10;
+    const KCG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+    const KCG_EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
+    const KCG_KEYBOARD_EVENT_AUTOREPEAT: u32 = 8;
+    const KCG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
+
+    const FLAG_SHIFT: u64 = 1 << 17;
+    const FLAG_CONTROL: u64 = 1 << 18;
+    const FLAG_ALT: u64 = 1 << 19;
+    const FLAG_COMMAND: u64 = 1 << 20;
+    const HOTKEY_FLAG_MASK: u64 = FLAG_SHIFT | FLAG_CONTROL | FLAG_ALT | FLAG_COMMAND;
+
+    type CGEventTapCallBack = unsafe extern "C" fn(
+        proxy: CGEventTapProxy,
+        event_type: u32,
+        event: CGEventRef,
+        user_info: *mut c_void,
+    ) -> CGEventRef;
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventTapCreate(
+            tap: u32,
+            place: u32,
+            options: u32,
+            events_of_interest: u64,
+            callback: CGEventTapCallBack,
+            user_info: *mut c_void,
+        ) -> CFMachPortRef;
+        fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+        fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
+        fn CGEventGetFlags(event: CGEventRef) -> u64;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFAllocatorDefault: CFAllocatorRef;
+        static kCFRunLoopCommonModes: CFRunLoopMode;
+
+        fn CFRunLoopGetMain() -> CFRunLoopRef;
+        fn CFMachPortCreateRunLoopSource(
+            allocator: CFAllocatorRef,
+            port: CFMachPortRef,
+            order: CFIndex,
+        ) -> CFRunLoopSourceRef;
+        fn CFRunLoopAddSource(rl: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFRunLoopMode);
+        fn CFMachPortInvalidate(port: CFMachPortRef);
+        fn CFRelease(cftype: *const c_void);
+    }
+
+    #[derive(Clone)]
+    struct TapHotkey {
+        scan_code: u16,
+        flags: u64,
+        action: String,
+    }
+
+    #[derive(Clone, Copy)]
+    struct EventTapHandles {
+        tap: CFMachPortRef,
+        _source: CFRunLoopSourceRef,
+    }
+
+    unsafe impl Send for EventTapHandles {}
+
+    struct TapState {
+        app: AppHandle,
+        hotkeys: Mutex<Vec<TapHotkey>>,
+        handles: Mutex<Option<EventTapHandles>>,
+    }
+
+    static TAP_STATE: OnceLock<Arc<TapState>> = OnceLock::new();
+
+    pub(super) fn update_hotkeys(
+        app: &AppHandle,
+        actions: &'static Mutex<HashMap<Shortcut, String>>,
+    ) {
+        let state = TAP_STATE
+            .get_or_init(|| {
+                Arc::new(TapState {
+                    app: app.clone(),
+                    hotkeys: Mutex::new(Vec::new()),
+                    handles: Mutex::new(None),
+                })
+            })
+            .clone();
+
+        let hotkeys = match actions.lock() {
+            Ok(map) => map
+                .iter()
+                .filter_map(|(shortcut, action)| hotkey_from_shortcut(*shortcut, action.clone()))
+                .collect::<Vec<_>>(),
+            Err(e) => {
+                warn!("[Hotkey] event tap 读取快捷键映射失败: {}", e);
+                Vec::new()
+            }
+        };
+
+        if let Ok(mut guard) = state.hotkeys.lock() {
+            *guard = hotkeys;
+            info!("[Hotkey] macOS event tap 已同步 {} 个快捷键", guard.len());
+        }
+
+        ensure_installed(&state);
+    }
+
+    fn ensure_installed(state: &Arc<TapState>) {
+        if state
+            .handles
+            .lock()
+            .map(|handles| handles.is_some())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        let state_for_main = state.clone();
+        let app = state.app.clone();
+        let (tx, rx) = mpsc::channel();
+        let schedule_result = app.run_on_main_thread(move || {
+            let result = unsafe { create_event_tap(Arc::as_ptr(&state_for_main) as *mut c_void) };
+
+            match result {
+                Ok(handles) => {
+                    if let Ok(mut guard) = state_for_main.handles.lock() {
+                        *guard = Some(handles);
+                    }
+                    let _ = tx.send(Ok(()));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                }
+            }
+        });
+
+        if let Err(e) = schedule_result {
+            warn!("[Hotkey] macOS event tap 安装调度失败: {}", e);
+            return;
+        }
+
+        match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => info!("[Hotkey] macOS event tap 已启用"),
+            Ok(Err(e)) => warn!(
+                "[Hotkey] macOS event tap 启用失败: {}，继续使用 Carbon 快捷键",
+                e
+            ),
+            Err(e) => warn!("[Hotkey] macOS event tap 启用等待失败: {}", e),
+        }
+    }
+
+    unsafe fn create_event_tap(user_info: *mut c_void) -> Result<EventTapHandles, String> {
+        let events_of_interest = 1_u64 << KCG_EVENT_KEY_DOWN;
+        let tap = CGEventTapCreate(
+            KCG_SESSION_EVENT_TAP,
+            KCG_HEAD_INSERT_EVENT_TAP,
+            KCG_EVENT_TAP_OPTION_DEFAULT,
+            events_of_interest,
+            event_tap_callback,
+            user_info,
+        );
+        if tap.is_null() {
+            return Err(
+                "CGEventTapCreate 返回 null，通常表示缺少辅助功能或输入监控权限".to_string(),
+            );
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
+        if source.is_null() {
+            CFMachPortInvalidate(tap);
+            CFRelease(tap as *const c_void);
+            return Err("CFMachPortCreateRunLoopSource 返回 null".to_string());
+        }
+
+        let run_loop = CFRunLoopGetMain();
+        CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
+        CGEventTapEnable(tap, true);
+
+        Ok(EventTapHandles {
+            tap,
+            _source: source,
+        })
+    }
+
+    unsafe extern "C" fn event_tap_callback(
+        _proxy: CGEventTapProxy,
+        event_type: u32,
+        event: CGEventRef,
+        user_info: *mut c_void,
+    ) -> CGEventRef {
+        if user_info.is_null() {
+            return event;
+        }
+
+        let state = &*(user_info as *const TapState);
+
+        if event_type == KCG_EVENT_TAP_DISABLED_BY_TIMEOUT
+            || event_type == KCG_EVENT_TAP_DISABLED_BY_USER_INPUT
+        {
+            if let Ok(handles) = state.handles.lock() {
+                if let Some(handles) = *handles {
+                    CGEventTapEnable(handles.tap, true);
+                }
+            }
+            return event;
+        }
+
+        if event_type != KCG_EVENT_KEY_DOWN || event.is_null() {
+            return event;
+        }
+
+        if HOTKEYS_SUSPENDED.load(Ordering::Acquire) {
+            return event;
+        }
+
+        let scan_code = CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_KEYCODE) as u16;
+        let flags = CGEventGetFlags(event) & HOTKEY_FLAG_MASK;
+        let is_repeat = CGEventGetIntegerValueField(event, KCG_KEYBOARD_EVENT_AUTOREPEAT) != 0;
+
+        let action = match state.hotkeys.lock() {
+            Ok(hotkeys) => hotkeys
+                .iter()
+                .find(|hotkey| hotkey.scan_code == scan_code && hotkey.flags == flags)
+                .map(|hotkey| hotkey.action.clone()),
+            Err(e) => {
+                warn!("[Hotkey] event tap 快捷键映射锁失败: {}", e);
+                None
+            }
+        };
+
+        if let Some(action) = action {
+            if !is_repeat {
+                info!(
+                    "[Hotkey] event tap 捕获: key_code={} -> {}",
+                    scan_code, action
+                );
+                dispatch_hotkey_action(state.app.clone(), action);
+            }
+            return ptr::null_mut();
+        }
+
+        event
+    }
+
+    fn hotkey_from_shortcut(shortcut: Shortcut, action: String) -> Option<TapHotkey> {
+        Some(TapHotkey {
+            scan_code: key_to_scancode(shortcut.key)?,
+            flags: mods_to_cg_flags(shortcut.mods),
+            action,
+        })
+    }
+
+    fn mods_to_cg_flags(mods: Modifiers) -> u64 {
+        let mut flags = 0;
+        if mods.contains(Modifiers::SHIFT) {
+            flags |= FLAG_SHIFT;
+        }
+        if mods.contains(Modifiers::CONTROL) {
+            flags |= FLAG_CONTROL;
+        }
+        if mods.contains(Modifiers::ALT) {
+            flags |= FLAG_ALT;
+        }
+        if mods.intersects(Modifiers::SUPER | Modifiers::META) {
+            flags |= FLAG_COMMAND;
+        }
+        flags
+    }
+
+    fn key_to_scancode(code: Code) -> Option<u16> {
+        match code {
+            Code::KeyA => Some(0x00),
+            Code::KeyS => Some(0x01),
+            Code::KeyD => Some(0x02),
+            Code::KeyF => Some(0x03),
+            Code::KeyH => Some(0x04),
+            Code::KeyG => Some(0x05),
+            Code::KeyZ => Some(0x06),
+            Code::KeyX => Some(0x07),
+            Code::KeyC => Some(0x08),
+            Code::KeyV => Some(0x09),
+            Code::KeyB => Some(0x0b),
+            Code::KeyQ => Some(0x0c),
+            Code::KeyW => Some(0x0d),
+            Code::KeyE => Some(0x0e),
+            Code::KeyR => Some(0x0f),
+            Code::KeyY => Some(0x10),
+            Code::KeyT => Some(0x11),
+            Code::Digit1 => Some(0x12),
+            Code::Digit2 => Some(0x13),
+            Code::Digit3 => Some(0x14),
+            Code::Digit4 => Some(0x15),
+            Code::Digit6 => Some(0x16),
+            Code::Digit5 => Some(0x17),
+            Code::Equal => Some(0x18),
+            Code::Digit9 => Some(0x19),
+            Code::Digit7 => Some(0x1a),
+            Code::Minus => Some(0x1b),
+            Code::Digit8 => Some(0x1c),
+            Code::Digit0 => Some(0x1d),
+            Code::BracketRight => Some(0x1e),
+            Code::KeyO => Some(0x1f),
+            Code::KeyU => Some(0x20),
+            Code::BracketLeft => Some(0x21),
+            Code::KeyI => Some(0x22),
+            Code::KeyP => Some(0x23),
+            Code::Enter => Some(0x24),
+            Code::KeyL => Some(0x25),
+            Code::KeyJ => Some(0x26),
+            Code::Quote => Some(0x27),
+            Code::KeyK => Some(0x28),
+            Code::Semicolon => Some(0x29),
+            Code::Backslash => Some(0x2a),
+            Code::Comma => Some(0x2b),
+            Code::Slash => Some(0x2c),
+            Code::KeyN => Some(0x2d),
+            Code::KeyM => Some(0x2e),
+            Code::Period => Some(0x2f),
+            Code::Tab => Some(0x30),
+            Code::Space => Some(0x31),
+            Code::Backquote => Some(0x32),
+            Code::Backspace => Some(0x33),
+            Code::Escape => Some(0x35),
+            Code::F17 => Some(0x40),
+            Code::NumpadDecimal => Some(0x41),
+            Code::NumpadMultiply => Some(0x43),
+            Code::NumpadAdd => Some(0x45),
+            Code::NumLock => Some(0x47),
+            Code::AudioVolumeUp => Some(0x48),
+            Code::AudioVolumeDown => Some(0x49),
+            Code::AudioVolumeMute => Some(0x4a),
+            Code::NumpadDivide => Some(0x4b),
+            Code::NumpadEnter => Some(0x4c),
+            Code::NumpadSubtract => Some(0x4e),
+            Code::F18 => Some(0x4f),
+            Code::F19 => Some(0x50),
+            Code::NumpadEqual => Some(0x51),
+            Code::Numpad0 => Some(0x52),
+            Code::Numpad1 => Some(0x53),
+            Code::Numpad2 => Some(0x54),
+            Code::Numpad3 => Some(0x55),
+            Code::Numpad4 => Some(0x56),
+            Code::Numpad5 => Some(0x57),
+            Code::Numpad6 => Some(0x58),
+            Code::Numpad7 => Some(0x59),
+            Code::F20 => Some(0x5a),
+            Code::Numpad8 => Some(0x5b),
+            Code::Numpad9 => Some(0x5c),
+            Code::F5 => Some(0x60),
+            Code::F6 => Some(0x61),
+            Code::F7 => Some(0x62),
+            Code::F3 => Some(0x63),
+            Code::F8 => Some(0x64),
+            Code::F9 => Some(0x65),
+            Code::F11 => Some(0x67),
+            Code::F13 => Some(0x69),
+            Code::F16 => Some(0x6a),
+            Code::F14 => Some(0x6b),
+            Code::F10 => Some(0x6d),
+            Code::F12 => Some(0x6f),
+            Code::F15 => Some(0x71),
+            Code::Insert => Some(0x72),
+            Code::Home => Some(0x73),
+            Code::PageUp => Some(0x74),
+            Code::Delete => Some(0x75),
+            Code::F4 => Some(0x76),
+            Code::End => Some(0x77),
+            Code::F2 => Some(0x78),
+            Code::PageDown => Some(0x79),
+            Code::F1 => Some(0x7a),
+            Code::ArrowLeft => Some(0x7b),
+            Code::ArrowRight => Some(0x7c),
+            Code::ArrowDown => Some(0x7d),
+            Code::ArrowUp => Some(0x7e),
+            Code::CapsLock => Some(0x39),
+            Code::PrintScreen => Some(0x46),
+            _ => None,
+        }
+    }
+}
+
 /// Global shortcut event handler — dispatches based on SHORTCUT_ACTIONS map.
 ///
 /// Acts on `Pressed`, NOT `Released`. On macOS, when a hotkey action steals
@@ -93,7 +542,7 @@ pub fn handle_shortcut_event(
     };
     if let Some(action) = action {
         info!("[Hotkey] 触发: {:?} -> {}", shortcut, action);
-        emit_hotkey_action(app.clone(), action);
+        dispatch_hotkey_action(app.clone(), action);
     }
 }
 
@@ -137,6 +586,9 @@ fn apply_hotkeys(app: &AppHandle, cfg: &HotkeyConfig) {
     if let Ok(mut map) = shortcut_actions().lock() {
         *map = new_map;
     }
+
+    #[cfg(target_os = "macos")]
+    macos_event_tap::update_hotkeys(app, shortcut_actions());
 
     let gs = app.global_shortcut();
     // Use on_shortcuts (per-shortcut handler stored in plugin) instead of
