@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "dh-transshot"
-version = "1.0.16"
+version = "1.0.17"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
