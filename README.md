@@ -173,7 +173,7 @@ src/
 
 ## 社区
 
-📌 [LinuxDO](https://linux.do)
+- [Linux.do](https://linux.do/)
 
 ## 许可证
 
