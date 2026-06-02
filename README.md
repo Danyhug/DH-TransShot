@@ -171,6 +171,10 @@ src/
 | 构建 | Vite 多入口 + Cargo |
 | 包管理 | pnpm |
 
+## 社区
+
+📌 LinuxDO 推广帖：[【开源推广】受不了Electron臃肿，用Tauri+Rust手搓了一个截图+翻译一体机，佬友试试](https://linux.do) （发帖后替换为实际链接）
+
 ## 许可证
 
 [MIT License](LICENSE)
