@@ -171,6 +171,10 @@ src/
 | 构建 | Vite 多入口 + Cargo |
 | 包管理 | pnpm |
 
+## 社区
+
+- [Linux.do](https://linux.do/)
+
 ## 许可证
 
 [MIT License](LICENSE)
