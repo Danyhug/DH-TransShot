@@ -30,6 +30,10 @@ const DEFAULT_RECT_RADIUS = 4;
 const DEFAULT_TEXT_BOLD = false;
 const ANNOTATION_TOOLBAR_MIN_WIDTH = 460;
 const COLOR_TOOLTIP_OFFSET = 14;
+const ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE = 52; // 工具栏预估高度（含 padding，用于边缘 clamp 计算）
+const ANNOTATION_TOOLBAR_SPACING = 6; // 工具栏与 canvas 之间的间距
+const ANNOTATION_CANVAS_BORDER = 6; // canvas 容器上下 3px 边框总和
+const ANNOTATION_EDGE_MARGIN = 8; // 屏幕边缘留白
 
 function buildMosaicCanvas(img: HTMLImageElement, blockSize: number): HTMLCanvasElement {
   const w = img.naturalWidth;
@@ -1263,6 +1267,27 @@ export function ScreenshotOverlay() {
   const displayScale = getImageScale();
 
   if (phase === "annotate" && selRect) {
+    // 计算工具栏位置，避免在屏幕右边缘或底部溢出
+    const canvasDisplayH = canvasDisplaySize?.height ?? selRect.height;
+    const winW = window.innerWidth;
+    const winH = window.innerHeight;
+    // 默认：canvas 下方、左对齐
+    let toolbarLeft = 0;
+    let toolbarTop = canvasDisplayH + ANNOTATION_CANVAS_BORDER + ANNOTATION_TOOLBAR_SPACING;
+    // 右边缘 clamp：工具栏右沿不超出窗口
+    const toolbarRight = selRect.left + toolbarLeft + ANNOTATION_TOOLBAR_MIN_WIDTH;
+    if (toolbarRight > winW) {
+      toolbarLeft = Math.max(
+        -selRect.left + ANNOTATION_EDGE_MARGIN,
+        winW - selRect.left - ANNOTATION_TOOLBAR_MIN_WIDTH - ANNOTATION_EDGE_MARGIN,
+      );
+    }
+    // 底部 clamp：工具栏底沿超出窗口时，改放到 canvas 上方
+    const toolbarBottom = selRect.top + toolbarTop + ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE;
+    if (toolbarBottom > winH) {
+      toolbarTop = -ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE - ANNOTATION_TOOLBAR_SPACING;
+    }
+
     return (
       <div
         className="screenshot-overlay-root fixed inset-0 select-none"
@@ -1352,13 +1377,16 @@ export function ScreenshotOverlay() {
             })()}
           </div>
 
-          {/* Toolbar — directly below the canvas */}
+          {/* Toolbar — 默认在 canvas 下方，靠近屏幕边缘时自动调整位置避免溢出 */}
           <div
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl shadow-lg mt-1.5"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl shadow-lg absolute"
             style={{
+              left: toolbarLeft,
+              top: toolbarTop,
               background: "rgba(30,30,30,0.9)",
               backdropFilter: "blur(8px)",
               minWidth: ANNOTATION_TOOLBAR_MIN_WIDTH,
+              zIndex: 50,
             }}
           >
             {/* Tools */}
