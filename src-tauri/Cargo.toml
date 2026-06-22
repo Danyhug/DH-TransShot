@@ -1,6 +1,6 @@
 [package]
 name = "dh-transshot"
-version = "1.0.19"
+version = "1.0.20"
 description = "Screenshot + Translation desktop tool"
 authors = ["danyhug"]
 edition = "2021"
