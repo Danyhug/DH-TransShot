@@ -170,6 +170,11 @@ mod macos_event_tap {
         fn CGEventGetFlags(event: CGEventRef) -> u64;
     }
 
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         static kCFAllocatorDefault: CFAllocatorRef;
@@ -278,10 +283,22 @@ mod macos_event_tap {
 
         match rx.recv_timeout(Duration::from_secs(2)) {
             Ok(Ok(())) => info!("[Hotkey] macOS event tap 已启用"),
-            Ok(Err(e)) => warn!(
-                "[Hotkey] macOS event tap 启用失败: {}，继续使用 Carbon 快捷键",
-                e
-            ),
+            Ok(Err(e)) => {
+                let has_accessibility = unsafe { AXIsProcessTrusted() };
+                if has_accessibility {
+                    warn!(
+                        "[Hotkey] macOS event tap 启用失败: {}，继续使用 Carbon 快捷键",
+                        e
+                    );
+                } else {
+                    warn!(
+                        "[Hotkey] macOS event tap 启用失败（缺少辅助功能权限）: {}\
+                         \n  → 请在 系统设置 > 隐私与安全性 > 辅助功能 中授权 DH-TransShot\
+                         \n  → 否则按 Option+Q 等组合键时会输入特殊字符（如 œ）而不是触发快捷键",
+                        e
+                    );
+                }
+            }
             Err(e) => warn!("[Hotkey] macOS event tap 启用等待失败: {}", e),
         }
     }
@@ -297,9 +314,14 @@ mod macos_event_tap {
             user_info,
         );
         if tap.is_null() {
-            return Err(
-                "CGEventTapCreate 返回 null，通常表示缺少辅助功能或输入监控权限".to_string(),
-            );
+            let has_accessibility = AXIsProcessTrusted();
+            if has_accessibility {
+                return Err("CGEventTapCreate 返回 null（已有辅助功能权限但仍然失败）".to_string());
+            } else {
+                return Err("CGEventTapCreate 返回 null，缺少辅助功能权限。\
+                     请在 系统设置 > 隐私与安全性 > 辅助功能 中授权 DH-TransShot"
+                    .to_string());
+            }
         }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
