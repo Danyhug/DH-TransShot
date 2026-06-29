@@ -118,7 +118,7 @@ mod macos_event_tap {
     use std::collections::HashMap;
     use std::ffi::c_void;
     use std::ptr;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Mutex, OnceLock};
     use std::time::Duration;
     use tauri::AppHandle;
@@ -168,6 +168,8 @@ mod macos_event_tap {
         fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
         fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
         fn CGEventGetFlags(event: CGEventRef) -> u64;
+        fn CGPreflightListenEventAccess() -> bool;
+        fn CGRequestListenEventAccess() -> bool;
     }
 
     #[link(name = "ApplicationServices", kind = "framework")]
@@ -213,6 +215,19 @@ mod macos_event_tap {
     }
 
     static TAP_STATE: OnceLock<Arc<TapState>> = OnceLock::new();
+    static MAIN_THREAD_ID: OnceLock<std::thread::ThreadId> = OnceLock::new();
+    static LISTEN_ACCESS_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+    pub(super) fn remember_main_thread() {
+        let _ = MAIN_THREAD_ID.set(std::thread::current().id());
+    }
+
+    fn is_main_thread() -> bool {
+        MAIN_THREAD_ID
+            .get()
+            .map(|id| *id == std::thread::current().id())
+            .unwrap_or(false)
+    }
 
     pub(super) fn update_hotkeys(
         app: &AppHandle,
@@ -257,23 +272,19 @@ mod macos_event_tap {
             return;
         }
 
+        if is_main_thread() {
+            match install_event_tap(state) {
+                Ok(()) => info!("[Hotkey] macOS event tap 已启用"),
+                Err(e) => warn_event_tap_failure(e),
+            }
+            return;
+        }
+
         let state_for_main = state.clone();
         let app = state.app.clone();
         let (tx, rx) = mpsc::channel();
         let schedule_result = app.run_on_main_thread(move || {
-            let result = unsafe { create_event_tap(Arc::as_ptr(&state_for_main) as *mut c_void) };
-
-            match result {
-                Ok(handles) => {
-                    if let Ok(mut guard) = state_for_main.handles.lock() {
-                        *guard = Some(handles);
-                    }
-                    let _ = tx.send(Ok(()));
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e));
-                }
-            }
+            let _ = tx.send(install_event_tap(&state_for_main));
         });
 
         if let Err(e) = schedule_result {
@@ -283,27 +294,50 @@ mod macos_event_tap {
 
         match rx.recv_timeout(Duration::from_secs(2)) {
             Ok(Ok(())) => info!("[Hotkey] macOS event tap 已启用"),
-            Ok(Err(e)) => {
-                let has_accessibility = unsafe { AXIsProcessTrusted() };
-                if has_accessibility {
-                    warn!(
-                        "[Hotkey] macOS event tap 启用失败: {}，继续使用 Carbon 快捷键",
-                        e
-                    );
-                } else {
-                    warn!(
-                        "[Hotkey] macOS event tap 启用失败（缺少辅助功能权限）: {}\
-                         \n  → 请在 系统设置 > 隐私与安全性 > 辅助功能 中授权 DH-TransShot\
-                         \n  → 否则按 Option+Q 等组合键时会输入特殊字符（如 œ）而不是触发快捷键",
-                        e
-                    );
-                }
-            }
+            Ok(Err(e)) => warn_event_tap_failure(e),
             Err(e) => warn!("[Hotkey] macOS event tap 启用等待失败: {}", e),
         }
     }
 
+    fn install_event_tap(state: &Arc<TapState>) -> Result<(), String> {
+        let handles = unsafe { create_event_tap(Arc::as_ptr(state) as *mut c_void)? };
+        let mut guard = state
+            .handles
+            .lock()
+            .map_err(|e| format!("event tap handles 锁失败: {}", e))?;
+        *guard = Some(handles);
+        Ok(())
+    }
+
+    fn warn_event_tap_failure(error: String) {
+        let has_listen_access = unsafe { CGPreflightListenEventAccess() };
+        let has_accessibility = unsafe { AXIsProcessTrusted() };
+        if has_listen_access {
+            warn!(
+                "[Hotkey] macOS event tap 启用失败: {}，继续使用 Carbon 快捷键",
+                error
+            );
+        } else {
+            warn!(
+                "[Hotkey] macOS event tap 启用失败（缺少输入监控权限）: {}\
+                 \n  → 请在 系统设置 > 隐私与安全性 > 输入监控 中授权 DH-TransShot\
+                 \n  → 否则 Option/Alt+字母 组合可能会输入特殊字符，而不是被快捷键吞掉\
+                 \n  → 当前辅助功能权限: {}",
+                error,
+                if has_accessibility {
+                    "已授权"
+                } else {
+                    "未授权"
+                }
+            );
+        }
+    }
+
     unsafe fn create_event_tap(user_info: *mut c_void) -> Result<EventTapHandles, String> {
+        if !ensure_listen_event_access() {
+            return Err("缺少输入监控权限，无法安装可吞掉按键的 CGEventTap".to_string());
+        }
+
         let events_of_interest = 1_u64 << KCG_EVENT_KEY_DOWN;
         let tap = CGEventTapCreate(
             KCG_SESSION_EVENT_TAP,
@@ -314,13 +348,19 @@ mod macos_event_tap {
             user_info,
         );
         if tap.is_null() {
+            let has_listen_access = CGPreflightListenEventAccess();
             let has_accessibility = AXIsProcessTrusted();
-            if has_accessibility {
-                return Err("CGEventTapCreate 返回 null（已有辅助功能权限但仍然失败）".to_string());
+            if has_listen_access {
+                return Err(format!(
+                    "CGEventTapCreate 返回 null（输入监控已授权，辅助功能权限: {}）",
+                    if has_accessibility {
+                        "已授权"
+                    } else {
+                        "未授权"
+                    }
+                ));
             } else {
-                return Err("CGEventTapCreate 返回 null，缺少辅助功能权限。\
-                     请在 系统设置 > 隐私与安全性 > 辅助功能 中授权 DH-TransShot"
-                    .to_string());
+                return Err("CGEventTapCreate 返回 null，缺少输入监控权限".to_string());
             }
         }
 
@@ -339,6 +379,21 @@ mod macos_event_tap {
             tap,
             _source: source,
         })
+    }
+
+    fn ensure_listen_event_access() -> bool {
+        unsafe {
+            if CGPreflightListenEventAccess() {
+                return true;
+            }
+            if LISTEN_ACCESS_REQUESTED.swap(true, Ordering::AcqRel) {
+                return false;
+            }
+            warn!(
+                "[Hotkey] macOS event tap 需要输入监控权限，正在请求授权（用于吞掉 Option/Alt+字母）"
+            );
+            CGRequestListenEventAccess()
+        }
     }
 
     unsafe extern "C" fn event_tap_callback(
@@ -634,6 +689,9 @@ fn apply_hotkeys(app: &AppHandle, cfg: &HotkeyConfig) {
 
 /// Initial registration on app setup. Reads current settings.
 pub fn setup_hotkeys(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    macos_event_tap::remember_main_thread();
+
     let handle = app.handle().clone();
     let state = handle.state::<AppState>();
     let cfg = {

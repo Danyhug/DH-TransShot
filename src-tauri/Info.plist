@@ -5,6 +5,8 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>DH-TransShot 需要录屏权限来截取屏幕内容进行翻译</string>
 	<key>NSAccessibilityUsageDescription</key>
-	<string>DH-TransShot 需要辅助功能权限来拦截全局快捷键，防止按 Option+Q 等组合键时输入特殊字符</string>
+	<string>DH-TransShot 需要辅助功能权限来读取选中文字并执行翻译</string>
+	<key>NSInputMonitoringUsageDescription</key>
+	<string>DH-TransShot 需要输入监控权限来稳定拦截全局快捷键，防止 Option/Alt+字母输入特殊字符</string>
 </dict>
 </plist>

@@ -1,3 +1,4 @@
+use crate::config::{AppState, HotkeyConfig};
 use log::info;
 use tauri::{
     image::Image,
@@ -7,14 +8,32 @@ use tauri::{
 };
 
 pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let hotkeys = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|settings| settings.hotkeys.clone())
+        .unwrap_or_else(|_| HotkeyConfig::default());
+
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
-    let screenshot = MenuItem::with_id(app, "screenshot", "区域截图 (Alt+A)", true, None::<&str>)?;
-    let ocr_translate =
-        MenuItem::with_id(app, "ocr_translate", "区域翻译 (Alt+S)", true, None::<&str>)?;
+    let screenshot = MenuItem::with_id(
+        app,
+        "screenshot",
+        format!("区域截图 ({})", hotkeys.screenshot),
+        true,
+        None::<&str>,
+    )?;
+    let ocr_translate = MenuItem::with_id(
+        app,
+        "ocr_translate",
+        format!("区域翻译 ({})", hotkeys.ocr_translate),
+        true,
+        None::<&str>,
+    )?;
     let clipboard_translate = MenuItem::with_id(
         app,
         "clipboard_translate",
-        "翻译选中文本 (Alt+Q)",
+        format!("翻译选中文本 ({})", hotkeys.clipboard_translate),
         true,
         None::<&str>,
     )?;

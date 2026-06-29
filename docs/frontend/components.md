@@ -50,8 +50,8 @@
 **布局：**
 - 左侧：Pin 图钉图标按钮（切换窗口置顶，使用 `appWindow.setAlwaysOnTop()`）
 - 右侧四个图标按钮：
-  - 相机（区域截图 ⌥A）
-  - 裁切框（区域翻译 ⌥S）
+  - 相机（区域截图，tooltip 显示当前快捷键）
+  - 裁切框（区域翻译，tooltip 显示当前快捷键）
   - 文件文本（调试日志）
   - 开关/滑块（设置）
 - 标题栏无背景色（透明，继承外层 `--color-bg`）
@@ -177,7 +177,7 @@
 - 在 window keydown 事件（capture 阶段）监听：忽略纯修饰键，将 `e.altKey/ctrlKey/shiftKey/metaKey` + 主键 code 组合为 `"Alt+A"` 等字符串
 - `codeToToken` 将浏览器 `KeyboardEvent.code`（如 `KeyA`、`Digit1`、`F2`、`Comma`）转为 Rust `Shortcut::from_str` 期望的 token（`A`、`1`、`F2`、`,`）
 - 校验：至少一个修饰键；Esc（无修饰）取消录入；失焦自动退出
-- `formatShortcut` 在 macOS 下把字符串显示为符号（`⌥A`、`⌃⇧S`），Win/Linux 下原样显示
+- `formatShortcut` 在 macOS 下把字符串显示为符号（如 `⌥A`、`⌃⇧S`），Win/Linux 下原样显示
 
 ### LogPanel.tsx
 

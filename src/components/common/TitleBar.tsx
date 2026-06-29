@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { formatShortcut } from "../settings/HotkeyInput";
 
 interface Props {
   onScreenshot?: () => void;
@@ -13,6 +15,7 @@ interface Props {
 export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, onDebugLog, onSettings, onWindowDragStart }: Props) {
   const appWindow = getCurrentWindow();
   const [pinned, setPinned] = useState(false);
+  const hotkeys = useSettingsStore((state) => state.settings.hotkeys);
 
   const togglePin = async () => {
     const next = !pinned;
@@ -52,7 +55,7 @@ export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, o
           onClick={onScreenshot}
           className={btnClass}
           style={{ color: "var(--color-text-secondary)" }}
-          title="区域截图 (⌥A)"
+          title={`区域截图 (${formatShortcut(hotkeys.screenshot)})`}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
@@ -65,7 +68,7 @@ export function TitleBar({ onScreenshot, onOcrTranslate, onClipboardTranslate, o
           onClick={onOcrTranslate}
           className={btnClass}
           style={{ color: "var(--color-text-secondary)" }}
-          title="区域翻译 (⌥S)"
+          title={`区域翻译 (${formatShortcut(hotkeys.ocr_translate)})`}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 2v4H2" />

@@ -39,12 +39,12 @@ static HOTKEYS_SUSPENDED: AtomicBool = AtomicBool::new(false);
 2. 返回 `null` 吞掉该按键，避免 Carbon 丢绑定时 `Option+S` 继续透传给前台输入框并输入 `ß`
 3. 设置面板录入快捷键期间，`HOTKEYS_SUSPENDED` 为 true，event tap 直接放行按键
 
-**重要：CGEventTap 需要辅助功能权限才能工作。** 如果 `CGEventTapCreate` 返回 null（缺少辅助功能权限），应用会：
-1. 调用 `AXIsProcessTrusted()` 检查权限状态
-2. 打印详细的 warn 日志，提示用户在 系统设置 > 隐私与安全性 > 辅助功能 中授权 DH-TransShot
+**重要：CGEventTap 需要输入监控权限才能工作。** 如果 `CGEventTapCreate` 返回 null（缺少输入监控权限），应用会：
+1. 调用 `CGPreflightListenEventAccess()` / `CGRequestListenEventAccess()` 检查并请求权限
+2. 打印详细的 warn 日志，提示用户在 系统设置 > 隐私与安全性 > 输入监控 中授权 DH-TransShot
 3. 继续使用 Carbon 快捷键路径（但无法吞掉事件，按 Option+Q 等组合键仍会输入特殊字符）
 
-`Info.plist` 中已声明 `NSAccessibilityUsageDescription`，系统会在首次请求辅助功能权限时显示说明。
+`Info.plist` 中已声明 `NSInputMonitoringUsageDescription`，系统会在请求输入监控权限时显示说明。辅助功能权限仍用于读取选中文字。
 
 ### `emit_hotkey_action(AppHandle, String)`
 
