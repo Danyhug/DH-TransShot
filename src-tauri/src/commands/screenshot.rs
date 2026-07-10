@@ -59,7 +59,7 @@ pub async fn start_region_select(
 
     // 2. Collect window rects BEFORE creating the overlay window
     info!("[Screenshot] 采集窗口列表...");
-    let window_rects = tokio::task::spawn_blocking(|| crate::screenshot::list_window_rects())
+    let window_rects = tokio::task::spawn_blocking(crate::screenshot::list_window_rects)
         .await
         .map_err(|e| e.to_string())?;
     info!(
@@ -182,39 +182,13 @@ pub async fn start_region_select(
                 .build()
         };
 
-        let overlay = match build_overlay() {
-            Ok(w) => w,
-            Err(_) => {
-                info!("[Screenshot] 覆盖层[{}]创建失败，尝试关闭残留窗口后重试", i);
-                if let Some(existing) = app.get_webview_window(&label) {
-                    let _ = existing.close();
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                build_overlay().map_err(|e: tauri::Error| e.to_string())?
+        if build_overlay().is_err() {
+            info!("[Screenshot] 覆盖层[{}]创建失败，尝试关闭残留窗口后重试", i);
+            if let Some(existing) = app.get_webview_window(&label) {
+                let _ = existing.close();
             }
-        };
-
-        // Log when the first overlay closes + re-register hotkeys.
-        // Why: on macOS, frequent creation/destruction of transparent
-        // always-on-top windows occasionally disrupts Carbon's hotkey state,
-        // leaving the registration stale — subsequent presses pass through
-        // to the focused app (e.g. Alt+S types "ß" instead of triggering).
-        // Re-registering after each overlay session is a cheap safety net.
-        if i == 0 {
-            let frozen_mode = mode.clone();
-            let app_for_event = app.clone();
-            overlay.on_window_event(move |event| {
-                if let tauri::WindowEvent::Destroyed = event {
-                    info!("[Screenshot] 主覆盖层窗口关闭, mode={}", frozen_mode);
-                    // Spawn on a background thread — reload_hotkeys uses
-                    // run_on_main_thread internally, and on_window_event may
-                    // already be on the main thread, which would deadlock.
-                    let app = app_for_event.clone();
-                    std::thread::spawn(move || {
-                        crate::hotkey::reload_hotkeys(&app);
-                    });
-                }
-            });
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            build_overlay().map_err(|e: tauri::Error| e.to_string())?;
         }
     }
 

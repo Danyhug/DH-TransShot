@@ -108,10 +108,8 @@ fn list_window_rects_macos() -> Vec<WindowRect> {
 
             // Filter: must be on screen
             let on_screen_val = CFDictionaryGetValue(dict, kCGWindowIsOnscreen);
-            if !on_screen_val.is_null() {
-                if !CFBooleanGetValue(on_screen_val) {
-                    continue;
-                }
+            if !on_screen_val.is_null() && !CFBooleanGetValue(on_screen_val) {
+                continue;
             }
 
             // Get bounds dictionary

@@ -106,6 +106,17 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // React cleanup is not guaranteed to run when a Tauri webview is
+            // destroyed. Recover the global shortcuts from the native window
+            // lifecycle as the authoritative fallback.
+            if let RunEvent::WindowEvent { label, event, .. } = &event {
+                if label == "settings" && matches!(event, WindowEvent::Destroyed) {
+                    info!("[App] 设置窗口已销毁，确保恢复全局快捷键");
+                    let app = app_handle.clone();
+                    std::thread::spawn(move || hotkey::restore_hotkeys(&app));
+                }
+            }
+
             // macOS: 点击 Dock 图标时显示主窗口
             #[cfg(target_os = "macos")]
             if let RunEvent::Reopen { .. } = event {

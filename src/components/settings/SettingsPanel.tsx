@@ -354,14 +354,29 @@ export function SettingsPanel() {
       await saveSettings(settings);
       appLog.info("[Settings] 配置保存成功");
       await emit("settings-saved");
-      await getCurrentWindow().close();
     } catch (e) {
       appLog.error("[Settings] 配置保存失败: " + String(e));
+      return;
     }
+    // Tauri may destroy the webview without running React's effect cleanup.
+    // Resume explicitly before closing; the Rust window-destroyed handler is
+    // an additional fallback for the title-bar close button or a crash.
+    try {
+      await resumeHotkeys();
+    } catch (e) {
+      appLog.warn("[Settings] 保存后恢复快捷键失败: " + String(e));
+    }
+    await getCurrentWindow().close();
   }, [settings]);
 
-  const close = () => {
-    getCurrentWindow().close();
+  const close = async () => {
+    try {
+      await resumeHotkeys();
+    } catch (e) {
+      appLog.warn("[Settings] 关闭前恢复快捷键失败: " + String(e));
+    } finally {
+      await getCurrentWindow().close();
+    }
   };
 
   return (

@@ -167,8 +167,8 @@
   - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发到后端
 - 快捷键区：使用 `HotkeyInput` 组件可视化录入三个动作的快捷键（screenshot / ocr_translate / clipboard_translate）
 - 保存前校验三个快捷键非空，否则 alert 阻断
-- mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`），unmount 时调用 `resume_hotkeys` 恢复
-- 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置；后端 `save_settings` 命令会调用 `hotkey::reload_hotkeys` 让新快捷键立即生效
+- mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`）；保存/取消会在关闭前显式调用 `resume_hotkeys`，unmount cleanup 和后端原生窗口 `Destroyed` 监听作为双重兜底，避免 webview 关闭时 cleanup 未执行导致快捷键永久失效
+- 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置；后端 `save_settings` 在挂起期间只更新配置，随后 `resume_hotkeys` 从最新配置完成注册
 
 ### HotkeyInput.tsx
 
