@@ -1267,14 +1267,13 @@ export function ScreenshotOverlay() {
   const displayScale = getImageScale();
 
   if (phase === "annotate" && selRect) {
-    // 计算工具栏位置，避免在屏幕右边缘或底部溢出
+    // 计算工具栏位置，避免在屏幕右边缘或上下溢出
     const canvasDisplayH = canvasDisplaySize?.height ?? selRect.height;
     const winW = window.innerWidth;
     const winH = window.innerHeight;
-    // 默认：canvas 下方、左对齐
+
+    // 横向：默认左对齐；右沿溢出窗口时向左回收
     let toolbarLeft = 0;
-    let toolbarTop = canvasDisplayH + ANNOTATION_CANVAS_BORDER + ANNOTATION_TOOLBAR_SPACING;
-    // 右边缘 clamp：工具栏右沿不超出窗口
     const toolbarRight = selRect.left + toolbarLeft + ANNOTATION_TOOLBAR_MIN_WIDTH;
     if (toolbarRight > winW) {
       toolbarLeft = Math.max(
@@ -1282,10 +1281,29 @@ export function ScreenshotOverlay() {
         winW - selRect.left - ANNOTATION_TOOLBAR_MIN_WIDTH - ANNOTATION_EDGE_MARGIN,
       );
     }
-    // 底部 clamp：工具栏底沿超出窗口时，改放到 canvas 上方
-    const toolbarBottom = selRect.top + toolbarTop + ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE;
-    if (toolbarBottom > winH) {
-      toolbarTop = -ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE - ANNOTATION_TOOLBAR_SPACING;
+
+    // 纵向三档回退（相对选区容器 top，屏幕 Y = selRect.top + toolbarTop）：
+    // 1) canvas 下方  2) canvas 上方  3) 浮在 canvas 内部底边
+    // 全屏/超高选区上下都没有外侧空间时，落到第 3 档，工具栏半透明浮在截图内部，避免掉出屏幕。
+    const belowTop = canvasDisplayH + ANNOTATION_CANVAS_BORDER + ANNOTATION_TOOLBAR_SPACING;
+    const aboveTop = -ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE - ANNOTATION_TOOLBAR_SPACING;
+    const insideBottomTop =
+      canvasDisplayH +
+      ANNOTATION_CANVAS_BORDER -
+      ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE -
+      ANNOTATION_TOOLBAR_SPACING;
+
+    const fitsBelow =
+      selRect.top + belowTop + ANNOTATION_TOOLBAR_HEIGHT_ESTIMATE <= winH;
+    const fitsAbove = selRect.top + aboveTop >= ANNOTATION_EDGE_MARGIN;
+
+    let toolbarTop: number;
+    if (fitsBelow) {
+      toolbarTop = belowTop;
+    } else if (fitsAbove) {
+      toolbarTop = aboveTop;
+    } else {
+      toolbarTop = insideBottomTop;
     }
 
     return (
