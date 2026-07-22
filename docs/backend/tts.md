@@ -38,7 +38,7 @@
 缓存当前保存在内存中，最大 64 条，超出后按插入顺序淘汰旧项。保存设置时会清空缓存，避免模型、voice 或其它参数变化后继续复用旧音频。
 
 **辅助函数：**
-- `audio_speech_url(base_url)` — 拼接 `/v1/audio/speech` 端点 URL
+- `audio_speech_url(base_url)` — 复用 `api_client::build_endpoint_url(base_url, "audio/speech")` 自适应拼接端点（根/版本段/完整端点/`#` raw，规则见 [config.md](config.md)）
 
 ## API 请求格式
 

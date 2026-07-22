@@ -46,7 +46,7 @@
 
 - `temperature: 0.3` 为翻译场景优化的值，调高会增加输出随机性
 - 系统提示词直接影响翻译质量，修改时需充分测试不同语言对
-- `base_url` 末尾的 `/` 由 `api_client` 自动去除
+- `base_url` 由 `api_client::build_endpoint_url` 按填写形态自适应拼接端点（根/版本段/完整端点/`#` raw），规则详见 [config.md](config.md)
 - 空 `api_key` 时不发送 Authorization header（适配 Ollama 等本地服务）
 - 如需支持流式翻译，需将 HTTP 响应改为 SSE 流处理
 - 新增翻译 Provider（如直接调用 Google Translate API）可在 `translation/` 下新建模块，参考 `openai_compat.rs` 实现

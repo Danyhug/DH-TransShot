@@ -48,6 +48,22 @@
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
 
+**`base_url` 端点自适应拼接（`api_client::build_endpoint_url`）**
+
+`base_url` 不要求填完整端点，后端会根据填写形态自动拼出正确请求地址（Chat Completions 拼 `chat/completions`，TTS 拼 `audio/speech`）。规则按优先级：
+
+| 优先级 | 用户填写形态 | 处理 | 示例（Chat） |
+|--------|-------------|------|-------------|
+| 0 | 以 `#` 结尾 | 去掉 `#` 后**原样请求**（raw 模式，支持自定义/非标准路径） | `http://x.top/my/api#` → `http://x.top/my/api` |
+| 1 | 已含完整端点 | 原样使用 | `https://api.openai.com/v1/chat/completions` → 不变 |
+| 2 | 末尾是版本段（`v1`/`v4`/`v1beta`…） | 追加 `/端点`，保留原版本号 | `https://open.bigmodel.cn/api/paas/v4` → `…/v4/chat/completions` |
+| 3 | 其余（根地址） | 追加 `/v1/端点` | `https://api.openai.com` → `…/v1/chat/completions` |
+
+- 版本段判定：段以 `v` 开头且紧跟数字（`is_version_segment`）
+- 翻译/OCR 经 `chat_completions_url()` → `build_endpoint_url(base_url, "chat/completions")`；TTS 经 `audio_speech_url()` → `build_endpoint_url(base_url, "audio/speech")`
+- **注意**：全局 `base_url` 被三个服务共享回退，不要用 `#` 或完整端点把它锁死成某一个端点（会导致其它服务取不到自己的端点）；完整端点/`#` 建议用在各服务自己的 `provider.base_url` 上
+- 前端设置界面已在「API 地址」输入下展示该规则摘要
+
 **`HotkeyConfig` — 快捷键配置**
 
 | 字段 | 类型 | 默认值 | 说明 |

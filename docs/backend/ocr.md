@@ -15,7 +15,7 @@ OCR 文字识别模块，通过 OpenAI 兼容的视觉语言模型 API 实现。
 ### mod.rs
 
 **`recognize(client, image_bytes, language, base_url, api_key, model, extra) -> anyhow::Result<String>`**
-1. 使用 `api_client::chat_completions_url()` 构造 API 端点
+1. 使用 `api_client::chat_completions_url()` 构造 API 端点（内部走 `build_endpoint_url` 自适应拼接，规则见 [config.md](config.md)）
 2. 在 `spawn_blocking` 中调用图像预处理（`prepare_ocr_image_from_bytes`），避免阻塞 async 运行时
 3. 对 OCR 输入图像做尺寸约束：最长边超过 `2048px` 时先缩放
 4. 无透明通道时优先编码为 JPEG（减小上传体积），有透明度时保留 PNG
