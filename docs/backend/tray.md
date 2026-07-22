@@ -18,6 +18,8 @@
 
 | ID | 标签 | 功能 |
 |----|------|------|
+| `version` | DH-TransShot v{版本号} | 显示当前版本号（disabled，仅展示）；版本号取自 `app.package_info().version`（由 `tauri.conf.json` 同步） |
+| `sep_version` | ───────── | 分隔线（disabled） |
 | `show` | Show Window | 显示并聚焦主窗口 |
 | `screenshot` | 区域截图 (当前设置快捷键) | emit `"tray-action"` → `"screenshot"` |
 | `ocr_translate` | 区域翻译 (当前设置快捷键) | emit `"tray-action"` → `"ocr_translate"` |
