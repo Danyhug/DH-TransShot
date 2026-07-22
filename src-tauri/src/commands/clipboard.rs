@@ -34,7 +34,7 @@ fn wait_for_option_key_release() -> bool {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
 
-    warn!("[Clipboard] Option/Alt 仍处于按下状态，跳过模拟复制以避免触发系统/浏览器快捷键");
+    warn!("[Clipboard] Option/Alt 仍处于按下状态，仍继续（CGEvent 会强制干净的 Cmd+C）");
     false
 }
 
@@ -106,6 +106,58 @@ fn simulate_cmd_c_via_cgevent() -> Result<(), String> {
     Ok(())
 }
 
+/// Read `NSPasteboard.generalPasteboard.changeCount` via the Objective-C
+/// runtime. macOS increments this monotonic counter on every real clipboard
+/// write, so comparing it before/after a synthetic Cmd+C reliably detects
+/// whether the copy actually landed — without a fixed sleep or content-equality
+/// guessing (which fails when the selection equals the previous clipboard).
+///
+/// Returns -1 if the runtime lookup fails (treated as "unavailable").
+#[cfg(target_os = "macos")]
+fn pasteboard_change_count() -> i64 {
+    use std::ffi::c_void;
+    use std::os::raw::c_char;
+
+    // Force AppKit to be linked so NSPasteboard is registered with the runtime.
+    #[link(name = "AppKit", kind = "framework")]
+    extern "C" {}
+
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *mut c_void;
+        fn sel_registerName(name: *const c_char) -> *mut c_void;
+        fn objc_msgSend();
+    }
+
+    unsafe {
+        let cls = objc_getClass(b"NSPasteboard\0".as_ptr() as *const c_char);
+        if cls.is_null() {
+            return -1;
+        }
+
+        // objc_msgSend must be invoked through a prototype matching the method
+        // signature (required on arm64). Coerce the imported symbol to a fn
+        // pointer, then transmute it to each concrete signature we need.
+        let msg_send = objc_msgSend as unsafe extern "C" fn();
+
+        let general_pasteboard: extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(msg_send);
+        let pasteboard = general_pasteboard(
+            cls,
+            sel_registerName(b"generalPasteboard\0".as_ptr() as *const c_char),
+        );
+        if pasteboard.is_null() {
+            return -1;
+        }
+
+        let change_count: extern "C" fn(*mut c_void, *mut c_void) -> i64 =
+            std::mem::transmute(msg_send);
+        change_count(
+            pasteboard,
+            sel_registerName(b"changeCount\0".as_ptr() as *const c_char),
+        )
+    }
+}
+
 /// Read selected text from the currently focused application.
 /// Primary: macOS Accessibility API (AXSelectedText).
 /// Fallback: save clipboard → simulate Cmd/Ctrl+C → read → restore clipboard.
@@ -173,95 +225,146 @@ return ""
     Ok(text)
 }
 
-/// Fallback: save clipboard → simulate Cmd/Ctrl+C → read new clipboard → restore old clipboard.
+/// Fallback: simulate Cmd/Ctrl+C, wait for the copy to actually land, read the
+/// selection, then restore the previous clipboard content. Dispatches to a
+/// platform-specific implementation because the "did the copy land" signal
+/// differs (macOS: pasteboard changeCount; Windows: content change).
 fn get_selected_text_clipboard_fallback() -> Result<String, String> {
-    info!("[Clipboard] 剪贴板回退: 保存当前剪贴板 → 模拟复制 → 读取 → 恢复");
+    info!("[Clipboard] 剪贴板回退: 保存剪贴板 → 模拟复制 → 等待更新 → 读取 → 恢复");
 
-    // Step 1: Save current clipboard content
     #[cfg(target_os = "macos")]
+    {
+        get_selected_text_clipboard_fallback_macos()
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        get_selected_text_clipboard_fallback_windows()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Err("Clipboard not supported on this platform".to_string())
+    }
+}
+
+/// macOS clipboard fallback driven by `NSPasteboard.changeCount`. Polling the
+/// counter (instead of a fixed sleep) tolerates slow apps and correctly reports
+/// "no selection" even when the selection equals the previous clipboard.
+#[cfg(target_os = "macos")]
+fn get_selected_text_clipboard_fallback_macos() -> Result<String, String> {
+    // Save the current clipboard so it can be restored afterwards.
     let saved_clipboard: Option<String> = pbpaste_utf8()
         .output()
         .ok()
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
 
-    #[cfg(target_os = "windows")]
+    // Best-effort: prefer to fire once Option is released. Not fatal —
+    // simulate_cmd_c_via_cgevent forces clean Cmd-only flags regardless.
+    wait_for_option_key_release();
+
+    // Snapshot the change counter BEFORE copying so a real write is detectable
+    // even when the selection is identical to the current clipboard content.
+    let count_before = pasteboard_change_count();
+    if count_before < 0 {
+        warn!("[Clipboard] 无法读取 NSPasteboard changeCount");
+    }
+
+    if let Err(e) = simulate_cmd_c_via_cgevent() {
+        warn!("[Clipboard] CGEvent 模拟 Cmd+C 失败: {}", e);
+    }
+
+    // Poll up to ~1s; stop the instant the pasteboard actually changes. This
+    // replaces a fixed 150ms sleep that raced against slow-responding apps.
+    let mut copied = false;
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if pasteboard_change_count() != count_before {
+            copied = true;
+            break;
+        }
+    }
+
+    if !copied {
+        info!("[Clipboard] changeCount 未变化，可能没有选中文本");
+        return Ok(String::new());
+    }
+
+    // The selection now sits on the clipboard — read it before restoring.
+    let new_text = pbpaste_utf8()
+        .output()
+        .map_err(|e| e.to_string())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())?;
+
+    // Restore the previous clipboard content (best effort).
+    if let Some(ref old_text) = saved_clipboard {
+        restore_clipboard_macos(old_text);
+        info!("[Clipboard] 原剪贴板内容已恢复");
+    }
+
+    info!(
+        "[Clipboard] 选中文字已获取 (剪贴板回退), 文本长度={}",
+        new_text.len()
+    );
+    Ok(new_text)
+}
+
+/// Best-effort restore of macOS clipboard text via `pbcopy`.
+#[cfg(target_os = "macos")]
+fn restore_clipboard_macos(text: &str) {
+    let _ = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            if let Some(stdin) = child.stdin.as_mut() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            child.wait()
+        });
+}
+
+/// Windows clipboard fallback: poll `Get-Clipboard` until the content changes,
+/// returning early instead of relying on a single fixed wait.
+#[cfg(target_os = "windows")]
+fn get_selected_text_clipboard_fallback_windows() -> Result<String, String> {
     let saved_clipboard: Option<String> = powershell_command("Get-Clipboard")
         .output()
         .ok()
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
 
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let saved_clipboard: Option<String> = None;
-
-    // Step 2: Simulate Cmd+C / Ctrl+C
-    #[cfg(target_os = "macos")]
-    {
-        if !wait_for_option_key_release() {
-            return Ok(String::new());
-        }
-
-        if let Err(e) = simulate_cmd_c_via_cgevent() {
-            warn!("[Clipboard] CGEvent 模拟 Cmd+C 失败: {}", e);
-        }
+    let copy_result = powershell_command(
+        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^c\")",
+    )
+    .output()
+    .map_err(|e| format!("powershell failed: {}", e))?;
+    if !copy_result.status.success() {
+        let stderr = String::from_utf8_lossy(&copy_result.stderr);
+        warn!("[Clipboard] 模拟复制失败: {}", stderr);
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        let copy_result = powershell_command("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^c\")")
+    let saved_trimmed = saved_clipboard.as_deref().unwrap_or("").trim().to_string();
+
+    // Poll up to ~720ms; return as soon as the clipboard differs from before.
+    let mut new_text = String::new();
+    for _ in 0..6 {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        let current = powershell_command("Get-Clipboard")
             .output()
-            .map_err(|e| format!("powershell failed: {}", e))?;
-
-        if !copy_result.status.success() {
-            let stderr = String::from_utf8_lossy(&copy_result.stderr);
-            warn!("[Clipboard] 模拟复制失败: {}", stderr);
+            .map_err(|e| e.to_string())
+            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())?;
+        if current.trim() != saved_trimmed {
+            new_text = current;
+            break;
         }
     }
 
-    // Step 3: Wait for clipboard to update
-    std::thread::sleep(std::time::Duration::from_millis(150));
-
-    // Step 4: Read the new clipboard content
-    #[cfg(target_os = "macos")]
-    let new_clipboard: Result<String, String> = pbpaste_utf8()
-        .output()
-        .map_err(|e| e.to_string())
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
-
-    #[cfg(target_os = "windows")]
-    let new_clipboard: Result<String, String> = powershell_command("Get-Clipboard")
-        .output()
-        .map_err(|e| e.to_string())
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let new_clipboard: Result<String, String> =
-        Err("Clipboard not supported on this platform".to_string());
-
-    let new_text = new_clipboard?;
-
-    // Step 5: If clipboard didn't change, no text was selected
-    if new_text.trim() == saved_clipboard.as_deref().unwrap_or("").trim() {
+    if new_text.trim().is_empty() {
         info!("[Clipboard] 剪贴板内容未变化，可能没有选中文本");
         return Ok(String::new());
     }
 
-    // Step 6: Restore old clipboard content (best effort)
-    #[cfg(target_os = "macos")]
-    if let Some(ref old_text) = saved_clipboard {
-        let _ = std::process::Command::new("pbcopy")
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                use std::io::Write;
-                if let Some(stdin) = child.stdin.as_mut() {
-                    let _ = stdin.write_all(old_text.as_bytes());
-                }
-                child.wait()
-            });
-        info!("[Clipboard] 原剪贴板内容已恢复");
-    }
-
-    #[cfg(target_os = "windows")]
+    // Restore old clipboard content (best effort).
     if let Some(ref old_text) = saved_clipboard {
         let ps_script = format!("Set-Clipboard -Value '{}'", old_text.replace('\'', "''"));
         let _ = powershell_command(&ps_script).output();
