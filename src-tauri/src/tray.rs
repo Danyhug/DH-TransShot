@@ -15,6 +15,16 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .map(|settings| settings.hotkeys.clone())
         .unwrap_or_else(|_| HotkeyConfig::default());
 
+    let version_item = MenuItem::with_id(
+        app,
+        "version",
+        format!("DH-TransShot v{}", app.package_info().version),
+        false,
+        None::<&str>,
+    )?;
+    let version_separator =
+        MenuItem::with_id(app, "sep_version", "─────────", false, None::<&str>)?;
+
     let show = MenuItem::with_id(app, "show", "Show Window", true, None::<&str>)?;
     let screenshot = MenuItem::with_id(
         app,
@@ -43,6 +53,8 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let menu = Menu::with_items(
         app,
         &[
+            &version_item,
+            &version_separator,
             &show,
             &screenshot,
             &ocr_translate,

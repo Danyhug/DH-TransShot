@@ -50,6 +50,7 @@ pub fn run() {
             hotkey::resume_hotkeys,
         ])
         .setup(|app| {
+            info!("[Setup] DH-TransShot v{} 启动", app.package_info().version);
             info!("[Setup] 应用启动，加载持久化配置...");
             // Load persisted settings from store
             use tauri_plugin_store::StoreExt;
