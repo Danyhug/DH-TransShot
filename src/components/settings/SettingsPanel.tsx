@@ -188,6 +188,7 @@ function ServiceFields({
               className="w-full text-sm outline-none"
               style={inputStyle}
               placeholder="https://api.openai.com"
+              title="填根地址或以 /v1 结尾自动补全端点；已是完整端点原样；结尾加 # 按填写内容原样请求"
             />
           </label>
           <label className="block">
@@ -433,6 +434,14 @@ export function SettingsPanel() {
               }}
               placeholder="https://api.openai.com"
             />
+            <div
+              className="text-xs"
+              style={{ color: "var(--color-text-secondary)", marginTop: "5px", lineHeight: 1.6, opacity: 0.8 }}
+            >
+              <div>· 填根地址或以 /v1 结尾 → 自动补全对应端点（如 …/v1/chat/completions）</div>
+              <div>· 已是完整端点 → 原样使用</div>
+              <div>· 结尾加 # → 完全按填写内容请求（自定义 / 非标准路径）</div>
+            </div>
           </label>
           <label className="block">
             <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>

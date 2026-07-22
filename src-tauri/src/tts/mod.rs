@@ -4,8 +4,9 @@ use log::{error, info, warn};
 use reqwest::Client;
 
 /// Build the full Audio Speech endpoint URL from a base_url.
+/// 复用 `api_client::build_endpoint_url` 的自适应拼接规则（根/版本段/完整端点/`#` raw）。
 fn audio_speech_url(base_url: &str) -> String {
-    format!("{}/v1/audio/speech", base_url.trim_end_matches('/'))
+    crate::api_client::build_endpoint_url(base_url, "audio/speech")
 }
 
 /// Call the OpenAI-compatible TTS endpoint and return the audio as base64.
