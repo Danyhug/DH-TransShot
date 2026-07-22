@@ -92,14 +92,17 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 **`read_selected_text() -> Result<String, String>`**
 - 读取当前焦点应用的选中文本
 - 优先使用 macOS Accessibility API（`AXSelectedText` 属性），直接读取选中文字
-- 若 Accessibility API 失败或返回空，回退到剪贴板模拟：
-  - 保存当前剪贴板内容
-  - macOS 下先确认 Option/Alt 已释放（`CGEventSourceFlagsState` 轮询）
+- 若 Accessibility API 失败或返回空（浏览器/Electron 的网页输入框常返回空），回退到剪贴板模拟：
+  - 保存当前剪贴板内容（用于事后恢复）
+  - macOS 下尽力等待 Option/Alt 释放（`CGEventSourceFlagsState` 轮询），但**不再因超时放弃**——`CGEventSetFlags` 已强制干净的 Cmd+C
   - **模拟 Cmd+C 用 CGEvent 直接 post**，并通过 `CGEventSetFlags` 显式只设 Cmd 修饰位 —— 这样即使硬件层 Alt 状态尚未完全清零，目标应用也只会收到干净的 Cmd+C，不会被解析为 `Cmd+Option+C`（Chrome 的"检查元素"）。Windows 仍用 `SendKeys "^c"`
-  - 等待 150ms 让剪贴板更新
-  - 读取新剪贴板内容
+  - **检测复制是否真正落地（取代固定 150ms 等待）**：
+    - macOS：轮询 `NSPasteboard.changeCount`（Objective-C 运行时读取），复制前后计数变化即表示写入成功，最多轮询约 1s，一旦变化立即返回
+    - Windows：轮询 `Get-Clipboard`，内容相对复制前发生变化即返回，最多约 720ms
+  - 读取新剪贴板内容作为选中文字
   - 恢复原剪贴板内容
-  - 若剪贴板未变化（没有选中文本），返回空字符串
+  - 若计数/内容始终未变化（没有选中文本），返回空字符串
+- 用 `changeCount` 而非"内容比较"判定，可避免"选中文本恰好等于当前剪贴板"时的误判，也避免慢应用响应不及 150ms 时的偶发失败
 - 用于"翻译选中文本"功能（Alt+Q）
 
 ## 依赖关系
