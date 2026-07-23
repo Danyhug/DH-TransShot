@@ -31,7 +31,8 @@ const extraParamPresets: Record<TabName, { key: string; label: string; defaultVa
     { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)" },
   ],
   tts: [
-    { key: "voice", label: "voice", defaultValue: "", tooltip: "发音人音色，格式为「模型名:音色名」，如 FunAudioLLM/CosyVoice2-0.5B:alex" },
+    { key: "tts_mode", label: "tts_mode", defaultValue: "audio_speech", tooltip: "TTS 接口格式：audio_speech = OpenAI 标准 /v1/audio/speech（默认）；chat_completions = 小米 MiMo 等 /v1/chat/completions 格式" },
+    { key: "voice", label: "voice", defaultValue: "", tooltip: "发音人音色。audio_speech 格式为「模型名:音色名」如 FunAudioLLM/CosyVoice2-0.5B:alex；chat_completions 格式直接填音色名如 mimo_default" },
     { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速，1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
     { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 (dB)，0 为原始音量，正数加大，负数减小 (-10~10)" },
     { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "音频输出格式，mp3 体积小，wav 无损，opus 适合流式" },
