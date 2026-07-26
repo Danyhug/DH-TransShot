@@ -15,6 +15,25 @@ function normalizeTtsText(text: string) {
   return text.trim().replace(/\r\n/g, "\n");
 }
 
+// 后端返回的是「base64 音频」，但格式不定：audio/speech 协议是 mp3，
+// 小米 chat+audio 协议默认是 wav。按音频魔数嗅探 mime，避免写死 mp3 导致 wav 放不出。
+function detectAudioMime(base64Audio: string): string {
+  try {
+    const header = atob(base64Audio.slice(0, 8)); // 前 6 字节足够识别魔数
+    if (header.startsWith("RIFF")) return "audio/wav";
+    if (header.startsWith("ID3")) return "audio/mpeg";
+    if (header.startsWith("OggS")) return "audio/ogg";
+    if (header.startsWith("fLaC")) return "audio/flac";
+    // MP3 帧同步：0xFF 0xEx/0xFx（无 ID3 头的 mp3）
+    if (header.charCodeAt(0) === 0xff && (header.charCodeAt(1) & 0xe0) === 0xe0) {
+      return "audio/mpeg";
+    }
+    return "audio/mpeg";
+  } catch {
+    return "audio/mpeg";
+  }
+}
+
 function getTtsCacheKey(baseUrl: string, model: string, extra: string, text: string) {
   return `${baseUrl}\n${model}\n${extra}\n${text}`;
 }
@@ -93,7 +112,14 @@ export function ActionButtons({ text }: Props) {
         }
       }
 
-      const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
+      if (!base64Audio) {
+        appLog.warn("[TTS] 未获取到音频数据");
+        setIsSpeaking(false);
+        return;
+      }
+
+      const mime = detectAudioMime(base64Audio);
+      const audio = new Audio(`data:${mime};base64,${base64Audio}`);
       audioRef.current = audio;
 
       audio.onended = () => {
@@ -107,7 +133,7 @@ export function ActionButtons({ text }: Props) {
       };
 
       await audio.play();
-      appLog.info("[TTS] 音频播放开始");
+      appLog.info("[TTS] 音频播放开始, mime=" + mime);
     } catch (e) {
       appLog.error("[TTS] 语音合成失败: " + String(e));
       setIsSpeaking(false);
