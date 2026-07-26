@@ -220,11 +220,11 @@
 ### ActionButtons.tsx
 
 - **Copy**：`navigator.clipboard.writeText()`
-- **Speak**：调用后端 `synthesizeSpeech`（`lib/invoke.ts`）通过 OpenAI 兼容的 `/v1/audio/speech` 接口合成语音，使用设置中配置的 TTS 模型
+- **Speak**：调用后端 `synthesizeSpeech`（`lib/invoke.ts`）合成语音，使用设置中配置的 TTS 模型。后端按端点在 `/v1/audio/speech` 与小米式 chat+audio 两种协议间自适应（详见 [backend/tts.md](../backend/tts.md)）
   - 文本在生成缓存键和请求前会先做规范化：`trim()` + `CRLF -> LF`
   - 前端按 `base_url + tts.model + tts.extra + text` 做内存缓存，命中时直接复用已返回的 base64 音频
   - 若同一段文本的语音请求仍在进行中，后续点击会复用进行中的 Promise，避免并发重复请求
-  - 收到 base64 音频后，构建 `data:audio/mp3;base64,...` URL，用 `new Audio(url).play()` 播放
+  - 收到 base64 音频后，`detectAudioMime()` 按音频魔数嗅探 MIME（wav/mp3/ogg/flac，不写死 mp3），构建 `data:{mime};base64,...` URL 用 `new Audio(url).play()` 播放；未取到音频时 `appLog.warn` 并复位
   - 请求中按钮 disabled，防止重复点击
   - 错误通过 `appLog.error()` 记录
 - 14px 图标尺寸，`px-3 pb-2.5` 内边距
@@ -249,5 +249,5 @@
 - TextArea 使用透明背景，样式由外层卡片控制
 - ScreenshotOverlay 的 DPI 处理是关键：选区逻辑坐标 ×（冻结截图实际像素尺寸 / 覆盖层 CSS 尺寸）= 图像物理像素
 - TitleBar 的 Pin 功能使用 Tauri `setAlwaysOnTop()` API
-- ActionButtons 中的 TTS 通过后端 `synthesize_speech` 命令调用 OpenAI 兼容的 TTS API，使用设置中配置的模型
+- ActionButtons 中的 TTS 通过后端 `synthesize_speech` 命令合成，后端按端点自适应协议（标准 `/v1/audio/speech` 或小米 chat+audio）；前端播放按实际音频格式设 MIME，新增音频格式时同步补充 `detectAudioMime` 魔数
 - 按钮悬停统一使用 `hover:bg-black/5` 半透明效果
