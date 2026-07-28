@@ -11,6 +11,7 @@
 | `src/lib/invoke.ts` | 类型化的 Tauri invoke 命令封装 |
 | `src/lib/languages.ts` | 支持的语言列表定义 |
 | `src/lib/windowUtils.ts` | 子窗口管理工具（吸附式窗口创建/focus） |
+| `src/lib/tts.ts` | 共享朗读模块：前端缓存、流式边收边播、单例播放/顺序朗读 |
 
 ## 核心逻辑
 
@@ -31,8 +32,36 @@
 | `readSelectedText()` | — | `Promise<string>` | `read_selected_text` |
 | `copyImageToClipboard(imageBase64)` | `imageBase64: string` | `Promise<void>` | `copy_image_to_clipboard` |
 | `synthesizeSpeech(text)` | `text: string` | `Promise<string>` | `synthesize_speech` |
+| `synthesizeSpeechStream(text, sessionId)` | `text: string, sessionId: string` | `Promise<SpeechResponse>` | `synthesize_speech_stream` |
 
 **注意：** Tauri invoke 的参数名使用 camelCase，Tauri 会自动转换为后端的 snake_case。
+
+`SpeechResponse = { audio: string; chunkCount: number; sampleRate: number }`：`audio` 是完整音频 base64（写前端缓存）；`chunkCount > 0` 表示走了流式分块（已通过 `tts-chunk` 事件推送），`0` 表示应直接播放 `audio`。
+
+### tts.ts - 共享朗读模块
+
+统一的朗读入口，被 `ActionButtons`（手动朗读）和 `useTranslation`（翻译后自动朗读）共用。
+
+**导出函数：**
+
+| 函数 | 说明 |
+|------|------|
+| `speak(text, id)` | 朗读一段文本；`id`（如 `"source"`/`"target"`）用于「朗读中」高亮。会抢占正在进行的朗读，播完/出错/被打断时兑现 |
+| `speakSequence(items)` | 依次朗读多段（`[{text,id}]`）；前一段播完再播下一段，被打断则整体中止（自动朗读原文→译文用） |
+| `stopSpeaking()` | 停止当前朗读并熄灭高亮 |
+| `isStreamPlaybackSupported()` | 是否支持 Web Audio（边收边播依赖） |
+
+**关键机制：**
+
+- **单例播放 + generation 抢占**：全局 `playGen` 计数，每次 `speak`/`speakSequence`/`stopSpeaking` 递增并停掉当前播放；全程用 `gen === playGen` 判断是否被后来的朗读打断，避免并发播放叠音
+- **朗读状态**：写入 `stores/ttsStore.ts` 的 `speakingId`，对应按钮显示「停止」图标
+- **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），命中直接整段播
+- **流式边收边播**（`speech.stream_playback !== false` 且支持 Web Audio）：
+  1. 生成 `sessionId = "{id}-{gen}"`，`listen("tts-chunk")` 按 `sessionId` 过滤
+  2. `StreamingPcmPlayer` 逐块 base64→Int16→Float32，`AudioContext.createBuffer(1, n, sampleRate)` 建块并按 `nextTime` 无缝排布（交给 ctx 重采样避免变调）；处理跨块奇数尾字节对齐
+  3. `synthesizeSpeechStream` 返回后 `markInputComplete(chunkCount)`，全部播完 `done` 兑现
+  4. `chunkCount===0`（命中后端缓存/非流式协议/服务端不支持）→ 退回 `playWholeAudio` 整段播
+- **整段播放**（`playWholeAudio`）：`detectAudioMime` 嗅探魔数 → `new Audio("data:{mime};base64,...")`
 
 ### languages.ts - 语言列表
 
@@ -67,11 +96,12 @@ interface Language { code: string; name: string }
 
 ## 依赖关系
 
-- **依赖**：`@tauri-apps/api/core`（invoke）、`@tauri-apps/api/window`（getCurrentWindow）、`@tauri-apps/api/webviewWindow`（WebviewWindow）、`types/index.ts`（Settings）
+- **依赖**：`@tauri-apps/api/core`（invoke）、`@tauri-apps/api/event`（listen，tts.ts）、`@tauri-apps/api/window`（getCurrentWindow）、`@tauri-apps/api/webviewWindow`（WebviewWindow）、`types/index.ts`（Settings）
 - **被依赖**：
-  - `invoke.ts` → `hooks/useScreenshot`、`hooks/useTranslation`、`App.tsx`、`SettingsPanel`、`LogPanel`
+  - `invoke.ts` → `hooks/useScreenshot`、`hooks/useTranslation`、`App.tsx`、`SettingsPanel`、`LogPanel`、`lib/tts.ts`
   - `languages.ts` → `components/translation/LanguageSelector.tsx`
   - `windowUtils.ts` → `stores/logStore.ts`（openDebugWindow）、`stores/settingsStore.ts`（openSettingsWindow）
+  - `tts.ts` → `components/translation/ActionButtons.tsx`、`hooks/useTranslation.ts`；读 `stores/settingsStore`、`stores/ttsStore`
 
 ## 修改指南
 
@@ -79,3 +109,5 @@ interface Language { code: string; name: string }
 - invoke 参数名必须与后端 `#[tauri::command]` 函数参数名的 camelCase 形式一致
 - 新增语言需同时更新 `languages` 数组，并确认后端 OCR 模块支持该语言
 - `auto` 语言仅适用于源语言，`targetLanguages` 会自动排除
+- 朗读逻辑集中在 `tts.ts`：新增播放入口应复用 `speak`/`speakSequence` 以共享单例抢占与缓存，避免多处 `new Audio` 叠音
+- 流式播放假设分块为 PCM16LE（后端 `tts-chunk` 事件的 `sampleRate` 决定重采样率）；后端改音频参数需同步此处

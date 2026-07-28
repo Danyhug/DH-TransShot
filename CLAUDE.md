@@ -199,8 +199,8 @@ src/
 │   ├── debug/
 │   └── common/
 ├── hooks/                      # 业务逻辑 Hooks
-├── stores/                     # Zustand 状态管理
-├── lib/                        # 工具函数
+├── stores/                     # Zustand 状态管理（含 ttsStore 朗读状态）
+├── lib/                        # 工具函数（含 tts.ts 共享朗读/流式播放）
 ├── types/                      # TypeScript 类型
 └── styles/                     # 全局样式
 ```

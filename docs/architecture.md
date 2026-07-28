@@ -48,6 +48,8 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 | `close-all-overlays` | 覆盖层 → 后端 | — | 通知关闭所有覆盖层窗口 |
 | `hotkey-action` | 后端 → 前端 | `string`（"screenshot"/"ocr_translate"/"clipboard_translate"） | 全局快捷键触发 |
 | `tray-action` | 后端 → 前端 | `string`（同上） | 托盘菜单触发 |
+| `settings-saved` | 设置窗口 → 主窗口 | — | 设置保存后通知主窗口重载配置 |
+| `tts-chunk` | 后端 → 前端 | `{ sessionId, seq, data, sampleRate }` | TTS chat+audio 流式 PCM 分块，前端边收边播 |
 
 ## 核心工作流
 

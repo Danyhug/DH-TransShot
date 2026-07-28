@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`HotkeyConfig`、`MonitorInfo`、`merge_extra` |
+| `src-tauri/src/config/mod.rs` | 模块声明，公开导出 `AppState`、`Settings`、`HotkeyConfig`、`MonitorInfo`、`merge_extra`（`SpeechConfig` 作为 `Settings.speech` 的字段类型，随 `Settings` 一并导出） |
 | `src-tauri/src/config/settings.rs` | 配置结构体定义、默认值和工具函数 |
 
 ## 核心逻辑
@@ -47,6 +47,7 @@
 | `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
+| `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、流式边收边播开关） |
 
 **`base_url` 端点自适应拼接（`api_client::build_endpoint_url`）**
 
@@ -75,6 +76,19 @@
 - 字符串使用 `+` 分隔，修饰键支持 `Alt`/`Option`/`Ctrl`/`Control`/`Shift`/`Cmd`/`Command`/`Super`/`CmdOrCtrl`，主键支持 `A-Z`、`0-9`、`F1-F24`、`Space`、`Enter`、`Tab`、`Escape`、方向键、标点符号等
 - 每个字段使用 `#[serde(default = "...")]`，旧版 settings.json（无 `hotkeys` 字段）反序列化时自动填充默认值
 - 修改后由 `save_settings` 触发 `hotkey::reload_hotkeys` 立即生效
+
+**`SpeechConfig` — 朗读配置**
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `auto_read_source` | bool | `false` | 翻译完成后自动朗读原文 |
+| `auto_read_target` | bool | `false` | 翻译完成后自动朗读译文 |
+| `stream_playback` | bool | `true` | 边收边播：chat+audio 流式分块实时推给前端播放；关闭则等整段音频合成完再播 |
+
+- 整个结构体用 `#[serde(default)]`，旧版 settings.json（无 `speech` 字段）反序列化时回退到全 false + `stream_playback=true`
+- `stream_playback` 用 `#[serde(default = "default_true")]` 保证单独缺字段时默认开启
+- 原文/译文可同时开启，前端按「先原文后译文」顺序朗读（`speakSequence`）
+- `stream_playback` 仅对小米 MiMo（chat+audio）流式路径有意义；audio/speech 协议始终整段播放
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
 - `ServiceConfig.providers` 默认空数组、`active` 默认 -1，旧版 settings.json（无这两个字段）能正常反序列化并保持默认行为

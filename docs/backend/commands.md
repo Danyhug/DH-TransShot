@@ -72,11 +72,17 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 ### tts.rs
 
+两个命令共用私有 `synthesize_inner`（规范化文本 → 读配置 → 查缓存 → `tts::synthesize()` → 写缓存）。
+
 **`synthesize_speech(state, text) -> Result<String, String>`**
-- 从 `AppState.settings` 读取 TTS 配置（base_url、api_key、tts.model、tts.extra）
-- 调用 `tts::synthesize()` 发送请求到 `/v1/audio/speech`
-- 返回 base64 编码的 mp3 音频数据
+- 非流式回调，返回完整音频 base64（可能是 mp3/wav，格式随协议）
 - Mutex 锁的作用域尽量小，取完配置即释放
+
+**`synthesize_speech_stream(app, state, text, session_id) -> Result<SpeechResponse, String>`**
+- 边收边播版本：传入 `on_chunk` 闭包，把 chat+audio 流式分块通过 `app.emit("tts-chunk", {sessionId, seq, data, sampleRate})` 实时推给前端
+- `session_id` 用于区分并发/过期朗读会话（前端按它过滤）
+- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）；`chunkCount==0` 时前端直接播 `audio`
+- 详见 [tts.md](tts.md)
 
 ### clipboard.rs
 

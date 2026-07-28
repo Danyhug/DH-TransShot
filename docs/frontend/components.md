@@ -14,7 +14,7 @@
 | `src/components/translation/TextArea.tsx` | 通用文本域（透明背景，由外层卡片提供样式） |
 | `src/components/translation/ActionButtons.tsx` | 朗读 + 复制按钮（内嵌于卡片底部） |
 | `src/components/screenshot/ScreenshotOverlay.tsx` | 全屏截图覆盖层：冻结截图背景 + 拖拽选区 |
-| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 自定义快捷键 |
+| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 自定义快捷键 + 朗读设置 |
 | `src/components/settings/HotkeyInput.tsx` | 单个快捷键的键盘捕获输入框（点击 → 按下组合键 → 自动填充 "Alt+A" 格式） |
 | `src/components/debug/LogPanel.tsx` | 调试日志面板：日志列表 + 剪贴板内容 + 操作按钮 |
 | `src/components/common/TitleBar.tsx` | 自定义标题栏：左侧 Pin 置顶 + 右侧功能图标（相机、裁切框、日志、开关） |
@@ -168,6 +168,8 @@
   - `自定义参数` (extra) 在所有提供商间共享
   - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发到后端
 - 快捷键区：使用 `HotkeyInput` 组件可视化录入三个动作的快捷键（screenshot / ocr_translate / clipboard_translate）
+- **朗读区**（`speech`）：三个开关（`ToggleRow`）——「翻译后自动朗读原文」`auto_read_source`、「翻译后自动朗读译文」`auto_read_target`、「流式边收边播（小米 MiMo）」`stream_playback`；原文/译文可同时开启（先读原文再读译文）
+- TTS Tab 的 extra 预设 chip 增加 `style`（chat+audio 风格指令）、`stream`（是否流式）；`voice` 提示同时覆盖两种协议（audio/speech 用 `模型名:音色名`，chat+audio 用裸名字如 `Milo`）
 - 保存前校验三个快捷键非空，否则 alert 阻断
 - mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`）；保存/取消会在关闭前显式调用 `resume_hotkeys`，unmount cleanup 和后端原生窗口 `Destroyed` 监听作为双重兜底，避免 webview 关闭时 cleanup 未执行导致快捷键永久失效
 - 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置；后端 `save_settings` 在挂起期间只更新配置，随后 `resume_hotkeys` 从最新配置完成注册
@@ -219,17 +221,19 @@
 
 ### ActionButtons.tsx
 
+组件很薄，朗读逻辑全部下沉到 `lib/tts.ts`（见 [frontend/lib.md](lib.md)），本组件只负责按钮 UI 与状态订阅。
+
+- **props**：`{ text, speakId }`，`speakId` 为 `"source"`/`"target"`，区分原文/译文按钮
 - **Copy**：`navigator.clipboard.writeText()`
-- **Speak**：调用后端 `synthesizeSpeech`（`lib/invoke.ts`）合成语音，使用设置中配置的 TTS 模型。后端按端点在 `/v1/audio/speech` 与小米式 chat+audio 两种协议间自适应（详见 [backend/tts.md](../backend/tts.md)）
-  - 文本在生成缓存键和请求前会先做规范化：`trim()` + `CRLF -> LF`
-  - 前端按 `base_url + tts.model + tts.extra + text` 做内存缓存，命中时直接复用已返回的 base64 音频
-  - 若同一段文本的语音请求仍在进行中，后续点击会复用进行中的 Promise，避免并发重复请求
-  - 收到 base64 音频后，`detectAudioMime()` 按音频魔数嗅探 MIME（wav/mp3/ogg/flac，不写死 mp3），构建 `data:{mime};base64,...` URL 用 `new Audio(url).play()` 播放；未取到音频时 `appLog.warn` 并复位
-  - 请求中按钮 disabled，防止重复点击
-  - 错误通过 `appLog.error()` 记录
-- 14px 图标尺寸，`px-3 pb-2.5` 内边距
-- 文本为空或正在朗读时 disabled（opacity-25）
+- **Speak**：
+  - 订阅 `ttsStore.speakingId`，`speakingId === speakId` 时该按钮显示「停止」图标（方块）+ 主色高亮，否则显示喇叭图标
+  - 点击：正在朗读则 `stopSpeaking()`；否则 `speak(text, speakId)`（抢占式，切换朗读自动停掉另一段）
+  - 缓存、流式边收边播、MIME 嗅探、单例抢占等全部由 `lib/tts.ts` 处理
+- 14px 图标尺寸
+- 文本为空时 disabled（opacity-25）；朗读中不再 disable（改为可点=停止）
 - 悬停效果：`hover:bg-black/5`
+
+> 翻译完成后的**自动朗读**（原文/译文，可多选）在 `hooks/useTranslation.ts` 里触发，同样走 `lib/tts.ts` 的 `speakSequence`。
 
 ## 依赖关系
 
@@ -237,7 +241,8 @@
   - `hooks/useTranslation`
   - `stores/translationStore`、`stores/settingsStore`（defaultSettings）
   - `lib/languages`（语言列表，中文名称）
-  - `lib/invoke`（getSettings、saveSettings、readClipboard、synthesizeSpeech）
+  - `lib/invoke`（getSettings、saveSettings、readClipboard）
+  - `lib/tts`（speak、stopSpeaking）、`stores/ttsStore`（ActionButtons）
   - `@tauri-apps/api/event`（listen、emit）
   - `@tauri-apps/api/window`（getCurrentWindow）
 - **被依赖**：`App.tsx`、`ScreenshotApp.tsx`
@@ -249,5 +254,5 @@
 - TextArea 使用透明背景，样式由外层卡片控制
 - ScreenshotOverlay 的 DPI 处理是关键：选区逻辑坐标 ×（冻结截图实际像素尺寸 / 覆盖层 CSS 尺寸）= 图像物理像素
 - TitleBar 的 Pin 功能使用 Tauri `setAlwaysOnTop()` API
-- ActionButtons 中的 TTS 通过后端 `synthesize_speech` 命令合成，后端按端点自适应协议（标准 `/v1/audio/speech` 或小米 chat+audio）；前端播放按实际音频格式设 MIME，新增音频格式时同步补充 `detectAudioMime` 魔数
+- ActionButtons 中的 TTS 已下沉到 `lib/tts.ts`（后端按端点自适应 `/v1/audio/speech` 或小米 chat+audio，默认流式边收边播）；新增音频格式/协议改 `lib/tts.ts` 而非组件
 - 按钮悬停统一使用 `hover:bg-black/5` 半透明效果

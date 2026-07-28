@@ -22,6 +22,7 @@ interface Settings {
   ocr: ServiceConfig;
   tts: ServiceConfig;
   hotkeys: HotkeyConfig;
+  speech: SpeechConfig;
 }
 
 interface ServiceConfig {
@@ -30,6 +31,12 @@ interface ServiceConfig {
   providers: ExtraProvider[];
   /** -1 = 默认（使用顶层 base_url/api_key + model）；0+ = providers 索引 */
   active: number;
+}
+
+interface SpeechConfig {
+  auto_read_source: boolean;  // 翻译后自动朗读原文
+  auto_read_target: boolean;  // 翻译后自动朗读译文
+  stream_playback: boolean;   // 流式边收边播（小米 MiMo chat+audio）
 }
 
 interface ExtraProvider {
