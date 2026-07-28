@@ -3,6 +3,7 @@ import { useTranslationStore } from "../stores/translationStore";
 import { useSettingsStore, resolveActiveProvider } from "../stores/settingsStore";
 import { translateText } from "../lib/invoke";
 import { appLog } from "../stores/logStore";
+import { speakSequence } from "../lib/tts";
 
 // Generation counter: incremented on each translate call or explicit cancel.
 // Stale calls (whose captured generation no longer matches) silently discard results.
@@ -59,6 +60,24 @@ export function useTranslation() {
         }
         appLog.info("[Translate] 翻译完成, 结果长度=" + result.length);
         setTranslatedText(result);
+
+        // 翻译完成后按设置自动朗读原文/译文（原文在前，译文在后，顺序播放）
+        const speech = useSettingsStore.getState().settings.speech;
+        if (speech?.auto_read_source || speech?.auto_read_target) {
+          const queue: { text: string; id: string }[] = [];
+          if (speech.auto_read_source && input.trim()) {
+            queue.push({ text: input, id: "source" });
+          }
+          if (speech.auto_read_target && result.trim()) {
+            queue.push({ text: result, id: "target" });
+          }
+          if (queue.length > 0) {
+            appLog.info("[Translate] 自动朗读: " + queue.map((q) => q.id).join(","));
+            speakSequence(queue).catch((e) =>
+              appLog.error("[Translate] 自动朗读失败: " + String(e))
+            );
+          }
+        }
       } catch (e) {
         if (generation !== translateGeneration) {
           appLog.info("[Translate] 错误已过期, 忽略");

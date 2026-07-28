@@ -875,6 +875,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "dotenvy",
+ "futures-util",
  "image",
  "log",
  "reqwest",

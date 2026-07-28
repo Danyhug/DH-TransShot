@@ -31,11 +31,13 @@ const extraParamPresets: Record<TabName, { key: string; label: string; defaultVa
     { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)" },
   ],
   tts: [
-    { key: "voice", label: "voice", defaultValue: "", tooltip: "发音人音色，格式为「模型名:音色名」，如 FunAudioLLM/CosyVoice2-0.5B:alex" },
-    { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速，1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
-    { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 (dB)，0 为原始音量，正数加大，负数减小 (-10~10)" },
-    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "音频输出格式，mp3 体积小，wav 无损，opus 适合流式" },
-    { key: "sample_rate", label: "sample_rate", defaultValue: "48000", tooltip: "采样率 (Hz)，越高音质越好，opus 格式仅支持 48000" },
+    { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 Milo、冰糖）" },
+    { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
+    { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），0 为原始音量 (-10~10)" },
+    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，mp3 体积小，wav 无损，opus 适合流式" },
+    { key: "sample_rate", label: "sample_rate", defaultValue: "48000", tooltip: "采样率 Hz（audio/speech 协议），越高音质越好，opus 仅支持 48000" },
+    { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送" },
+    { key: "stream", label: "stream", defaultValue: "true", tooltip: "小米 MiMo chat+audio 是否流式合成（边收边播依赖它），默认 true" },
   ],
 };
 
@@ -276,8 +278,12 @@ function ServiceFields({
                 if (preset.key === "voice" && !val) {
                   val = config.model ? `${config.model}:` : "";
                 }
-                const num = Number(val);
-                obj[preset.key] = val !== "" && !isNaN(num) ? num : val;
+                if (val === "true" || val === "false") {
+                  obj[preset.key] = val === "true";
+                } else {
+                  const num = Number(val);
+                  obj[preset.key] = val !== "" && !isNaN(num) ? num : val;
+                }
                 onChange("extra", JSON.stringify(obj, null, 2));
               }}
               className="text-xs transition-colors"
@@ -297,6 +303,51 @@ function ServiceFields({
         })}
       </div>
     </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center justify-between gap-2 cursor-pointer">
+      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+        {label}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className="relative transition-colors shrink-0"
+        style={{
+          width: "34px",
+          height: "18px",
+          borderRadius: "9999px",
+          border: "none",
+          cursor: "pointer",
+          backgroundColor: checked ? "var(--color-primary)" : "var(--color-surface)",
+        }}
+      >
+        <span
+          className="absolute transition-all"
+          style={{
+            top: "2px",
+            left: checked ? "18px" : "2px",
+            width: "14px",
+            height: "14px",
+            borderRadius: "9999px",
+            backgroundColor: "#fff",
+          }}
+        />
+      </button>
+    </label>
   );
 }
 
@@ -340,6 +391,13 @@ export function SettingsPanel() {
     setSettings((prev) => ({
       ...prev,
       [service]: { ...prev[service], active },
+    }));
+  }, []);
+
+  const updateSpeech = useCallback((key: keyof Settings["speech"], value: boolean) => {
+    setSettings((prev) => ({
+      ...prev,
+      speech: { ...prev.speech, [key]: value },
     }));
   }, []);
 
@@ -524,6 +582,36 @@ export function SettingsPanel() {
                 />
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Speech / auto-read */}
+        <div style={{ marginTop: "14px" }}>
+          <h3 className="text-xs font-medium" style={{ color: "var(--color-text-secondary)", marginBottom: "6px" }}>
+            朗读
+          </h3>
+          <div className="space-y-2">
+            <ToggleRow
+              label="翻译后自动朗读原文"
+              checked={settings.speech?.auto_read_source ?? false}
+              onChange={(v) => updateSpeech("auto_read_source", v)}
+            />
+            <ToggleRow
+              label="翻译后自动朗读译文"
+              checked={settings.speech?.auto_read_target ?? false}
+              onChange={(v) => updateSpeech("auto_read_target", v)}
+            />
+            <ToggleRow
+              label="流式边收边播（小米 MiMo）"
+              checked={settings.speech?.stream_playback ?? true}
+              onChange={(v) => updateSpeech("stream_playback", v)}
+            />
+            <div
+              className="text-xs"
+              style={{ color: "var(--color-text-secondary)", lineHeight: 1.6, opacity: 0.8 }}
+            >
+              原文、译文可同时开启，将先读原文再读译文。边收边播仅对小米 MiMo（chat+audio）流式生效。
+            </div>
           </div>
         </div>
       </div>

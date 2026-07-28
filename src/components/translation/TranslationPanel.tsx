@@ -39,7 +39,7 @@ export function TranslationPanel() {
           placeholder="输入要翻译的文本... (Ctrl+Enter)"
           readOnly={isOcrProcessing}
         />
-        <ActionButtons text={sourceText} />
+        <ActionButtons text={sourceText} speakId="source" />
       </div>
 
       {/* Language selection bar */}
@@ -61,7 +61,7 @@ export function TranslationPanel() {
           readOnly
           placeholder="翻译结果将显示在这里..."
         />
-        <ActionButtons text={translatedText} />
+        <ActionButtons text={translatedText} speakId="target" />
       </div>
 
       {/* Error */}

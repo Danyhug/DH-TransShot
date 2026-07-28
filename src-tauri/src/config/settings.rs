@@ -116,6 +116,34 @@ fn default_hotkey_clipboard_translate() -> String {
     "Alt+Q".to_string()
 }
 
+/// 朗读行为配置（翻译完成后的自动朗读 / 流式播放开关）。
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SpeechConfig {
+    /// 翻译完成后自动朗读原文
+    #[serde(default)]
+    pub auto_read_source: bool,
+    /// 翻译完成后自动朗读译文
+    #[serde(default)]
+    pub auto_read_target: bool,
+    /// 边收边播：chat+audio 流式分块实时推给前端播放（关闭则等整段音频合成完再播）
+    #[serde(default = "default_true")]
+    pub stream_playback: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for SpeechConfig {
+    fn default() -> Self {
+        Self {
+            auto_read_source: false,
+            auto_read_target: false,
+            stream_playback: true,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     #[serde(default = "default_base_url")]
@@ -127,6 +155,8 @@ pub struct Settings {
     pub tts: ServiceConfig,
     #[serde(default)]
     pub hotkeys: HotkeyConfig,
+    #[serde(default)]
+    pub speech: SpeechConfig,
 }
 
 fn default_base_url() -> String {
@@ -171,6 +201,7 @@ impl Default for Settings {
 }"#,
             ),
             hotkeys: HotkeyConfig::default(),
+            speech: SpeechConfig::default(),
         }
     }
 }

@@ -5,6 +5,16 @@ export interface Settings {
   ocr: ServiceConfig;
   tts: ServiceConfig;
   hotkeys: HotkeyConfig;
+  speech: SpeechConfig;
+}
+
+export interface SpeechConfig {
+  /** 翻译完成后自动朗读原文 */
+  auto_read_source: boolean;
+  /** 翻译完成后自动朗读译文 */
+  auto_read_target: boolean;
+  /** 边收边播：chat+audio 流式分块实时播放（关闭则等整段合成完再播） */
+  stream_playback: boolean;
 }
 
 export interface ExtraProvider {

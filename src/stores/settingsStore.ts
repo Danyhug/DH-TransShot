@@ -52,6 +52,11 @@ export const defaultSettings: Settings = {
     ocr_translate: "Alt+S",
     clipboard_translate: "Alt+Q",
   },
+  speech: {
+    auto_read_source: false,
+    auto_read_target: false,
+    stream_playback: true,
+  },
 };
 
 /**

@@ -46,6 +46,7 @@ pub fn run() {
             commands::clipboard::read_selected_text,
             commands::clipboard::save_file,
             commands::tts::synthesize_speech,
+            commands::tts::synthesize_speech_stream,
             hotkey::suspend_hotkeys,
             hotkey::resume_hotkeys,
         ])
