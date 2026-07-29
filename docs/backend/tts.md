@@ -2,7 +2,7 @@
 
 ## 概述
 
-将文本转为语音，返回 **base64 编码的完整音频**，前端通过 `Audio` 元素播放；chat+audio 流式路径额外通过 `tts-chunk` 事件把 PCM 分块实时推给前端边收边播。
+将文本转为语音，返回 **base64 编码的完整音频**，前端通过 `Audio` 元素播放；chat+audio 流式路径额外通过 **IPC Channel** 把 PCM 分块以二进制实时推给前端边收边播。
 
 根据用户配置的 TTS 端点**自适应选择两种协议**：
 
@@ -41,7 +41,7 @@
 | `chunk_count` | 已推送给前端的流式分块数；`0` 表示未走流式分块（命中缓存/非 chat+audio/服务端未流式） |
 | `sample_rate` | 流式分块采样率（Hz），非流式为 0 |
 
-**`ChunkSink<'a>` / `on_chunk`** — 流式分块回调 `Fn(seq, base64_pcm)`；命令层传入以把每块转成 `tts-chunk` Tauri 事件。`None` 时仍会累积拼成完整音频，只是不实时回调。
+**`ChunkSink<'a>` / `on_chunk`** — 流式分块回调 `Fn(&[u8])`，参数是**已解码的 PCM16LE 裸字节**（不是 base64）；命令层把它原样写进 IPC Channel 的二进制消息。`None` 时仍会累积拼成完整音频，只是不实时回调。
 
 **`synthesize_audio_speech(...)` — 标准协议**
 
@@ -69,7 +69,7 @@
 1. 请求体额外带 `stream:true`，音频格式**固定 `pcm16`**（官方要求，只有裸 PCM 分块能直接拼接）
 2. 用 `response.bytes_stream()` 逐块读取，按行解析 SSE（`data: {...}`）：
    - `extract_stream_audio_data` 从 `choices[0].delta.audio.data`（兼容末块 `message.audio.data`）取 base64 PCM
-   - 每块 base64 解码累积到 PCM 缓冲，同时 `on_chunk(seq, data)` 实时回传前端；跨块残留的行/字节留到下次
+   - 每块 base64 解码后**先** `on_chunk(&bytes)` 实时回传前端、再累积到 PCM 缓冲（首帧延迟优先）；跨块残留的行/字节留到下次
    - 收到 `error` 字段立即 bail
 3. 若整个响应**不含任何 `data:` 行**（服务端不支持 stream 的兼容端点）→ 整体当普通 JSON 解析，退回非流式结果
 4. 结束后 `wrap_pcm16_wav(pcm, 24000, 1)` 套 44 字节 WAV 头 → base64，返回 `SpeechResult{ audio_base64, chunk_count, sample_rate:24000 }`
@@ -77,7 +77,7 @@
 **辅助函数：**
 - `resolve_tts_endpoint_url(base_url)` — `build_endpoint_url(base_url, "audio/speech")` 自适应拼接（根/版本段/完整端点/`#` raw，规则见 [config.md](config.md)）。用户用 `#` raw 或完整路径指向 `.../chat/completions` 时原样返回该 chat 端点
 - `is_chat_audio_endpoint(url)` — 端点是否为 Chat Completions（决定走哪条协议）
-- `stream_sample_rate()` — 暴露流式采样率常量（24000）给命令层填入事件负载
+- `stream_sample_rate()` / `stream_channels()` — 暴露流式 PCM 参数常量（24000 / 1）给命令层填入 `start` 控制消息
 - `wrap_pcm16_wav(pcm, sample_rate, channels)` — 给裸 PCM16LE 套标准 WAV 头
 - `extract_stream_audio_data(value)` — 从一条 SSE 分块里取音频 base64（优先 `delta`，兼容 `message`）
 
@@ -87,10 +87,15 @@
 
 **`synthesize_speech(state, text) -> Result<String, String>`** — 非流式回调，返回完整音频 base64（前端 `synthesizeSpeech`）。
 
-**`synthesize_speech_stream(app, state, text, session_id) -> Result<SpeechResponse, String>`** — 边收边播版本（前端 `synthesizeSpeechStream`）：
-- 传入 `on_chunk` 闭包，把每块 `(seq, data)` 通过 `app.emit("tts-chunk", TtsChunkEvent{ sessionId, seq, data, sampleRate })` 推给前端
-- `session_id` 用于区分并发/过期朗读会话（前端按它过滤）
-- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）：`audio` 是完整音频（供前端写缓存）；`chunkCount==0` 时前端直接播 `audio`
+**`synthesize_speech_stream(state, text, on_chunk) -> Result<SpeechResponse, String>`** — 边收边播版本（前端 `synthesizeSpeechStream`）：
+- `on_chunk: Channel<InvokeResponseBody>` 是前端传入的 **IPC Channel**（不是全局事件）：
+  - 合成前先发一条 JSON 控制消息 `{"event":"start","sampleRate":24000,"channels":1}`
+  - 每个分块以 `InvokeResponseBody::Raw(pcm)` 二进制发送（前端收到 `ArrayBuffer`）
+  - 合成结束后发 `{"event":"end","chunkCount":N}`
+- 通道消息由 Tauri 保证按发送顺序投递，`end` 一定排在所有分块之后，前端无需比对分块计数
+- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）：`chunkCount == 0` 时 `audio` 是完整音频、前端直接播；**`chunkCount > 0` 时 `audio` 被清空**（音频已逐块送达，再回传一份完整 WAV 会让长文本白白多传数 MB），前端重播时靠后端缓存
+
+> **为什么用 Channel 而不是 `app.emit`**：`app.emit` 会把负载 JSON 拼进 `eval` 脚本字符串，广播给**每一个** webview（本项目有 main/screenshot/debug/settings 四个），且必须在主线程逐条执行。长文本几百个 base64 分块会把主线程堵死，表现为「必须等整段流传完才开始播、长文本干脆播不出来」。Channel 只投递给发起调用的 webview，且大于 1KB 的二进制走 IPC 自定义协议（fetch），不进 eval 字符串。
 
 **`synthesize_inner` 流程：**
 1. 从 `AppState.settings` 读取当前生效 TTS 配置（`tts.resolved(...)` 按 `active` 选默认或某个 provider）
@@ -99,10 +104,10 @@
 
 缓存为进程内内存缓存，最大 64 条，按插入顺序淘汰。保存设置时清空缓存。缓存键与协议无关（不同协议因 base_url 不同天然不撞键）。缓存存的始终是「完整音频 base64」，命中时不再推流式分块，前端整段播放。
 
-## 前端事件与播放
+## 前端通道与播放
 
-- `tts-chunk` 事件负载：`{ sessionId, seq, data(base64 PCM16LE), sampleRate }`
-- 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 按 `sessionId` 过滤后逐块解码 PCM16→Float32，调度进 `AudioContext` 无缝排布，收到 `chunkCount` 且全部播完时结束
+- 分块走 IPC Channel：控制消息为 JSON（`{event:"start"|"end", ...}`），音频分块为二进制 `ArrayBuffer`（PCM16LE 单声道）
+- 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 逐块解码 PCM16→Float32，调度进共享 `AudioContext` 无缝排布；首块预留 0.2s 缓冲吸收网络抖动，收到 `end` 且全部播完时结束
 - 详见 [docs/frontend/lib.md](../frontend/lib.md)
 
 ## API 请求格式

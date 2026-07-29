@@ -1,5 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
+import { Channel } from "@tauri-apps/api/core";
 import { synthesizeSpeech, synthesizeSpeechStream } from "./invoke";
+import type { TtsStreamPayload } from "./invoke";
 import { appLog } from "../stores/logStore";
 import { useTtsStore } from "../stores/ttsStore";
 import { useSettingsStore, resolveActiveProvider } from "../stores/settingsStore";
@@ -53,11 +54,19 @@ function detectAudioMime(base64Audio: string): string {
   }
 }
 
-function base64ToBytes(base64: string): Uint8Array {
-  const raw = atob(base64);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  return bytes;
+// ── AudioContext 单例 ────────────────────────────────────────────────────
+// 复用同一个 context：WebKit 对同时存在的 AudioContext 数量有硬上限，每次朗读都
+// new + close 在连续朗读时容易踩到；而且复用后只需在首次用户手势时 resume 一次。
+let sharedCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  if (sharedCtx && sharedCtx.state !== "closed") return sharedCtx;
+  const Ctor =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return null;
+  sharedCtx = new Ctor();
+  return sharedCtx;
 }
 
 /** 浏览器是否支持 Web Audio（边收边播依赖它，否则回退整段播放）。 */
@@ -91,19 +100,27 @@ export function stopSpeaking() {
 }
 
 /**
+ * 首块播放前预留的缓冲时长（秒）。分块到达有网络抖动，若第一块紧贴 `currentTime` 起播，
+ * 后续块稍慢一点就会在扬声器上听到断断续续的空隙。
+ */
+const STREAM_PREROLL_SECONDS = 0.2;
+
+/**
  * 边收边播的 PCM16LE 播放器。
- * 逐块把 base64 PCM 调度进 AudioContext，按到达顺序无缝排布；上游流结束（`markInputComplete`）
- * 且所有已排块播完时，`done` promise 兑现。
+ * 逐块把二进制 PCM 调度进 AudioContext，按到达顺序无缝排布；上游流结束
+ * （`markInputComplete`）且所有已排块播完时，`done` promise 兑现。
  */
 class StreamingPcmPlayer {
   private ctx: AudioContext | null = null;
+  private sampleRate = 24000;
   private nextTime = 0;
   private pending = new Set<AudioBufferSourceNode>();
-  private receivedChunks = 0;
-  private expectedChunks: number | null = null;
+  private scheduled = 0;
   private leftover: Uint8Array | null = null; // 跨块残留的奇数尾字节
+  private inputDone = false;
   private stopped = false;
   private settled = false;
+  private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
@@ -113,20 +130,30 @@ class StreamingPcmPlayer {
     });
   }
 
-  pushChunk(base64Pcm: string, sampleRate: number) {
+  /** 已实际排入播放的分块数。 */
+  get scheduledChunks() {
+    return this.scheduled;
+  }
+
+  /** 上游声明的分块格式，必须在第一块之前设置。 */
+  setFormat(sampleRate: number, channels: number) {
+    if (sampleRate > 0) this.sampleRate = sampleRate;
+    if (channels > 1) {
+      appLog.warn("[TTS] 流式分块声道数=" + channels + "，当前按单声道处理");
+    }
+  }
+
+  pushChunk(chunk: ArrayBuffer) {
     if (this.stopped) return;
-    const rate = sampleRate || 24000;
     try {
-      if (!this.ctx) {
-        const Ctor =
-          window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        this.ctx = new Ctor();
-      }
-      const ctx = this.ctx;
+      const ctx = this.ctx ?? getAudioContext();
+      if (!ctx) return;
+      this.ctx = ctx;
+      // 无用户手势时 AudioContext 可能是 suspended，不 resume 会一声不响地什么都不播
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
 
       // 拼接上一块残留的奇数字节，保证 Int16 对齐
-      let bytes = base64ToBytes(base64Pcm);
+      let bytes = new Uint8Array(chunk);
       if (this.leftover && this.leftover.length) {
         const merged = new Uint8Array(this.leftover.length + bytes.length);
         merged.set(this.leftover, 0);
@@ -138,26 +165,26 @@ class StreamingPcmPlayer {
         this.leftover = bytes.slice(bytes.length - 1);
         bytes = bytes.slice(0, bytes.length - 1);
       }
-      this.receivedChunks++;
-      if (bytes.length === 0) {
-        this.maybeFinish();
-        return;
-      }
+      if (bytes.length === 0) return;
 
       const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
       const float = new Float32Array(int16.length);
       for (let i = 0; i < int16.length; i++) float[i] = int16[i] / 32768;
 
       // 按 PCM 声明的采样率建 buffer，交给 AudioContext 重采样到其输出率，避免变调
-      const buffer = ctx.createBuffer(1, float.length, rate);
+      const buffer = ctx.createBuffer(1, float.length, this.sampleRate);
       buffer.copyToChannel(float, 0);
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(ctx.destination);
 
-      const startAt = Math.max(this.nextTime, ctx.currentTime);
+      const startAt =
+        this.scheduled === 0
+          ? ctx.currentTime + STREAM_PREROLL_SECONDS
+          : Math.max(this.nextTime, ctx.currentTime);
       src.start(startAt);
       this.nextTime = startAt + buffer.duration;
+      this.scheduled++;
       this.pending.add(src);
       src.onended = () => {
         this.pending.delete(src);
@@ -165,27 +192,54 @@ class StreamingPcmPlayer {
       };
     } catch (e) {
       appLog.error("[TTS] 流式分块播放失败: " + String(e));
-      this.receivedChunks++;
-      this.maybeFinish();
     }
   }
 
-  /** 上游流已结束，共收到 totalChunks 个分块。 */
-  markInputComplete(totalChunks: number) {
-    this.expectedChunks = totalChunks;
+  /** 上游流已结束，不会再有新分块。 */
+  markInputComplete() {
+    if (this.inputDone) return;
+    this.inputDone = true;
+    this.armDrainWatchdog();
     this.maybeFinish();
   }
 
+  /**
+   * 兜底定时器：正常情况下靠 `onended` 收尾，但若 AudioContext 被系统挂起、或某个
+   * source 的 `onended` 没有触发，这里保证 `done` 不会永远挂着（表现为「朗读中」不熄）。
+   */
+  private armDrainWatchdog() {
+    if (this.drainTimer || !this.ctx) return;
+    const ctx = this.ctx;
+    const delayMs = Math.max(0, (this.nextTime - ctx.currentTime) * 1000) + 1000;
+    this.drainTimer = setTimeout(() => {
+      this.drainTimer = null;
+      if (this.settled) return;
+      if (this.pending.size === 0) {
+        this.settle();
+        return;
+      }
+      // 时间线确实还没走完（期间又排入了新块）→ 继续等
+      if (ctx.state === "running" && ctx.currentTime < this.nextTime) {
+        this.armDrainWatchdog();
+        return;
+      }
+      appLog.warn("[TTS] 流式播放收尾异常，强制结束 (剩余分块=" + this.pending.size + ")");
+      this.stop();
+    }, delayMs);
+  }
+
   private maybeFinish() {
-    if (this.stopped || this.settled) return;
-    if (
-      this.expectedChunks !== null &&
-      this.receivedChunks >= this.expectedChunks &&
-      this.pending.size === 0
-    ) {
-      this.settled = true;
-      this.resolveDone();
+    if (this.inputDone && this.pending.size === 0) this.settle();
+  }
+
+  private settle() {
+    if (this.settled) return;
+    this.settled = true;
+    if (this.drainTimer) {
+      clearTimeout(this.drainTimer);
+      this.drainTimer = null;
     }
+    this.resolveDone();
   }
 
   stop() {
@@ -199,14 +253,8 @@ class StreamingPcmPlayer {
       }
     });
     this.pending.clear();
-    if (this.ctx) {
-      this.ctx.close().catch(() => {});
-      this.ctx = null;
-    }
-    if (!this.settled) {
-      this.settled = true;
-      this.resolveDone();
-    }
+    // 不 close 共享 ctx，只断开声音；close 后无法复用，且连续朗读会顶到数量上限
+    this.settle();
   }
 }
 
@@ -267,38 +315,55 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
 
   if (wantStream) {
     appLog.info("[TTS] 前端缓存未命中，发起流式语音请求 (" + id + ")");
-    const sessionId = `${id}-${gen}`;
     const player = new StreamingPcmPlayer();
     stopCurrent = () => player.stop();
 
-    const unlisten = await listen<{
-      sessionId: string;
-      seq: number;
-      data: string;
-      sampleRate: number;
-    }>("tts-chunk", (e) => {
-      if (e.payload.sessionId !== sessionId || gen !== playGen) return;
-      player.pushChunk(e.payload.data, e.payload.sampleRate);
-    });
-
-    try {
-      const resp = await synthesizeSpeechStream(normalized, sessionId);
-      setCachedAudio(key, resp.audio);
-      if (gen !== playGen) {
-        player.stop();
+    // 通道按发送顺序投递，因此 end 一定排在所有分块之后；不依赖它与命令返回值的先后
+    let endReceived = false;
+    const channel = new Channel<TtsStreamPayload>();
+    channel.onmessage = (message) => {
+      if (gen !== playGen) return;
+      if (message instanceof ArrayBuffer) {
+        player.pushChunk(message);
         return;
       }
-      if (resp.chunkCount > 0) {
-        appLog.info("[TTS] 流式播放中, 分块数=" + resp.chunkCount);
-        player.markInputComplete(resp.chunkCount);
-        await player.done;
-      } else {
-        // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
-        player.stop();
-        if (gen === playGen && resp.audio) await playWholeAudio(resp.audio);
+      if (message.event === "start") {
+        player.setFormat(message.sampleRate, message.channels);
+      } else if (message.event === "end") {
+        endReceived = true;
+        player.markInputComplete();
       }
-    } finally {
-      unlisten();
+    };
+
+    const resp = await synthesizeSpeechStream(normalized, channel);
+    if (gen !== playGen) {
+      player.stop();
+      return;
+    }
+    if (resp.chunkCount > 0) {
+      appLog.info(
+        "[TTS] 流式播放中, 分块数=" + resp.chunkCount + ", 已排入播放=" + player.scheduledChunks
+      );
+      // 兜底：万一 end 控制消息丢失（通道某条消息投递失败会卡住后续消息），
+      // 也别让 done 永远挂着；给分块留足到达时间后再收口
+      const guard = setTimeout(() => {
+        if (!endReceived) {
+          appLog.warn("[TTS] 未收到流结束消息，按已收到的分块收尾");
+          player.markInputComplete();
+        }
+      }, 5000);
+      try {
+        await player.done;
+      } finally {
+        clearTimeout(guard);
+      }
+    } else {
+      // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
+      player.stop();
+      if (resp.audio) {
+        setCachedAudio(key, resp.audio);
+        if (gen === playGen) await playWholeAudio(resp.audio);
+      }
     }
     return;
   }

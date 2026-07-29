@@ -38,12 +38,18 @@ impl SpeechResult {
     }
 }
 
-/// 流式分块回调：`(分块序号, base64 PCM16 分块)`，由命令层转成 Tauri 事件推给前端。
-pub type ChunkSink<'a> = &'a (dyn Fn(usize, &str) + Send + Sync);
+/// 流式分块回调：参数是**已解码的 PCM16LE 裸字节**（不是 base64）。
+/// 命令层把它原样写进 IPC Channel 的二进制消息，避免 base64 膨胀与 JSON 转义。
+pub type ChunkSink<'a> = &'a (dyn Fn(&[u8]) + Send + Sync);
 
-/// chat+audio 流式分块的采样率（Hz），供命令层填入事件负载。
+/// chat+audio 流式分块的采样率（Hz），供命令层告知前端。
 pub fn stream_sample_rate() -> u32 {
     CHAT_AUDIO_STREAM_SAMPLE_RATE
+}
+
+/// chat+audio 流式分块的声道数，供命令层告知前端。
+pub fn stream_channels() -> u16 {
+    CHAT_AUDIO_STREAM_CHANNELS
 }
 
 /// Resolve the TTS endpoint URL from a base_url.
@@ -294,7 +300,7 @@ async fn synthesize_chat_audio_once(
 /// 只有裸 PCM 分块才能直接拼接）。
 ///
 /// 逐块解析 SSE（`data: {...}` 行），取 `choices[0].delta.audio.data`（base64 PCM16LE）：
-/// - 每块通过 `on_chunk` 实时回传（命令层转 Tauri 事件 → 前端边收边播）
+/// - 每块解码后通过 `on_chunk` 实时回传（命令层写入 IPC Channel → 前端边收边播）
 /// - 同时累积 PCM，结束后套 WAV 头返回完整音频（供缓存与重播）
 async fn synthesize_chat_audio_stream(
     client: &Client,
@@ -372,10 +378,11 @@ async fn synthesize_chat_audio_stream(
             };
             match base64::engine::general_purpose::STANDARD.decode(data) {
                 Ok(bytes) => {
-                    pcm.extend_from_slice(&bytes);
+                    // 先推给前端再累积：边收边播的首帧延迟优先于本地缓冲
                     if let Some(sink) = on_chunk {
-                        sink(chunk_count, data);
+                        sink(&bytes);
                     }
+                    pcm.extend_from_slice(&bytes);
                     if first_chunk_ms.is_none() {
                         first_chunk_ms = Some(started.elapsed().as_millis());
                     }

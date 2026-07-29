@@ -1,7 +1,8 @@
 use crate::config::AppState;
 use log::{error, info, warn};
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::State;
 
 fn normalize_tts_text(text: &str) -> String {
     text.trim().replace("\r\n", "\n")
@@ -11,23 +12,39 @@ fn tts_cache_key(base_url: &str, model: &str, extra: &str, text: &str) -> String
     format!("{base_url}\n{model}\n{extra}\n{text}")
 }
 
-/// 流式分块事件负载（事件名 `tts-chunk`）：前端按 `sessionId` 过滤后边收边播。
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TtsChunkEvent<'a> {
-    session_id: &'a str,
-    /// 分块序号，从 0 开始
-    seq: usize,
-    /// base64 编码的 PCM16LE 单声道分块
-    data: &'a str,
-    sample_rate: u32,
+/// 流式通道上的**控制消息**（JSON）。音频分块不走这里，而是以
+/// [`InvokeResponseBody::Raw`] 二进制形式直接发送（前端收到 `ArrayBuffer`）。
+///
+/// 通道消息由 Tauri 保证按发送顺序投递，因此 `End` 一定在所有分块之后到达，
+/// 前端可据此判定「上游已结束」，无需依赖命令返回值与事件的先后。
+#[derive(Serialize)]
+#[serde(tag = "event", rename_all = "camelCase")]
+enum TtsStreamMessage {
+    /// 分块格式，必须在第一个分块之前发送
+    #[serde(rename_all = "camelCase")]
+    Start { sample_rate: u32, channels: u16 },
+    /// 上游流已结束，共推送 `chunk_count` 个分块
+    #[serde(rename_all = "camelCase")]
+    End { chunk_count: usize },
+}
+
+fn send_stream_message(channel: &Channel<InvokeResponseBody>, message: &TtsStreamMessage) {
+    match serde_json::to_string(message) {
+        Ok(json) => {
+            if let Err(e) = channel.send(InvokeResponseBody::Json(json)) {
+                warn!("[TTS] 推送流式控制消息失败: {}", e);
+            }
+        }
+        Err(e) => warn!("[TTS] 序列化流式控制消息失败: {}", e),
+    }
 }
 
 /// 语音合成结果（流式命令用）。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechResponse {
-    /// 完整音频 base64（流式为拼接后的 WAV）
+    /// 完整音频 base64。**走了流式分块时为空串**：音频已通过通道逐块送达，
+    /// 再回传一份完整 WAV 会让长文本多传输一遍数 MB 数据。
     pub audio: String,
     /// 本次推送的流式分块数量；0 表示前端应直接播放 `audio`
     pub chunk_count: usize,
@@ -43,35 +60,49 @@ pub async fn synthesize_speech(state: State<'_, AppState>, text: String) -> Resu
 }
 
 /// 边收边播版本：与 [`synthesize_speech`] 相同的合成流程，但 chat+audio 流式分块会通过
-/// `tts-chunk` 事件实时推给前端（`session_id` 用于区分并发/过期的朗读会话）。
+/// `on_chunk` 这个 IPC Channel 以二进制实时推给前端。
 ///
-/// 返回值里的 `audio` 仍是完整音频，前端用于写缓存；`chunk_count == 0` 时说明本次没有分块
-/// （命中缓存 / 非 chat+audio 协议 / 服务端不支持流式），前端直接播放 `audio` 即可。
+/// 相比全局事件（`app.emit`），Channel 只投递给发起调用的 webview，且大负载走 IPC
+/// 自定义协议（fetch）而非把整段数据拼进 `eval` 字符串——长文本几百个分块时，后者会把主线程
+/// 堵死，表现为「必须等流传完才开始播 / 长文本干脆播不出来」。
+///
+/// 返回值里的 `chunk_count == 0` 表示本次没有分块（命中缓存 / 非 chat+audio 协议 /
+/// 服务端不支持流式），此时 `audio` 是完整音频，前端直接播放即可。
 #[tauri::command]
 pub async fn synthesize_speech_stream(
-    app: tauri::AppHandle,
     state: State<'_, AppState>,
     text: String,
-    session_id: String,
+    on_chunk: Channel<InvokeResponseBody>,
 ) -> Result<SpeechResponse, String> {
+    send_stream_message(
+        &on_chunk,
+        &TtsStreamMessage::Start {
+            sample_rate: crate::tts::stream_sample_rate(),
+            channels: crate::tts::stream_channels(),
+        },
+    );
+
     let sink = {
-        let app = app.clone();
-        let session_id = session_id.clone();
-        move |seq: usize, data: &str| {
-            if let Err(e) = app.emit(
-                "tts-chunk",
-                TtsChunkEvent {
-                    session_id: &session_id,
-                    seq,
-                    data,
-                    sample_rate: crate::tts::stream_sample_rate(),
-                },
-            ) {
+        let channel = on_chunk.clone();
+        move |pcm: &[u8]| {
+            if let Err(e) = channel.send(InvokeResponseBody::Raw(pcm.to_vec())) {
                 warn!("[TTS] 推送流式分块失败: {}", e);
             }
         }
     };
-    synthesize_inner(&state, &text, Some(&sink)).await
+
+    let mut result = synthesize_inner(&state, &text, Some(&sink)).await;
+
+    let chunk_count = result.as_ref().map(|r| r.chunk_count).unwrap_or(0);
+    send_stream_message(&on_chunk, &TtsStreamMessage::End { chunk_count });
+
+    // 分块已经逐块送达前端，无需再回传一份完整音频（重播时走后端缓存即可）
+    if let Ok(response) = result.as_mut() {
+        if response.chunk_count > 0 {
+            response.audio.clear();
+        }
+    }
+    result
 }
 
 /// 共享的合成流程：规范化文本 → 解析当前生效配置 → 查缓存 → 合成 → 写缓存。
@@ -147,5 +178,27 @@ async fn synthesize_inner(
             error!("[TTS] 语音合成失败: {}", e);
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 控制消息是前后端的线上契约（前端按 `event` 字段分派），改动需同步 `src/lib/invoke.ts`
+    #[test]
+    fn stream_message_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&TtsStreamMessage::Start {
+                sample_rate: 24000,
+                channels: 1
+            })
+            .unwrap(),
+            r#"{"event":"start","sampleRate":24000,"channels":1}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&TtsStreamMessage::End { chunk_count: 7 }).unwrap(),
+            r#"{"event":"end","chunkCount":7}"#
+        );
     }
 }

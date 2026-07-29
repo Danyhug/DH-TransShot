@@ -49,7 +49,8 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 | `hotkey-action` | 后端 → 前端 | `string`（"screenshot"/"ocr_translate"/"clipboard_translate"） | 全局快捷键触发 |
 | `tray-action` | 后端 → 前端 | `string`（同上） | 托盘菜单触发 |
 | `settings-saved` | 设置窗口 → 主窗口 | — | 设置保存后通知主窗口重载配置 |
-| `tts-chunk` | 后端 → 前端 | `{ sessionId, seq, data, sampleRate }` | TTS chat+audio 流式 PCM 分块，前端边收边播 |
+
+> TTS 流式 PCM 分块**不走事件系统**，而是走 `synthesize_speech_stream` 的 IPC Channel 参数（二进制 `ArrayBuffer` + JSON 控制消息）。`app.emit` 会把负载拼进 `eval` 字符串广播给所有 webview，音频这类高频大负载会堵死主线程。详见 [backend/tts.md](backend/tts.md)。
 
 ## 核心工作流
 

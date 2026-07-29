@@ -78,10 +78,10 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 非流式回调，返回完整音频 base64（可能是 mp3/wav，格式随协议）
 - Mutex 锁的作用域尽量小，取完配置即释放
 
-**`synthesize_speech_stream(app, state, text, session_id) -> Result<SpeechResponse, String>`**
-- 边收边播版本：传入 `on_chunk` 闭包，把 chat+audio 流式分块通过 `app.emit("tts-chunk", {sessionId, seq, data, sampleRate})` 实时推给前端
-- `session_id` 用于区分并发/过期朗读会话（前端按它过滤）
-- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）；`chunkCount==0` 时前端直接播 `audio`
+**`synthesize_speech_stream(state, text, on_chunk) -> Result<SpeechResponse, String>`**
+- 边收边播版本：`on_chunk: Channel<InvokeResponseBody>` 是前端传入的 IPC Channel，分块以二进制 `Raw(pcm)` 实时下发，首尾各一条 JSON 控制消息（`start` 带 `sampleRate`/`channels`，`end` 带 `chunkCount`）
+- 用 Channel 而非 `app.emit`：后者把负载拼进 `eval` 广播给所有 webview，长文本几百个分块会堵死主线程
+- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）；`chunkCount==0` 时前端直接播 `audio`，`chunkCount>0` 时 `audio` 为空串（音频已逐块送达）
 - 详见 [tts.md](tts.md)
 
 ### clipboard.rs
