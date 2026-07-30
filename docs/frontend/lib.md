@@ -10,7 +10,7 @@
 |------|------|
 | `src/lib/invoke.ts` | 类型化的 Tauri invoke 命令封装 |
 | `src/lib/languages.ts` | 支持的语言列表定义 |
-| `src/lib/windowUtils.ts` | 子窗口管理工具（吸附式窗口创建/focus） |
+| `src/lib/windowUtils.ts` | 子窗口管理工具（吸附式 / 居中独立窗口的创建与 focus） |
 | `src/lib/tts.ts` | 共享朗读模块：前端缓存、流式边收边播、单例播放/顺序朗读 |
 
 ## 核心逻辑
@@ -107,6 +107,17 @@ interface Language { code: string; name: string }
 **导出：**
 - `languages` — 包含 `auto` 的完整列表（用于源语言选择）
 - `targetLanguages` — 过滤掉 `auto` 的列表（用于目标语言选择）
+
+### windowUtils.ts - 子窗口创建
+
+两种子窗口形态，都是「已存在则 focus，否则新建」，统一 `decorations:false + transparent:true + resizable:true`：
+
+| 函数 | 形态 | 使用方 |
+|------|------|--------|
+| `openDockedWindow({label, url, title, width, side, gap?})` | 吸附在主窗口左/右侧，高度跟随主窗口 | 调试日志窗口（右侧 360px） |
+| `openCenteredWindow({label, url, title, width, height, minWidth?, minHeight?})` | 屏幕居中的独立窗口 | 设置窗口（720×540，最小 640×440） |
+
+设置窗口曾经也是吸附式（左侧 340px），但配置项太多，窄栏单列滚动导致信息过载，已改为居中独立窗口 + 左侧分区导航。
 
 ## 依赖关系
 

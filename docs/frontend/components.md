@@ -14,7 +14,11 @@
 | `src/components/translation/TextArea.tsx` | 通用文本域（透明背景，由外层卡片提供样式） |
 | `src/components/translation/ActionButtons.tsx` | 朗读 + 复制按钮（内嵌于卡片底部） |
 | `src/components/screenshot/ScreenshotOverlay.tsx` | 全屏截图覆盖层：冻结截图背景 + 拖拽选区 |
-| `src/components/settings/SettingsPanel.tsx` | 设置面板（独立窗口）：翻译/OCR/TTS 服务配置 + 自定义快捷键 + 朗读设置 |
+| `src/components/settings/SettingsPanel.tsx` | 设置窗口外壳：标题栏 + 左侧分区导航 + 内容区 + 底部操作栏，持有 Settings 状态与保存逻辑 |
+| `src/components/settings/ServiceSettings.tsx` | 「服务」分区：全局凭据 + 翻译/OCR/TTS 切换 + 提供商 + 自定义参数 |
+| `src/components/settings/HotkeySettings.tsx` | 「快捷键」分区：三个全局动作的组合键录入 |
+| `src/components/settings/SpeechSettings.tsx` | 「朗读」分区：自动朗读 / 流式播放开关 |
+| `src/components/settings/controls.tsx` | 设置页共享基础控件（SectionHeader / Field / TextInput / Chip / SegmentedControl / ToggleRow / RowList 等） |
 | `src/components/settings/HotkeyInput.tsx` | 单个快捷键的键盘捕获输入框（点击 → 按下组合键 → 自动填充 "Alt+A" 格式） |
 | `src/components/debug/LogPanel.tsx` | 调试日志面板：日志列表 + 剪贴板内容 + 操作按钮 |
 | `src/components/common/TitleBar.tsx` | 自定义标题栏：左侧 Pin 置顶 + 右侧功能图标（相机、裁切框、日志、开关） |
@@ -159,20 +163,63 @@
 
 ### SettingsPanel.tsx
 
-- 独立设置窗口（非模态弹窗）
-- 标签页切换：翻译 / OCR / TTS 服务配置
-- 顶部全局字段：API 地址、API 密钥（password）
-- **多模型提供商支持**：每个服务 Tab 内顶部有一个 chip 切换条：「默认」+ 已添加的额外提供商 + `+ 新增`
-  - 选中「默认」时显示模型字段，使用顶部全局 base_url/api_key
-  - 选中额外提供商时显示该提供商的 name/base_url/api_key/model 编辑器 + 删除按钮；其中 base_url/api_key 留空会回退到全局
-  - `自定义参数` (extra) 在所有提供商间共享
-  - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发到后端
-- 快捷键区：使用 `HotkeyInput` 组件可视化录入三个动作的快捷键（screenshot / ocr_translate / clipboard_translate）
-- **朗读区**（`speech`）：三个开关（`ToggleRow`）——「翻译后自动朗读原文」`auto_read_source`、「翻译后自动朗读译文」`auto_read_target`、「流式边收边播（小米 MiMo）」`stream_playback`；原文/译文可同时开启（先读原文再读译文）
-- TTS Tab 的 extra 预设 chip 增加 `style`（chat+audio 风格指令）、`stream`（是否流式）；`voice` 提示同时覆盖两种协议（audio/speech 用 `模型名:音色名`，chat+audio 用裸名字如 `Milo`）
-- 保存前校验三个快捷键非空，否则 alert 阻断
-- mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`）；保存/取消会在关闭前显式调用 `resume_hotkeys`，unmount cleanup 和后端原生窗口 `Destroyed` 监听作为双重兜底，避免 webview 关闭时 cleanup 未执行导致快捷键永久失效
-- 保存时 emit `"settings-saved"` 事件通知主窗口刷新配置；后端 `save_settings` 在挂起期间只更新配置，随后 `resume_hotkeys` 从最新配置完成注册
+独立设置窗口（非模态弹窗），**居中 720×540**（最小 640×440），由 `openSettingsWindow()` 创建。
+
+**布局结构：**
+```
+┌────────────────────────────────────────────────┐
+│  设置                                       ✕  │ ← 标题栏（data-tauri-drag-region）
+├──────────┬─────────────────────────────────────┤
+│ ◈ 服务   │                                     │
+│ ⌘ 快捷键 │   当前分区内容（独立滚动）          │
+│ ♪ 朗读   │                                     │
+├──────────┴─────────────────────────────────────┤
+│ [错误提示]                  取消      保存     │ ← 操作栏（border-top）
+└────────────────────────────────────────────────┘
+```
+
+- **左侧导航**（148px，右侧 1px 分割线）：三个分区，选中态为 `--color-surface` 背景 + 主色文字 + 左侧 2px 主色指示条
+- **内容区**独立滚动（`overflow-y-auto` + `minWidth: 0`），分区组件按 `section` 状态切换
+- `SettingsPanel` 只负责外壳、Settings 状态、保存/关闭；具体表单拆到三个分区组件，共享控件在 `controls.tsx`
+
+**分区内容：**
+
+| 分区 | 组件 | 内容 |
+|------|------|------|
+| 服务 | `ServiceSettings` | 全局凭据（API 地址 / 密钥，两列网格 + 地址规则说明）→ 分隔线 → 服务配置：`SegmentedControl` 切换翻译/OCR/TTS、提供商 chip 行、提供商字段组、自定义参数（预设 chip + JSON 编辑区） |
+| 快捷键 | `HotkeySettings` | 三行（区域截图 / 区域翻译 / 翻译选中文本），每行标题 + 说明 + `HotkeyInput` |
+| 朗读 | `SpeechSettings` | 三个 `ToggleRow`：`auto_read_source` / `auto_read_target` / `stream_playback`，每项带说明文字 |
+
+**多模型提供商：**
+- 每个服务 Tab 内有 chip 切换条：「默认」+ 已添加的额外提供商 + `＋ 新增`
+- 选中「默认」时只显示模型字段，使用全局 base_url/api_key
+- 选中额外提供商时显示 name/model/base_url/api_key 两列编辑器 + 删除按钮；base_url/api_key 留空回退到全局
+- `自定义参数`(extra) 在所有提供商间共享；预设 chip 点击后合并进 JSON，已存在的 chip 置灰禁用
+- 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发
+
+**行为：**
+- mount 时调用 `suspend_hotkeys` 挂起所有全局快捷键（让 `HotkeyInput` 能正常接收 `keydown`）；保存/取消会在关闭前显式调用 `resume_hotkeys`，unmount cleanup 和后端原生窗口 `Destroyed` 监听作为双重兜底
+- 保存前校验三个快捷键非空；**不再用 `alert`**，而是自动跳到「快捷键」分区、把为空的行标红，并在底部操作栏显示错误文案
+- 保存时 emit `"settings-saved"` 通知主窗口刷新配置
+
+### controls.tsx
+
+设置页共享的基础控件，把原先散落各处的内联样式收敛到一处：
+
+| 控件 | 用途 |
+|------|------|
+| `SectionHeader` | 分区大标题 + 说明 |
+| `Field` | 标签 + 控件 + 可选补充说明 |
+| `TextInput` / `CodeArea` | `.settings-input` 样式的输入框 / 等宽 JSON 编辑区 |
+| `Group` | 透明底 + 细边框的分组容器（输入框本身是 surface 色，同色嵌套会糊成一片） |
+| `InfoNote` | 说明性提示块（surface 底） |
+| `Chip` | 胶囊按钮（提供商切换、参数预设），支持 active / dashed / disabled |
+| `SegmentedControl` | 分段互斥切换（翻译 / OCR / TTS） |
+| `ToggleRow` | 标题 + 说明 + 右侧开关 |
+| `RowList` | 带分隔线的设置行列表，快捷键行与朗读开关共用，保证两个分区视觉一致 |
+| `Divider` | 分区之间的水平分隔线 |
+
+> ⚠️ 设置页一律用 `flex + gap` 做间距，**不要用 Tailwind 的 `space-y-*`**：`globals.css` 的 `* { margin: 0 }` 是无层级（unlayered）规则，会盖过 Tailwind `@layer utilities` 里的 `margin-top`，`space-y-*` 在本项目中静默失效。
 
 ### HotkeyInput.tsx
 

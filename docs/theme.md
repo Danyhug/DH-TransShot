@@ -32,6 +32,24 @@
 - **交互**：按钮悬停使用 `hover:bg-black/5` 半透明效果
 - **留白**：充分的 padding 和 gap，营造呼吸感
 
+### 设置窗口表单类
+
+`globals.css` 里另外定义了几个设置页专用类（焦点态无法用内联 style 表达，且这些控件反复出现）：
+
+| 类名 | 用途 |
+|------|------|
+| `.settings-input` | 输入框/文本域基础样式：surface 背景、8px 圆角、透明边框，`:focus` 时边框变主色 |
+| `.settings-input--code` | 叠加在 `.settings-input` 上，等宽字体 + 可纵向拉伸，用于 JSON 参数编辑区 |
+| `.settings-group` | 透明底 + `--color-border` 细边框的分组容器（输入框本身是 surface 色，同色嵌套会糊成一片） |
+
+对应的 React 封装在 `src/components/settings/controls.tsx`。
+
+### ⚠️ `space-y-*` 在本项目中失效
+
+`* { margin: 0 }` 这条重置规则写在任何 `@layer` 之外（unlayered），按 CSS 级联规则会**盖过** Tailwind 写在 `@layer utilities` 里的 `margin-top`。因此 `space-y-*` / `space-x-*` 静默不生效。
+
+排版间距一律用 `flex + gap`（或显式 `marginTop`），不要用 `space-y-*`。
+
 ### 模式切换
 
 ```css
@@ -98,6 +116,7 @@ className="flex items-center gap-2 px-4 py-3"
 
 - 新增颜色变量需在浅色和深色两个区块同时定义
 - 组件中不要硬编码颜色值，始终使用 `var(--color-*)` 引用
+- **不要用 `space-y-*` / `space-x-*` 排间距**（被 unlayered 的 `* { margin: 0 }` 盖掉，静默失效），用 `flex + gap` 或显式 `marginTop`
 - `--color-primary` 在两种模式下保持一致，如需差异化可分别设置
 - `overflow: hidden` 在根容器上确保固定窗口无滚动，内部可滚动区域需单独设置
 - Tailwind 自定义 variant `dark` 当前配置为 class-based（`.dark *`），但实际使用的是 media query，二者不冲突
