@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { openDockedWindow } from "../lib/windowUtils";
+import { openCenteredWindow } from "../lib/windowUtils";
 import type { Settings, ServiceConfig } from "../types";
 
 type ServiceName = "translation" | "ocr" | "tts";
@@ -98,13 +98,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 }));
 
-/** Open (or focus) the settings window, docked to the left of main window */
+/** Open (or focus) the settings window (standalone, centered) */
 export async function openSettingsWindow() {
-  await openDockedWindow({
+  await openCenteredWindow({
     label: "settings",
     url: "settings.html",
     title: "设置",
-    width: 340,
-    side: "left",
+    width: 720,
+    height: 540,
+    minWidth: 640,
+    minHeight: 440,
   });
 }

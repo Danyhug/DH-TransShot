@@ -56,3 +56,49 @@ export async function openDockedWindow(config: DockedWindowConfig) {
     console.error(`Failed to create ${label} window:`, e);
   });
 }
+
+interface CenteredWindowConfig {
+  label: string;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  minWidth?: number;
+  minHeight?: number;
+}
+
+/**
+ * Open (or focus) a standalone window centered on screen.
+ *
+ * Used for windows that need real estate of their own (settings), as opposed to
+ * `openDockedWindow` which glues a narrow panel to the side of the main window.
+ */
+export async function openCenteredWindow(config: CenteredWindowConfig) {
+  const { label, url, title, width, height, minWidth, minHeight } = config;
+
+  const existing = await WebviewWindow.getByLabel(label);
+  if (existing) {
+    console.log(`[WindowUtils] ${label} 窗口已存在，focus`);
+    await existing.setFocus();
+    return;
+  }
+
+  console.log(`[WindowUtils] 创建 ${label} 窗口, 居中, 尺寸=(${width}x${height})`);
+
+  const webview = new WebviewWindow(label, {
+    url,
+    title,
+    width,
+    height,
+    minWidth,
+    minHeight,
+    center: true,
+    decorations: false,
+    transparent: true,
+    resizable: true,
+  });
+
+  webview.once("tauri://error", (e) => {
+    console.error(`Failed to create ${label} window:`, e);
+  });
+}

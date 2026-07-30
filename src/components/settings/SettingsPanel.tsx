@@ -1,359 +1,75 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSettings, saveSettings, suspendHotkeys, resumeHotkeys } from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
 import { defaultSettings } from "../../stores/settingsStore";
-import { HotkeyInput } from "./HotkeyInput";
-import type { Settings, ServiceConfig, ExtraProvider, HotkeyConfig } from "../../types";
+import { ServiceSettings, type ServiceName } from "./ServiceSettings";
+import { HotkeySettings } from "./HotkeySettings";
+import { SpeechSettings } from "./SpeechSettings";
+import type { Settings, ExtraProvider, HotkeyConfig } from "../../types";
 
-type TabName = "translation" | "ocr" | "tts";
+type SectionKey = "service" | "hotkey" | "speech";
 
-const tabs: { key: TabName; label: string }[] = [
-  { key: "translation", label: "翻译" },
-  { key: "ocr", label: "OCR" },
-  { key: "tts", label: "TTS" },
+const ICON_PROPS = {
+  width: 15,
+  height: 15,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
+const navItems: { key: SectionKey; label: string; icon: ReactNode }[] = [
+  {
+    key: "service",
+    label: "服务",
+    icon: (
+      <svg {...ICON_PROPS}>
+        <rect width="20" height="8" x="2" y="2" rx="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" />
+        <path d="M6 6h.01" />
+        <path d="M6 18h.01" />
+      </svg>
+    ),
+  },
+  {
+    key: "hotkey",
+    label: "快捷键",
+    icon: (
+      <svg {...ICON_PROPS}>
+        <rect width="20" height="16" x="2" y="4" rx="2" />
+        <path d="M6 8h.01" />
+        <path d="M10 8h.01" />
+        <path d="M14 8h.01" />
+        <path d="M18 8h.01" />
+        <path d="M8 12h.01" />
+        <path d="M12 12h.01" />
+        <path d="M16 12h.01" />
+        <path d="M7 16h10" />
+      </svg>
+    ),
+  },
+  {
+    key: "speech",
+    label: "朗读",
+    icon: (
+      <svg {...ICON_PROPS}>
+        <path d="M11 5 6 9H2v6h4l5 4V5z" />
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+        <path d="M19.07 4.93a7 7 0 0 1 0 14.14" />
+      </svg>
+    ),
+  },
 ];
-
-const extraParamPresets: Record<TabName, { key: string; label: string; defaultValue: string; tooltip: string }[]> = {
-  translation: [
-    { key: "temperature", label: "temperature", defaultValue: "0.3", tooltip: "平衡创造性与可靠性，越低越稳定精确，越高越发散多样 (0~2)" },
-    { key: "top_p", label: "top_p", defaultValue: "0.9", tooltip: "核采样，只从概率累计前 90% 的词中选，越低回复越固定 (0~1)" },
-    { key: "max_tokens", label: "max_tokens", defaultValue: "4096", tooltip: "单次回复最大长度，太小会被截断，建议留足输入空间" },
-    { key: "frequency_penalty", label: "frequency_penalty", defaultValue: "0", tooltip: "抑制重复用词，越高越不容易来回说同一个词 (-2.0~2.0)" },
-    { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)" },
-  ],
-  ocr: [
-    { key: "temperature", label: "temperature", defaultValue: "0.1", tooltip: "平衡创造性与可靠性，OCR 识别建议设低以保证准确 (0~2)" },
-    { key: "top_p", label: "top_p", defaultValue: "0.9", tooltip: "核采样，只从概率累计前 90% 的词中选，越低回复越固定 (0~1)" },
-    { key: "max_tokens", label: "max_tokens", defaultValue: "4096", tooltip: "单次回复最大长度，太小会被截断，建议留足输入空间" },
-    { key: "frequency_penalty", label: "frequency_penalty", defaultValue: "0", tooltip: "抑制重复用词，越高越不容易来回说同一个词 (-2.0~2.0)" },
-    { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)" },
-  ],
-  tts: [
-    { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 Milo、冰糖）" },
-    { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
-    { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），0 为原始音量 (-10~10)" },
-    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，mp3 体积小，wav 无损，opus 适合流式" },
-    { key: "sample_rate", label: "sample_rate", defaultValue: "48000", tooltip: "采样率 Hz（audio/speech 协议），越高音质越好，opus 仅支持 48000" },
-    { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送" },
-    { key: "stream", label: "stream", defaultValue: "true", tooltip: "小米 MiMo chat+audio 是否流式合成（边收边播依赖它），默认 true" },
-  ],
-};
-
-function ServiceFields({
-  config,
-  activeTab,
-  onChange,
-  onProvidersChange,
-  onActiveChange,
-}: {
-  config: ServiceConfig;
-  activeTab: TabName;
-  onChange: (key: "model" | "extra", value: string) => void;
-  onProvidersChange: (providers: ExtraProvider[]) => void;
-  onActiveChange: (active: number) => void;
-}) {
-  const inputStyle = {
-    backgroundColor: "var(--color-surface)",
-    color: "var(--color-text)",
-    borderRadius: "8px",
-    padding: "8px 10px",
-    marginTop: "4px",
-    border: "none",
-  };
-
-  const isDefault = config.active < 0;
-  const activeProvider =
-    !isDefault && config.providers[config.active] ? config.providers[config.active] : null;
-
-  const updateActiveProvider = (key: keyof ExtraProvider, value: string) => {
-    if (isDefault) return;
-    const idx = config.active;
-    const next = config.providers.map((p, i) => (i === idx ? { ...p, [key]: value } : p));
-    onProvidersChange(next);
-  };
-
-  const addProvider = () => {
-    const next: ExtraProvider[] = [
-      ...config.providers,
-      { name: `提供商 ${config.providers.length + 1}`, base_url: "", api_key: "", model: "" },
-    ];
-    onProvidersChange(next);
-    onActiveChange(next.length - 1);
-  };
-
-  const removeActiveProvider = () => {
-    if (isDefault) return;
-    const idx = config.active;
-    const next = config.providers.filter((_, i) => i !== idx);
-    onProvidersChange(next);
-    onActiveChange(-1);
-  };
-
-  return (
-    <div className="space-y-2">
-      {/* Provider chips */}
-      <div>
-        <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-          模型提供商
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-          <button
-            onClick={() => onActiveChange(-1)}
-            className="text-xs transition-colors"
-            style={{
-              padding: "3px 10px",
-              borderRadius: "9999px",
-              border: "none",
-              cursor: "pointer",
-              backgroundColor: isDefault ? "var(--color-primary)" : "var(--color-surface)",
-              color: isDefault ? "#fff" : "var(--color-text-secondary)",
-            }}
-          >
-            默认
-          </button>
-          {config.providers.map((p, i) => (
-            <button
-              key={i}
-              onClick={() => onActiveChange(i)}
-              className="text-xs transition-colors"
-              style={{
-                padding: "3px 10px",
-                borderRadius: "9999px",
-                border: "none",
-                cursor: "pointer",
-                backgroundColor: config.active === i ? "var(--color-primary)" : "var(--color-surface)",
-                color: config.active === i ? "#fff" : "var(--color-text-secondary)",
-              }}
-            >
-              {p.name?.trim() || `提供商 ${i + 1}`}
-            </button>
-          ))}
-          <button
-            onClick={addProvider}
-            title="添加提供商"
-            className="text-xs transition-colors"
-            style={{
-              padding: "3px 10px",
-              borderRadius: "9999px",
-              border: "1px dashed var(--color-text-secondary)",
-              cursor: "pointer",
-              backgroundColor: "transparent",
-              color: "var(--color-text-secondary)",
-              opacity: 0.7,
-            }}
-          >
-            + 新增
-          </button>
-        </div>
-      </div>
-
-      {/* Provider-specific fields */}
-      {isDefault ? (
-        <label className="block">
-          <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-            模型（使用顶部 API 地址 / API 密钥）
-          </span>
-          <input
-            type="text"
-            value={config.model}
-            onChange={(e) => onChange("model", e.target.value)}
-            className="w-full text-sm outline-none"
-            style={inputStyle}
-            placeholder="gpt-4o-mini"
-          />
-        </label>
-      ) : activeProvider ? (
-        <div className="space-y-2">
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              名称
-            </span>
-            <input
-              type="text"
-              value={activeProvider.name}
-              onChange={(e) => updateActiveProvider("name", e.target.value)}
-              className="w-full text-sm outline-none"
-              style={inputStyle}
-              placeholder="OpenAI"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              API 地址（留空则用顶部全局）
-            </span>
-            <input
-              type="text"
-              value={activeProvider.base_url}
-              onChange={(e) => updateActiveProvider("base_url", e.target.value)}
-              className="w-full text-sm outline-none"
-              style={inputStyle}
-              placeholder="https://api.openai.com"
-              title="填根地址或以 /v1 结尾自动补全端点；已是完整端点原样；结尾加 # 按填写内容原样请求"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              API 密钥（留空则用顶部全局）
-            </span>
-            <input
-              type="password"
-              value={activeProvider.api_key}
-              onChange={(e) => updateActiveProvider("api_key", e.target.value)}
-              className="w-full text-sm outline-none"
-              style={inputStyle}
-              placeholder="sk-..."
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              模型
-            </span>
-            <input
-              type="text"
-              value={activeProvider.model}
-              onChange={(e) => updateActiveProvider("model", e.target.value)}
-              className="w-full text-sm outline-none"
-              style={inputStyle}
-              placeholder="gpt-4o-mini"
-            />
-          </label>
-          <button
-            onClick={removeActiveProvider}
-            className="text-xs transition-colors"
-            style={{
-              padding: "4px 10px",
-              borderRadius: "8px",
-              border: "none",
-              cursor: "pointer",
-              backgroundColor: "var(--color-surface)",
-              color: "#ef4444",
-            }}
-          >
-            删除此提供商
-          </button>
-        </div>
-      ) : null}
-
-      {/* Shared extra params */}
-      <label className="block">
-        <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-          自定义参数（所有提供商共享）
-        </span>
-        <textarea
-          value={config.extra}
-          onChange={(e) => onChange("extra", e.target.value)}
-          className="w-full text-sm outline-none resize-none"
-          style={{ ...inputStyle, minHeight: "56px" }}
-          placeholder='{"temperature": 0.3}'
-          rows={2}
-        />
-      </label>
-      <div className="flex flex-wrap gap-1.5 mt-1">
-        {extraParamPresets[activeTab].map((preset) => {
-          let existingKeys: string[] = [];
-          try {
-            const parsed = JSON.parse(config.extra);
-            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-              existingKeys = Object.keys(parsed);
-            }
-          } catch { /* ignore */ }
-          const alreadyAdded = existingKeys.includes(preset.key);
-          return (
-            <button
-              key={preset.key}
-              disabled={alreadyAdded}
-              title={preset.tooltip}
-              onClick={() => {
-                let obj: Record<string, unknown> = {};
-                try {
-                  const parsed = JSON.parse(config.extra);
-                  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                    obj = parsed;
-                  }
-                } catch { /* start fresh */ }
-                if (preset.key in obj) return;
-                let val: string | number = preset.defaultValue;
-                if (preset.key === "voice" && !val) {
-                  val = config.model ? `${config.model}:` : "";
-                }
-                if (val === "true" || val === "false") {
-                  obj[preset.key] = val === "true";
-                } else {
-                  const num = Number(val);
-                  obj[preset.key] = val !== "" && !isNaN(num) ? num : val;
-                }
-                onChange("extra", JSON.stringify(obj, null, 2));
-              }}
-              className="text-xs transition-colors"
-              style={{
-                padding: "2px 8px",
-                borderRadius: "9999px",
-                border: "none",
-                cursor: alreadyAdded ? "not-allowed" : "pointer",
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text-secondary)",
-                opacity: alreadyAdded ? 0.4 : 1,
-              }}
-            >
-              {preset.label}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-2 cursor-pointer">
-      <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-        {label}
-      </span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className="relative transition-colors shrink-0"
-        style={{
-          width: "34px",
-          height: "18px",
-          borderRadius: "9999px",
-          border: "none",
-          cursor: "pointer",
-          backgroundColor: checked ? "var(--color-primary)" : "var(--color-surface)",
-        }}
-      >
-        <span
-          className="absolute transition-all"
-          style={{
-            top: "2px",
-            left: checked ? "18px" : "2px",
-            width: "14px",
-            height: "14px",
-            borderRadius: "9999px",
-            backgroundColor: "#fff",
-          }}
-        />
-      </button>
-    </label>
-  );
-}
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const [activeTab, setActiveTab] = useState<TabName>("translation");
+  const [section, setSection] = useState<SectionKey>("service");
+  const [activeService, setActiveService] = useState<ServiceName>("translation");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     appLog.info("[Settings] 设置窗口: 加载配置...");
@@ -373,48 +89,57 @@ export function SettingsPanel() {
     };
   }, []);
 
-  const updateService = useCallback((service: TabName, key: "model" | "extra", value: string) => {
-    setSettings((prev) => ({
-      ...prev,
-      [service]: { ...prev[service], [key]: value },
-    }));
+  const updateGlobal = useCallback((key: "base_url" | "api_key", value: string) => {
+    setSettings((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const updateProviders = useCallback((service: TabName, providers: ExtraProvider[]) => {
-    setSettings((prev) => ({
-      ...prev,
-      [service]: { ...prev[service], providers },
-    }));
+  const updateService = useCallback(
+    (service: ServiceName, key: "model" | "extra", value: string) => {
+      setSettings((prev) => ({ ...prev, [service]: { ...prev[service], [key]: value } }));
+    },
+    []
+  );
+
+  const updateProviders = useCallback((service: ServiceName, providers: ExtraProvider[]) => {
+    setSettings((prev) => ({ ...prev, [service]: { ...prev[service], providers } }));
   }, []);
 
-  const updateActive = useCallback((service: TabName, active: number) => {
-    setSettings((prev) => ({
-      ...prev,
-      [service]: { ...prev[service], active },
-    }));
+  const updateActiveProvider = useCallback((service: ServiceName, active: number) => {
+    setSettings((prev) => ({ ...prev, [service]: { ...prev[service], active } }));
+  }, []);
+
+  const updateHotkey = useCallback((key: keyof HotkeyConfig, value: string) => {
+    setError(null);
+    setSettings((prev) => ({ ...prev, hotkeys: { ...prev.hotkeys, [key]: value } }));
   }, []);
 
   const updateSpeech = useCallback((key: keyof Settings["speech"], value: boolean) => {
-    setSettings((prev) => ({
-      ...prev,
-      speech: { ...prev.speech, [key]: value },
-    }));
+    setSettings((prev) => ({ ...prev, speech: { ...prev.speech, [key]: value } }));
   }, []);
 
   const save = useCallback(async () => {
     const hk = settings.hotkeys;
     if (!hk?.screenshot?.trim() || !hk?.ocr_translate?.trim() || !hk?.clipboard_translate?.trim()) {
       appLog.warn("[Settings] 快捷键不能为空");
-      alert("快捷键不能为空，请为三个动作都设置快捷键");
+      // 跳到快捷键分区并就地标红，比 alert 更容易定位到底哪一项没填
+      setSection("hotkey");
+      setError("三个动作都需要设置快捷键");
       return;
     }
+    setError(null);
     try {
-      appLog.info("[Settings] 保存配置, translation.model=" + settings.translation.model + ", ocr.model=" + settings.ocr.model);
+      appLog.info(
+        "[Settings] 保存配置, translation.model=" +
+          settings.translation.model +
+          ", ocr.model=" +
+          settings.ocr.model
+      );
       await saveSettings(settings);
       appLog.info("[Settings] 配置保存成功");
       await emit("settings-saved");
     } catch (e) {
       appLog.error("[Settings] 配置保存失败: " + String(e));
+      setError("保存失败：" + String(e));
       return;
     }
     // Tauri may destroy the webview without running React's effect cleanup.
@@ -428,7 +153,7 @@ export function SettingsPanel() {
     await getCurrentWindow().close();
   }, [settings]);
 
-  const close = async () => {
+  const close = useCallback(async () => {
     try {
       await resumeHotkeys();
     } catch (e) {
@@ -436,7 +161,7 @@ export function SettingsPanel() {
     } finally {
       await getCurrentWindow().close();
     }
-  };
+  }, []);
 
   return (
     <div
@@ -446,12 +171,9 @@ export function SettingsPanel() {
       {/* Draggable title bar */}
       <div
         data-tauri-drag-region
-        className="flex items-center justify-between h-10 px-4 select-none shrink-0"
+        className="flex items-center justify-between h-11 px-4 select-none shrink-0"
       >
-        <span
-          className="text-sm font-semibold"
-          style={{ color: "var(--color-text)" }}
-        >
+        <span className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
           设置
         </span>
         <button
@@ -460,189 +182,117 @@ export function SettingsPanel() {
           style={{ color: "var(--color-text-secondary)" }}
           title="关闭"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg {...ICON_PROPS} width="14" height="14">
             <path d="M18 6 6 18" />
             <path d="m6 6 12 12" />
           </svg>
         </button>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-5 pb-4" style={{ minHeight: 0 }}>
-        {/* Global API fields */}
-        <div className="space-y-2" style={{ marginBottom: "14px" }}>
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              API 地址
-            </span>
-            <input
-              type="text"
-              value={settings.base_url}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, base_url: e.target.value }))
-              }
-              className="w-full text-sm outline-none"
-              style={{
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                marginTop: "4px",
-                border: "none",
-              }}
-              placeholder="https://api.openai.com"
-            />
-            <div
-              className="text-xs"
-              style={{ color: "var(--color-text-secondary)", marginTop: "5px", lineHeight: 1.6, opacity: 0.8 }}
-            >
-              <div>· 填根地址或以 /v1 结尾 → 自动补全对应端点（如 …/v1/chat/completions）</div>
-              <div>· 已是完整端点 → 原样使用</div>
-              <div>· 结尾加 # → 完全按填写内容请求（自定义 / 非标准路径）</div>
-            </div>
-          </label>
-          <label className="block">
-            <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-              API 密钥
-            </span>
-            <input
-              type="password"
-              value={settings.api_key}
-              onChange={(e) =>
-                setSettings((prev) => ({ ...prev, api_key: e.target.value }))
-              }
-              className="w-full text-sm outline-none"
-              style={{
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text)",
-                borderRadius: "8px",
-                padding: "8px 10px",
-                marginTop: "4px",
-                border: "none",
-              }}
-              placeholder="sk-..."
-            />
-          </label>
-        </div>
+      {/* Sidebar + content */}
+      <div className="flex flex-1" style={{ minHeight: 0 }}>
+        <nav
+          className="shrink-0 flex flex-col gap-0.5 py-2 px-2"
+          style={{ width: "148px", borderRight: "1px solid var(--color-border)" }}
+        >
+          {navItems.map((item) => {
+            const active = section === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => setSection(item.key)}
+                className="relative flex items-center gap-2.5 text-xs font-medium transition-colors text-left"
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  border: "none",
+                  cursor: "pointer",
+                  backgroundColor: active ? "var(--color-surface)" : "transparent",
+                  color: active ? "var(--color-primary)" : "var(--color-text-secondary)",
+                }}
+              >
+                {active && (
+                  <span
+                    className="absolute"
+                    style={{
+                      left: 0,
+                      top: "8px",
+                      bottom: "8px",
+                      width: "2px",
+                      borderRadius: "9999px",
+                      backgroundColor: "var(--color-primary)",
+                    }}
+                  />
+                )}
+                {item.icon}
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* Tabs */}
-        <div className="flex gap-1" style={{ marginBottom: "10px" }}>
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className="text-xs font-medium transition-colors"
-              style={{
-                padding: "5px 12px",
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                backgroundColor:
-                  activeTab === tab.key ? "var(--color-primary)" : "var(--color-surface)",
-                color: activeTab === tab.key ? "#fff" : "var(--color-text-secondary)",
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Service config for active tab */}
-        <ServiceFields
-          config={settings[activeTab]}
-          activeTab={activeTab}
-          onChange={(key, value) => updateService(activeTab, key, value)}
-          onProvidersChange={(providers) => updateProviders(activeTab, providers)}
-          onActiveChange={(active) => updateActive(activeTab, active)}
-        />
-
-        {/* Hotkeys */}
-        <div style={{ marginTop: "14px" }}>
-          <h3 className="text-xs font-medium" style={{ color: "var(--color-text-secondary)", marginBottom: "6px" }}>
-            快捷键
-          </h3>
-          <div className="space-y-1.5">
-            {([
-              { key: "screenshot", label: "区域截图" },
-              { key: "ocr_translate", label: "区域翻译" },
-              { key: "clipboard_translate", label: "翻译选中文本" },
-            ] as { key: keyof HotkeyConfig; label: string }[]).map(({ key, label }) => (
-              <div key={key} className="flex items-center justify-between gap-2">
-                <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
-                  {label}
-                </span>
-                <HotkeyInput
-                  value={settings.hotkeys?.[key] ?? ""}
-                  onChange={(v) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      hotkeys: { ...prev.hotkeys, [key]: v },
-                    }))
-                  }
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Speech / auto-read */}
-        <div style={{ marginTop: "14px" }}>
-          <h3 className="text-xs font-medium" style={{ color: "var(--color-text-secondary)", marginBottom: "6px" }}>
-            朗读
-          </h3>
-          <div className="space-y-2">
-            <ToggleRow
-              label="翻译后自动朗读原文"
-              checked={settings.speech?.auto_read_source ?? false}
-              onChange={(v) => updateSpeech("auto_read_source", v)}
+        <div className="flex-1 overflow-y-auto" style={{ minWidth: 0, padding: "18px 22px 24px" }}>
+          {section === "service" && (
+            <ServiceSettings
+              settings={settings}
+              activeService={activeService}
+              onActiveServiceChange={setActiveService}
+              onGlobalChange={updateGlobal}
+              onServiceChange={updateService}
+              onProvidersChange={updateProviders}
+              onActiveProviderChange={updateActiveProvider}
             />
-            <ToggleRow
-              label="翻译后自动朗读译文"
-              checked={settings.speech?.auto_read_target ?? false}
-              onChange={(v) => updateSpeech("auto_read_target", v)}
+          )}
+          {section === "hotkey" && (
+            <HotkeySettings
+              hotkeys={settings.hotkeys}
+              invalid={error !== null}
+              onChange={updateHotkey}
             />
-            <ToggleRow
-              label="流式边收边播（小米 MiMo）"
-              checked={settings.speech?.stream_playback ?? true}
-              onChange={(v) => updateSpeech("stream_playback", v)}
-            />
-            <div
-              className="text-xs"
-              style={{ color: "var(--color-text-secondary)", lineHeight: 1.6, opacity: 0.8 }}
-            >
-              原文、译文可同时开启，将先读原文再读译文。边收边播仅对小米 MiMo（chat+audio）流式生效。
-            </div>
-          </div>
+          )}
+          {section === "speech" && (
+            <SpeechSettings speech={settings.speech} onChange={updateSpeech} />
+          )}
         </div>
       </div>
 
       {/* Actions */}
-      <div className="flex justify-end gap-2 shrink-0" style={{ padding: "14px 20px 16px" }}>
-        <button
-          onClick={close}
-          className="text-sm transition-colors hover:opacity-80"
-          style={{
-            color: "var(--color-text-secondary)",
-            padding: "6px 14px",
-            borderRadius: "8px",
-            backgroundColor: "var(--color-surface)",
-            border: "none",
-          }}
-        >
-          取消
-        </button>
-        <button
-          onClick={save}
-          className="text-sm font-medium text-white transition-colors hover:opacity-90"
-          style={{
-            backgroundColor: "var(--color-primary)",
-            padding: "6px 14px",
-            borderRadius: "8px",
-            border: "none",
-          }}
-        >
-          保存
-        </button>
+      <div
+        className="flex items-center justify-between gap-3 shrink-0"
+        style={{ padding: "12px 22px", borderTop: "1px solid var(--color-border)" }}
+      >
+        <span className="text-xs truncate" style={{ color: error ? "#ef4444" : "transparent" }}>
+          {error ?? ""}
+        </span>
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={close}
+            className="text-sm transition-colors hover:opacity-80"
+            style={{
+              color: "var(--color-text-secondary)",
+              padding: "6px 16px",
+              borderRadius: "8px",
+              backgroundColor: "var(--color-surface)",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            取消
+          </button>
+          <button
+            onClick={save}
+            className="text-sm font-medium text-white transition-colors hover:opacity-90"
+            style={{
+              backgroundColor: "var(--color-primary)",
+              padding: "6px 16px",
+              borderRadius: "8px",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            保存
+          </button>
+        </div>
       </div>
     </div>
   );
