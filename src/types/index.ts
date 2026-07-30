@@ -13,6 +13,8 @@ export interface SpeechConfig {
   auto_read_source: boolean;
   /** 翻译完成后自动朗读译文 */
   auto_read_target: boolean;
+  /** 自动朗读的长度上限（中文按字、西文按单词计数）；0 表示不限制，手动朗读不受限 */
+  auto_read_max_units: number;
   /** 边收边播：chat+audio 流式分块实时播放（关闭则等整段合成完再播） */
   stream_playback: boolean;
 }

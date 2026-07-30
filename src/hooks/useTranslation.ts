@@ -3,7 +3,7 @@ import { useTranslationStore } from "../stores/translationStore";
 import { useSettingsStore, resolveActiveProvider } from "../stores/settingsStore";
 import { translateText } from "../lib/invoke";
 import { appLog } from "../stores/logStore";
-import { speakSequence } from "../lib/tts";
+import { countSpeechUnits, speakSequence } from "../lib/tts";
 
 // Generation counter: incremented on each translate call or explicit cancel.
 // Stale calls (whose captured generation no longer matches) silently discard results.
@@ -64,13 +64,23 @@ export function useTranslation() {
         // 翻译完成后按设置自动朗读原文/译文（原文在前，译文在后，顺序播放）
         const speech = useSettingsStore.getState().settings.speech;
         if (speech?.auto_read_source || speech?.auto_read_target) {
+          // 长度上限只约束自动朗读：整屏 OCR 出来的长文本自动读一遍既慢又费钱，
+          // 需要时仍可手动点喇叭（手动路径不做限制）
+          const limit = speech.auto_read_max_units ?? 0;
           const queue: { text: string; id: string }[] = [];
-          if (speech.auto_read_source && input.trim()) {
-            queue.push({ text: input, id: "source" });
-          }
-          if (speech.auto_read_target && result.trim()) {
-            queue.push({ text: result, id: "target" });
-          }
+          const enqueue = (text: string, id: string) => {
+            if (!text.trim()) return;
+            const units = countSpeechUnits(text);
+            if (limit > 0 && units > limit) {
+              appLog.warn(
+                "[Translate] 自动朗读跳过 " + id + ": 长度=" + units + " 超过上限 " + limit
+              );
+              return;
+            }
+            queue.push({ text, id });
+          };
+          if (speech.auto_read_source) enqueue(input, "source");
+          if (speech.auto_read_target) enqueue(result, "target");
           if (queue.length > 0) {
             appLog.info("[Translate] 自动朗读: " + queue.map((q) => q.id).join(","));
             speakSequence(queue).catch((e) =>

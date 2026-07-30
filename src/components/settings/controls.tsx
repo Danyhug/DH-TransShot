@@ -1,4 +1,11 @@
-import { Children, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from "react";
+import {
+  Children,
+  useEffect,
+  useState,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from "react";
 
 /**
  * 设置窗口的共享基础控件。
@@ -186,17 +193,15 @@ export function SegmentedControl<T extends string>({
   );
 }
 
-/** 开关行：左侧标题 + 可选说明，右侧开关。 */
-export function ToggleRow({
+/** 设置行骨架：左侧标题 + 可选说明，右侧控件（开关 / 数值输入等共用同一排版）。 */
+function SettingRow({
   label,
   description,
-  checked,
-  onChange,
+  children,
 }: {
   label: string;
   description?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
+  children: ReactNode;
 }) {
   return (
     <label className="flex items-start justify-between gap-4 cursor-pointer">
@@ -213,6 +218,25 @@ export function ToggleRow({
           </span>
         )}
       </span>
+      {children}
+    </label>
+  );
+}
+
+/** 开关行：左侧标题 + 可选说明，右侧开关。 */
+export function ToggleRow({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <SettingRow label={label} description={description}>
       <button
         type="button"
         role="switch"
@@ -241,7 +265,65 @@ export function ToggleRow({
           }}
         />
       </button>
-    </label>
+    </SettingRow>
+  );
+}
+
+function parseCount(raw: string) {
+  const digits = raw.replace(/\D/g, "");
+  return digits === "" ? 0 : Number(digits);
+}
+
+/**
+ * 数值行：左侧标题 + 可选说明，右侧窄数字输入框（可带单位后缀）。只接受非负整数。
+ *
+ * 输入过程中允许出现空串（清空重填），所以单独维护草稿字符串；只有当外部值与草稿
+ * 解析结果不一致时才回填，避免用户还在打字就被父组件的规范化值覆盖。
+ */
+export function NumberRow({
+  label,
+  description,
+  value,
+  max,
+  unit,
+  onChange,
+}: {
+  label: string;
+  description?: string;
+  value: number;
+  max?: number;
+  unit?: string;
+  onChange: (v: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  useEffect(() => {
+    setDraft((prev) => (parseCount(prev) === value ? prev : String(value)));
+  }, [value]);
+
+  return (
+    <SettingRow label={label} description={description}>
+      <span className="flex items-center gap-1.5 shrink-0">
+        <input
+          type="text"
+          inputMode="numeric"
+          value={draft}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/\D/g, "");
+            setDraft(digits);
+            const n = parseCount(digits);
+            onChange(max !== undefined ? Math.min(max, n) : n);
+          }}
+          className="settings-input"
+          style={{ width: "78px", textAlign: "right", padding: "4px 8px", fontSize: "12px" }}
+        />
+        {unit && (
+          <span className="text-xs" style={{ color: "var(--color-text-secondary)" }}>
+            {unit}
+          </span>
+        )}
+      </span>
+    </SettingRow>
   );
 }
 

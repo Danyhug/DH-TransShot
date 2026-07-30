@@ -59,13 +59,15 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
 |------|------|
 | `speak(text, id)` | 朗读一段文本；`id`（如 `"source"`/`"target"`）用于「朗读中」高亮。会抢占正在进行的朗读，播完/出错/被打断时兑现 |
 | `speakSequence(items)` | 依次朗读多段（`[{text,id}]`）；前一段播完再播下一段，被打断则整体中止（自动朗读原文→译文用） |
-| `stopSpeaking()` | 停止当前朗读并熄灭高亮 |
+| `stopSpeaking()` | 停止当前朗读并熄灭高亮/加载态 |
 | `isStreamPlaybackSupported()` | 是否支持 Web Audio（边收边播依赖） |
+| `countSpeechUnits(text)` | 统计文本长度：CJK（含假名/谚文）按字计 + 其余语种按 `[\p{L}\p{N}]+` 单词计，两者相加。供「自动朗读长度上限」（`speech.auto_read_max_units`）判断 |
 
 **关键机制：**
 
 - **单例播放 + generation 抢占**：全局 `playGen` 计数，每次 `speak`/`speakSequence`/`stopSpeaking` 递增并停掉当前播放；全程用 `gen === playGen` 判断是否被后来的朗读打断，避免并发播放叠音
 - **朗读状态**：写入 `stores/ttsStore.ts` 的 `speakingId`，对应按钮显示「停止」图标
+- **加载状态**：`ttsStore.loadingId` 标记「已发起合成、音频还没到」的窗口期（按钮转圈）。发起请求前置位，**收到第一段音频数据时熄灭**——流式路径由 `StreamingPcmPlayer` 的 `onFirstAudio`（首块 PCM 排入播放）回调，整段路径由 `playWholeAudio` 的 `onStart`（`audio.play()` 兑现）回调；`playOne` 的 `finally` 兜底清除。命中前端缓存时不进入加载态。所有清除都带 `gen === playGen` 守卫，避免被抢占的旧会话熄掉新会话的加载态
 - **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），命中直接整段播；**流式分块播放不写前端缓存**（返回值不含完整音频），重播时靠后端缓存返回整段
 - **AudioContext 单例**：全模块复用一个 `AudioContext`（`getAudioContext()`），播放结束只停 source 不 `close()`——WebKit 对同时存在的 context 数量有硬上限，每次朗读都 new+close 在连续朗读时容易踩到
 - **流式边收边播**（`speech.stream_playback !== false` 且支持 Web Audio）：
@@ -135,5 +137,6 @@ interface Language { code: string; name: string }
 - 新增语言需同时更新 `languages` 数组，并确认后端 OCR 模块支持该语言
 - `auto` 语言仅适用于源语言，`targetLanguages` 会自动排除
 - 朗读逻辑集中在 `tts.ts`：新增播放入口应复用 `speak`/`speakSequence` 以共享单例抢占与缓存，避免多处 `new Audio` 叠音
+- 新增播放路径时记得接上加载态回调（首帧数据到达即 `setLoadingId(null)`），否则按钮会一直转圈到播放结束
 - 流式播放假设分块为单声道 PCM16LE（后端 `start` 控制消息的 `sampleRate`/`channels` 决定重采样率）；后端改音频参数需同步此处
 - **大块数据别走全局事件**：`app.emit` 会把负载拼进 `eval` 字符串广播给所有 webview，音频/图像这类高频大负载必须用 `Channel` + `InvokeResponseBody::Raw`

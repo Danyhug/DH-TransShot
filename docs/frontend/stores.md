@@ -11,7 +11,7 @@
 | `src/stores/translationStore.ts` | 翻译状态：源/目标文本、语言、翻译进度、错误 |
 | `src/stores/settingsStore.ts` | 设置状态：服务配置（翻译/OCR/TTS）、朗读配置、弹窗开关 |
 | `src/stores/logStore.ts` | 日志状态：日志条目列表、事件通信、openDebugWindow、appLog 辅助函数 |
-| `src/stores/ttsStore.ts` | 朗读状态：当前朗读会话标识 `speakingId`（驱动按钮「朗读中/停止」） |
+| `src/stores/ttsStore.ts` | 朗读状态：`speakingId`（驱动按钮「朗读中/停止」）+ `loadingId`（驱动按钮加载图标） |
 
 ## 核心逻辑
 
@@ -68,6 +68,7 @@
   speech: {
     auto_read_source: false,
     auto_read_target: false,
+    auto_read_max_units: 0,
     stream_playback: true,
   },
 }
@@ -143,8 +144,12 @@
 | 字段 | 类型 | 初始值 | 说明 |
 |------|------|--------|------|
 | `speakingId` | string \| null | `null` | 当前正在朗读的会话标识（如 `"source"`/`"target"`）；null 表示未朗读 |
+| `loadingId` | string \| null | `null` | 已发起合成、但第一段音频还没到的会话标识；null 表示没有等待中的请求 |
 
 **Actions：**
 - `setSpeakingId(id)` — 设置/清空朗读标识
+- `setLoadingId(id)` — 设置/清空加载标识
 
 因为播放器是单例（同一时刻只播一段），用一个全局标识让对应按钮显示「朗读中/停止」，切换朗读时自动熄灭上一个按钮。由 `lib/tts.ts` 的 `speak`/`speakSequence`/`stopSpeaking` 维护，`ActionButtons` 订阅。
+
+两个标识分开是因为「点击 → 出声」之间隔着合成 + 网络往返（长文本可能数秒）：这段时间 `loadingId` 生效，按钮转圈；收到第一段音频数据后清空，`speakingId` 接管显示停止图标。

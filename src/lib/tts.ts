@@ -13,6 +13,21 @@ function normalizeTtsText(text: string) {
   return text.trim().replace(/\r\n/g, "\n");
 }
 
+// 中日韩文字（CJK 扩展 A + 基本区 + 假名 + 谚文）——这些语言不按空格分词，逐字计数
+const CJK_PATTERN = /[㐀-䶿一-鿿぀-ヿ가-힯]/g;
+// 其余语种按「字母/数字串」计一个单词
+const WORD_PATTERN = /[\p{L}\p{N}]+/gu;
+
+/**
+ * 统计文本长度：中文/日文/韩文按字计，其余语种按单词计，两者相加。
+ * 用于「自动朗读长度上限」判断（`settings.speech.auto_read_max_units`）。
+ */
+export function countSpeechUnits(text: string): number {
+  const cjk = text.match(CJK_PATTERN)?.length ?? 0;
+  const words = text.replace(CJK_PATTERN, " ").match(WORD_PATTERN)?.length ?? 0;
+  return cjk + words;
+}
+
 function getTtsCacheKey(baseUrl: string, model: string, extra: string, text: string) {
   return `${baseUrl}\n${model}\n${extra}\n${text}`;
 }
@@ -93,10 +108,12 @@ function preempt(): number {
   return playGen;
 }
 
-/** 停止当前朗读（若有），并熄灭「朗读中」标识。 */
+/** 停止当前朗读（若有），并熄灭「朗读中」/「加载中」标识。 */
 export function stopSpeaking() {
   preempt();
-  useTtsStore.getState().setSpeakingId(null);
+  const store = useTtsStore.getState();
+  store.setSpeakingId(null);
+  store.setLoadingId(null);
 }
 
 /**
@@ -124,7 +141,8 @@ class StreamingPcmPlayer {
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
-  constructor() {
+  /** @param onFirstAudio 第一块 PCM 排入播放时回调一次（用于熄灭按钮的加载态）。 */
+  constructor(private onFirstAudio?: () => void) {
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve;
     });
@@ -185,6 +203,11 @@ class StreamingPcmPlayer {
       src.start(startAt);
       this.nextTime = startAt + buffer.duration;
       this.scheduled++;
+      if (this.scheduled === 1 && this.onFirstAudio) {
+        const notify = this.onFirstAudio;
+        this.onFirstAudio = undefined;
+        notify();
+      }
       this.pending.add(src);
       src.onended = () => {
         this.pending.delete(src);
@@ -258,8 +281,11 @@ class StreamingPcmPlayer {
   }
 }
 
-/** 用 HTMLAudioElement 播放整段 base64 音频，播完 / 出错时兑现；期间登记 stopCurrent。 */
-function playWholeAudio(base64Audio: string): Promise<void> {
+/**
+ * 用 HTMLAudioElement 播放整段 base64 音频，播完 / 出错时兑现；期间登记 stopCurrent。
+ * `onStart` 在浏览器真正开始播放时回调一次（用于熄灭按钮的加载态）。
+ */
+function playWholeAudio(base64Audio: string, onStart?: () => void): Promise<void> {
   return new Promise((resolve) => {
     const mime = detectAudioMime(base64Audio);
     const audio = new Audio(`data:${mime};base64,${base64Audio}`);
@@ -283,7 +309,10 @@ function playWholeAudio(base64Audio: string): Promise<void> {
       finish();
     };
     audio.play().then(
-      () => appLog.info("[TTS] 音频播放开始, mime=" + mime),
+      () => {
+        appLog.info("[TTS] 音频播放开始, mime=" + mime);
+        onStart?.();
+      },
       (e) => {
         appLog.error("[TTS] 音频播放启动失败: " + String(e));
         finish();
@@ -311,69 +340,79 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
     return;
   }
 
-  const wantStream = settings.speech?.stream_playback !== false && isStreamPlaybackSupported();
+  // 音频还没到手（合成 + 网络往返可能好几秒）→ 按钮显示加载态，收到第一段数据时熄灭
+  useTtsStore.getState().setLoadingId(id);
+  const clearLoading = () => {
+    if (gen === playGen) useTtsStore.getState().setLoadingId(null);
+  };
 
-  if (wantStream) {
-    appLog.info("[TTS] 前端缓存未命中，发起流式语音请求 (" + id + ")");
-    const player = new StreamingPcmPlayer();
-    stopCurrent = () => player.stop();
+  try {
+    const wantStream = settings.speech?.stream_playback !== false && isStreamPlaybackSupported();
 
-    // 通道按发送顺序投递，因此 end 一定排在所有分块之后；不依赖它与命令返回值的先后
-    let endReceived = false;
-    const channel = new Channel<TtsStreamPayload>();
-    channel.onmessage = (message) => {
-      if (gen !== playGen) return;
-      if (message instanceof ArrayBuffer) {
-        player.pushChunk(message);
-        return;
-      }
-      if (message.event === "start") {
-        player.setFormat(message.sampleRate, message.channels);
-      } else if (message.event === "end") {
-        endReceived = true;
-        player.markInputComplete();
-      }
-    };
+    if (wantStream) {
+      appLog.info("[TTS] 前端缓存未命中，发起流式语音请求 (" + id + ")");
+      const player = new StreamingPcmPlayer(clearLoading);
+      stopCurrent = () => player.stop();
 
-    const resp = await synthesizeSpeechStream(normalized, channel);
-    if (gen !== playGen) {
-      player.stop();
-      return;
-    }
-    if (resp.chunkCount > 0) {
-      appLog.info(
-        "[TTS] 流式播放中, 分块数=" + resp.chunkCount + ", 已排入播放=" + player.scheduledChunks
-      );
-      // 兜底：万一 end 控制消息丢失（通道某条消息投递失败会卡住后续消息），
-      // 也别让 done 永远挂着；给分块留足到达时间后再收口
-      const guard = setTimeout(() => {
-        if (!endReceived) {
-          appLog.warn("[TTS] 未收到流结束消息，按已收到的分块收尾");
+      // 通道按发送顺序投递，因此 end 一定排在所有分块之后；不依赖它与命令返回值的先后
+      let endReceived = false;
+      const channel = new Channel<TtsStreamPayload>();
+      channel.onmessage = (message) => {
+        if (gen !== playGen) return;
+        if (message instanceof ArrayBuffer) {
+          player.pushChunk(message);
+          return;
+        }
+        if (message.event === "start") {
+          player.setFormat(message.sampleRate, message.channels);
+        } else if (message.event === "end") {
+          endReceived = true;
           player.markInputComplete();
         }
-      }, 5000);
-      try {
-        await player.done;
-      } finally {
-        clearTimeout(guard);
-      }
-    } else {
-      // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
-      player.stop();
-      if (resp.audio) {
-        setCachedAudio(key, resp.audio);
-        if (gen === playGen) await playWholeAudio(resp.audio);
-      }
-    }
-    return;
-  }
+      };
 
-  // 不走流式：普通请求 + 整段播放
-  appLog.info("[TTS] 前端缓存未命中，发起整段语音请求 (" + id + ")");
-  const audio = await synthesizeSpeech(normalized);
-  setCachedAudio(key, audio);
-  if (gen !== playGen) return;
-  if (audio) await playWholeAudio(audio);
+      const resp = await synthesizeSpeechStream(normalized, channel);
+      if (gen !== playGen) {
+        player.stop();
+        return;
+      }
+      if (resp.chunkCount > 0) {
+        appLog.info(
+          "[TTS] 流式播放中, 分块数=" + resp.chunkCount + ", 已排入播放=" + player.scheduledChunks
+        );
+        // 兜底：万一 end 控制消息丢失（通道某条消息投递失败会卡住后续消息），
+        // 也别让 done 永远挂着；给分块留足到达时间后再收口
+        const guard = setTimeout(() => {
+          if (!endReceived) {
+            appLog.warn("[TTS] 未收到流结束消息，按已收到的分块收尾");
+            player.markInputComplete();
+          }
+        }, 5000);
+        try {
+          await player.done;
+        } finally {
+          clearTimeout(guard);
+        }
+      } else {
+        // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
+        player.stop();
+        if (resp.audio) {
+          setCachedAudio(key, resp.audio);
+          if (gen === playGen) await playWholeAudio(resp.audio, clearLoading);
+        }
+      }
+      return;
+    }
+
+    // 不走流式：普通请求 + 整段播放
+    appLog.info("[TTS] 前端缓存未命中，发起整段语音请求 (" + id + ")");
+    const audio = await synthesizeSpeech(normalized);
+    setCachedAudio(key, audio);
+    if (gen !== playGen) return;
+    if (audio) await playWholeAudio(audio, clearLoading);
+  } finally {
+    clearLoading();
+  }
 }
 
 /**
@@ -388,7 +427,9 @@ export async function speak(text: string, id: string): Promise<void> {
     await playOne(text, id, gen);
   } finally {
     if (gen === playGen) {
-      useTtsStore.getState().setSpeakingId(null);
+      const store = useTtsStore.getState();
+      store.setSpeakingId(null);
+      store.setLoadingId(null);
       stopCurrent = null;
     }
   }
@@ -409,6 +450,7 @@ export async function speakSequence(items: { text: string; id: string }[]) {
   } finally {
     if (gen === playGen) {
       store.setSpeakingId(null);
+      store.setLoadingId(null);
       stopCurrent = null;
     }
   }

@@ -47,7 +47,7 @@
 | `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
-| `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、流式边收边播开关） |
+| `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `auto_read_max_units=0`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、自动朗读长度上限、流式边收边播开关） |
 
 **`base_url` 端点自适应拼接（`api_client::build_endpoint_url`）**
 
@@ -83,11 +83,13 @@
 |------|------|--------|------|
 | `auto_read_source` | bool | `false` | 翻译完成后自动朗读原文 |
 | `auto_read_target` | bool | `false` | 翻译完成后自动朗读译文 |
+| `auto_read_max_units` | u32 | `0` | 自动朗读的长度上限（中文按字、其它语种按单词计数）；`0` = 不限制 |
 | `stream_playback` | bool | `true` | 边收边播：chat+audio 流式分块实时推给前端播放；关闭则等整段音频合成完再播 |
 
 - 整个结构体用 `#[serde(default)]`，旧版 settings.json（无 `speech` 字段）反序列化时回退到全 false + `stream_playback=true`
 - `stream_playback` 用 `#[serde(default = "default_true")]` 保证单独缺字段时默认开启
 - 原文/译文可同时开启，前端按「先原文后译文」顺序朗读（`speakSequence`）
+- `auto_read_max_units` **只在前端生效**（后端不参与判断）：`hooks/useTranslation.ts` 用 `lib/tts.ts` 的 `countSpeechUnits()` 计数，超限的那一段不入自动朗读队列；手动点喇叭不受限制。默认 `0`（不限制）以保持旧版行为
 - `stream_playback` 仅对小米 MiMo（chat+audio）流式路径有意义；audio/speech 协议始终整段播放
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值

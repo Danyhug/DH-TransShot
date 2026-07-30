@@ -55,6 +55,7 @@ export const defaultSettings: Settings = {
   speech: {
     auto_read_source: false,
     auto_read_target: false,
+    auto_read_max_units: 0,
     stream_playback: true,
   },
 };

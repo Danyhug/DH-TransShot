@@ -10,7 +10,10 @@ interface Props {
 
 export function ActionButtons({ text, speakId }: Props) {
   const speakingId = useTtsStore((s) => s.speakingId);
+  const loadingId = useTtsStore((s) => s.loadingId);
   const isSpeaking = speakingId === speakId;
+  // 已发起合成但音频还没到（加载中）——此时按钮转圈，再点一次即取消
+  const isLoading = loadingId === speakId;
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(text).catch(console.error);
@@ -18,8 +21,8 @@ export function ActionButtons({ text, speakId }: Props) {
 
   const onSpeakClick = () => {
     if (!text) return;
-    if (isSpeaking) {
-      appLog.info("[TTS] 手动停止朗读 (" + speakId + ")");
+    if (isSpeaking || isLoading) {
+      appLog.info("[TTS] " + (isLoading ? "取消合成中的朗读" : "手动停止朗读") + " (" + speakId + ")");
       stopSpeaking();
       return;
     }
@@ -33,10 +36,25 @@ export function ActionButtons({ text, speakId }: Props) {
         onClick={onSpeakClick}
         disabled={!text}
         className="p-1.5 rounded-md transition-colors hover:bg-black/5 disabled:opacity-25"
-        style={{ color: isSpeaking ? "var(--color-primary)" : "var(--color-text-secondary)" }}
-        title={isSpeaking ? "停止朗读" : "朗读"}
+        style={{
+          color: isSpeaking || isLoading ? "var(--color-primary)" : "var(--color-text-secondary)",
+        }}
+        title={isLoading ? "正在合成语音，点击取消" : isSpeaking ? "停止朗读" : "朗读"}
       >
-        {isSpeaking ? (
+        {isLoading ? (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            className="animate-spin"
+          >
+            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+          </svg>
+        ) : isSpeaking ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="6" y="5" width="4" height="14" rx="1" />
             <rect x="14" y="5" width="4" height="14" rx="1" />

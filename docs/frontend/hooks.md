@@ -35,6 +35,7 @@
 6. 调用 `translateText(input, sourceLang, targetLang)`
 7. 若 generation 已过期（被新调用或 `cancelPendingTranslation()` 覆盖），丢弃结果并返回
 8. 成功 → `setTranslatedText(result)`；随后按 `settings.speech` 自动朗读：`auto_read_source`/`auto_read_target` 命中则组装队列（原文在前、译文在后），调 `lib/tts.ts` 的 `speakSequence`（fire-and-forget，不阻塞翻译流程）
+   - 入队前用 `countSpeechUnits()` 计数，超过 `auto_read_max_units`（>0 时生效）的那一段跳过并 `warn` 日志——整屏 OCR 出的长文本自动读一遍既慢又费钱；手动点喇叭不受此限制
 9. 失败 → `setError(String(e))`
 10. finally → 仅当 generation 仍有效时 `setIsTranslating(false)`
 
@@ -51,7 +52,7 @@
 - **依赖**：
   - `stores/translationStore`、`stores/settingsStore`
   - `lib/invoke`（startRegionSelect、translateText）
-  - `lib/tts`（speakSequence，翻译后自动朗读）
+  - `lib/tts`（speakSequence，翻译后自动朗读；countSpeechUnits，长度上限判断）
   - `@tauri-apps/api/event`（emit）
 - **被依赖**：
   - `useScreenshot` → `App.tsx`

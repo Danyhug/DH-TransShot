@@ -188,7 +188,7 @@
 |------|------|------|
 | 服务 | `ServiceSettings` | 全局凭据（API 地址 / 密钥，两列网格 + 地址规则说明）→ 分隔线 → 服务配置：`SegmentedControl` 切换翻译/OCR/TTS、提供商 chip 行、提供商字段组、自定义参数（预设 chip + JSON 编辑区） |
 | 快捷键 | `HotkeySettings` | 三行（区域截图 / 区域翻译 / 翻译选中文本），每行标题 + 说明 + `HotkeyInput` |
-| 朗读 | `SpeechSettings` | 三个 `ToggleRow`：`auto_read_source` / `auto_read_target` / `stream_playback`，每项带说明文字 |
+| 朗读 | `SpeechSettings` | 四行：`auto_read_source` / `auto_read_target` 开关 → `auto_read_max_units` 数值行（自动朗读长度上限，0=不限制）→ `stream_playback` 开关，每项带说明文字 |
 
 **多模型提供商：**
 - 每个服务 Tab 内有 chip 切换条：「默认」+ 已添加的额外提供商 + `＋ 新增`
@@ -216,6 +216,7 @@
 | `Chip` | 胶囊按钮（提供商切换、参数预设），支持 active / dashed / disabled |
 | `SegmentedControl` | 分段互斥切换（翻译 / OCR / TTS） |
 | `ToggleRow` | 标题 + 说明 + 右侧开关 |
+| `NumberRow` | 标题 + 说明 + 右侧窄数字输入框（可带单位后缀），只接受非负整数 |
 | `RowList` | 带分隔线的设置行列表，快捷键行与朗读开关共用，保证两个分区视觉一致 |
 | `Divider` | 分区之间的水平分隔线 |
 
@@ -272,15 +273,21 @@
 
 - **props**：`{ text, speakId }`，`speakId` 为 `"source"`/`"target"`，区分原文/译文按钮
 - **Copy**：`navigator.clipboard.writeText()`
-- **Speak**：
-  - 订阅 `ttsStore.speakingId`，`speakingId === speakId` 时该按钮显示「停止」图标（方块）+ 主色高亮，否则显示喇叭图标
-  - 点击：正在朗读则 `stopSpeaking()`；否则 `speak(text, speakId)`（抢占式，切换朗读自动停掉另一段）
-  - 缓存、流式边收边播、MIME 嗅探、单例抢占等全部由 `lib/tts.ts` 处理
+- **Speak**：订阅 `ttsStore` 的 `loadingId` / `speakingId`，按三态渲染同一个按钮：
+
+  | 状态 | 条件 | 图标 | 点击行为 |
+  |------|------|------|---------|
+  | 空闲 | 都不匹配 | 喇叭 | `speak(text, speakId)`（抢占式，切换朗读自动停掉另一段） |
+  | 加载中 | `loadingId === speakId` | 转圈（`animate-spin`）+ 主色 | `stopSpeaking()` 取消 |
+  | 朗读中 | `speakingId === speakId` | 停止（方块）+ 主色 | `stopSpeaking()` |
+
+  - 加载态覆盖「已发起合成、第一段音频还没到」的窗口期（合成 + 网络往返可能数秒），由 `lib/tts.ts` 维护，收到首块 PCM / 整段音频真正开始播放时切成「朗读中」
+  - 缓存、流式边收边播、MIME 嗅探、单例抢占等全部由 `lib/tts.ts` 处理；命中前端缓存时数据已在本地，不经过加载态
 - 14px 图标尺寸
-- 文本为空时 disabled（opacity-25）；朗读中不再 disable（改为可点=停止）
+- 文本为空时 disabled（opacity-25）；加载中/朗读中不再 disable（改为可点=取消/停止）
 - 悬停效果：`hover:bg-black/5`
 
-> 翻译完成后的**自动朗读**（原文/译文，可多选）在 `hooks/useTranslation.ts` 里触发，同样走 `lib/tts.ts` 的 `speakSequence`。
+> 翻译完成后的**自动朗读**（原文/译文，可多选）在 `hooks/useTranslation.ts` 里触发，同样走 `lib/tts.ts` 的 `speakSequence`，并受设置里的「自动朗读长度上限」约束（手动点这里的喇叭不受限）。
 
 ## 依赖关系
 

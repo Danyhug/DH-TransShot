@@ -125,6 +125,10 @@ pub struct SpeechConfig {
     /// 翻译完成后自动朗读译文
     #[serde(default)]
     pub auto_read_target: bool,
+    /// 自动朗读的长度上限（中文按字、西文按单词计数）；`0` 表示不限制。
+    /// 只约束自动朗读，手动点击喇叭始终朗读。
+    #[serde(default)]
+    pub auto_read_max_units: u32,
     /// 边收边播：chat+audio 流式分块实时推给前端播放（关闭则等整段音频合成完再播）
     #[serde(default = "default_true")]
     pub stream_playback: bool,
@@ -139,6 +143,7 @@ impl Default for SpeechConfig {
         Self {
             auto_read_source: false,
             auto_read_target: false,
+            auto_read_max_units: 0,
             stream_playback: true,
         }
     }

@@ -113,7 +113,7 @@ export function SettingsPanel() {
     setSettings((prev) => ({ ...prev, hotkeys: { ...prev.hotkeys, [key]: value } }));
   }, []);
 
-  const updateSpeech = useCallback((key: keyof Settings["speech"], value: boolean) => {
+  const updateSpeech = useCallback((key: keyof Settings["speech"], value: boolean | number) => {
     setSettings((prev) => ({ ...prev, speech: { ...prev.speech, [key]: value } }));
   }, []);
 
