@@ -81,6 +81,10 @@ function getAudioContext(): AudioContext | null {
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!Ctor) return null;
   sharedCtx = new Ctor();
+  warmupUntil = 0;
+  appLog.info(
+    "[TTS] AudioContext 已创建, state=" + sharedCtx.state + ", sampleRate=" + sharedCtx.sampleRate
+  );
   return sharedCtx;
 }
 
@@ -90,6 +94,80 @@ export function isStreamPlaybackSupported(): boolean {
     typeof window !== "undefined" &&
     !!(window.AudioContext || (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext)
   );
+}
+
+/**
+ * 输出设备预热时长（秒）。AudioContext 刚创建 / 刚 resume 时底层音频设备还在启动
+ * （蓝牙耳机可达 1s 以上），这段时间里已经排上时间线的 buffer 会被直接吞掉——表现就是
+ * 「自动朗读第一次没声音，再点一次就正常」。先排一段静音唤醒设备，真实音频排在它之后。
+ * 整段播放（`<audio>`）不受影响，因为媒体元素自己会等设备就绪，所以只有流式路径会踩到。
+ */
+const AUDIO_WARMUP_SECONDS = 0.35;
+/** ctx 时间轴上的「预热完成」时刻；ctx 重建时归零 */
+let warmupUntil = 0;
+
+/** 排一段静音唤醒输出设备（已在预热窗口内则跳过）。 */
+function warmUpOutputDevice(ctx: AudioContext) {
+  if (ctx.state !== "running" || ctx.currentTime < warmupUntil) return;
+  try {
+    const frames = Math.max(1, Math.ceil(ctx.sampleRate * AUDIO_WARMUP_SECONDS));
+    const src = ctx.createBufferSource();
+    src.buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+    src.connect(ctx.destination);
+    src.start();
+    warmupUntil = ctx.currentTime + AUDIO_WARMUP_SECONDS;
+  } catch (e) {
+    appLog.warn("[TTS] 输出设备预热失败: " + String(e));
+  }
+}
+
+/**
+ * 拿到一个「确实在跑」的 AudioContext：必要时 resume 并**等待完成**，随后预热输出设备。
+ * 返回 `null` 表示 Web Audio 不可用或起不来（如平台要求用户手势），调用方应回退整段播放。
+ */
+async function ensureAudioContextRunning(): Promise<AudioContext | null> {
+  const ctx = getAudioContext();
+  if (!ctx) return null;
+  // 覆盖 suspended 与 Safari 的 interrupted（来电/其它 App 抢占音频后会停在这个状态）
+  if (ctx.state !== "running") {
+    try {
+      await ctx.resume();
+    } catch (e) {
+      appLog.warn("[TTS] AudioContext resume 失败: " + String(e));
+    }
+  }
+  if (ctx.state !== "running") {
+    appLog.warn("[TTS] AudioContext 未运行 (state=" + ctx.state + ")");
+    return null;
+  }
+  warmUpOutputDevice(ctx);
+  return ctx;
+}
+
+let gestureUnlockArmed = false;
+
+/**
+ * 预热音频链路：提前建好 AudioContext 并唤醒输出设备（应用启动 / 主窗口显示时调用）。
+ * 首次 `new AudioContext()` + 设备启动有几百毫秒开销，拖到第一段 PCM 到达时才做就会
+ * 吞掉开头的声音。若此时起不来（平台要求用户手势），再挂一次性手势监听兜底。
+ */
+export function primeAudio() {
+  ensureAudioContextRunning()
+    .then((ctx) => {
+      if (ctx || gestureUnlockArmed) return;
+      gestureUnlockArmed = true;
+      const unlock = () => {
+        window.removeEventListener("pointerdown", unlock, true);
+        window.removeEventListener("keydown", unlock, true);
+        gestureUnlockArmed = false;
+        ensureAudioContextRunning().then((c) => {
+          if (c) appLog.info("[TTS] 用户手势后 AudioContext 已启动");
+        });
+      };
+      window.addEventListener("pointerdown", unlock, true);
+      window.addEventListener("keydown", unlock, true);
+    })
+    .catch((e) => appLog.warn("[TTS] 音频链路预热失败: " + String(e)));
 }
 
 // ── 播放器单例控制 ───────────────────────────────────────────────────────
@@ -128,7 +206,6 @@ const STREAM_PREROLL_SECONDS = 0.2;
  * （`markInputComplete`）且所有已排块播完时，`done` promise 兑现。
  */
 class StreamingPcmPlayer {
-  private ctx: AudioContext | null = null;
   private sampleRate = 24000;
   private nextTime = 0;
   private pending = new Set<AudioBufferSourceNode>();
@@ -141,8 +218,14 @@ class StreamingPcmPlayer {
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
-  /** @param onFirstAudio 第一块 PCM 排入播放时回调一次（用于熄灭按钮的加载态）。 */
-  constructor(private onFirstAudio?: () => void) {
+  /**
+   * @param ctx 已确认处于 `running` 的共享 AudioContext（由 `ensureAudioContextRunning` 取得）
+   * @param onFirstAudio 第一块 PCM 排入播放时回调一次（用于熄灭按钮的加载态）。
+   */
+  constructor(
+    private ctx: AudioContext,
+    private onFirstAudio?: () => void
+  ) {
     this.done = new Promise((resolve) => {
       this.resolveDone = resolve;
     });
@@ -164,11 +247,9 @@ class StreamingPcmPlayer {
   pushChunk(chunk: ArrayBuffer) {
     if (this.stopped) return;
     try {
-      const ctx = this.ctx ?? getAudioContext();
-      if (!ctx) return;
-      this.ctx = ctx;
-      // 无用户手势时 AudioContext 可能是 suspended，不 resume 会一声不响地什么都不播
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const ctx = this.ctx;
+      // 播放途中 context 可能被系统挂起（设备切换 / 页面隐藏），不 resume 会一声不响地什么都不播
+      if (ctx.state !== "running") ctx.resume().catch(() => {});
 
       // 拼接上一块残留的奇数字节，保证 Int16 对齐
       let bytes = new Uint8Array(chunk);
@@ -196,17 +277,26 @@ class StreamingPcmPlayer {
       src.buffer = buffer;
       src.connect(ctx.destination);
 
+      // 首块除了留抖动缓冲，还必须排在输出设备预热完成之后，否则会被冷启动的设备吞掉
       const startAt =
         this.scheduled === 0
-          ? ctx.currentTime + STREAM_PREROLL_SECONDS
+          ? Math.max(ctx.currentTime + STREAM_PREROLL_SECONDS, warmupUntil)
           : Math.max(this.nextTime, ctx.currentTime);
       src.start(startAt);
       this.nextTime = startAt + buffer.duration;
       this.scheduled++;
-      if (this.scheduled === 1 && this.onFirstAudio) {
-        const notify = this.onFirstAudio;
-        this.onFirstAudio = undefined;
-        notify();
+      if (this.scheduled === 1) {
+        appLog.info(
+          "[TTS] 首块已排入播放, 起播延迟=" +
+            (startAt - ctx.currentTime).toFixed(2) +
+            "s, ctx=" +
+            ctx.state
+        );
+        if (this.onFirstAudio) {
+          const notify = this.onFirstAudio;
+          this.onFirstAudio = undefined;
+          notify();
+        }
       }
       this.pending.add(src);
       src.onended = () => {
@@ -231,7 +321,7 @@ class StreamingPcmPlayer {
    * source 的 `onended` 没有触发，这里保证 `done` 不会永远挂着（表现为「朗读中」不熄）。
    */
   private armDrainWatchdog() {
-    if (this.drainTimer || !this.ctx) return;
+    if (this.drainTimer) return;
     const ctx = this.ctx;
     const delayMs = Math.max(0, (this.nextTime - ctx.currentTime) * 1000) + 1000;
     this.drainTimer = setTimeout(() => {
@@ -246,7 +336,9 @@ class StreamingPcmPlayer {
         this.armDrainWatchdog();
         return;
       }
-      appLog.warn("[TTS] 流式播放收尾异常，强制结束 (剩余分块=" + this.pending.size + ")");
+      appLog.warn(
+        "[TTS] 流式播放收尾异常，强制结束 (剩余分块=" + this.pending.size + ", ctx=" + ctx.state + ")"
+      );
       this.stop();
     }, delayMs);
   }
@@ -348,10 +440,17 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
 
   try {
     const wantStream = settings.speech?.stream_playback !== false && isStreamPlaybackSupported();
+    // 合成 + 网络往返通常要 1s 以上，正好用这段时间提前 resume context 并唤醒输出设备：
+    // 等第一段 PCM 到达时设备已经在跑，不会被冷启动吞掉开头
+    const ctx = wantStream ? await ensureAudioContextRunning() : null;
+    if (gen !== playGen) return;
+    if (wantStream && !ctx) {
+      appLog.warn("[TTS] Web Audio 未就绪，本次回退整段播放 (" + id + ")");
+    }
 
-    if (wantStream) {
+    if (ctx) {
       appLog.info("[TTS] 前端缓存未命中，发起流式语音请求 (" + id + ")");
-      const player = new StreamingPcmPlayer(clearLoading);
+      const player = new StreamingPcmPlayer(ctx, clearLoading);
       stopCurrent = () => player.stop();
 
       // 通道按发送顺序投递，因此 end 一定排在所有分块之后；不依赖它与命令返回值的先后

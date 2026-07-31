@@ -60,6 +60,7 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
 | `speak(text, id)` | 朗读一段文本；`id`（如 `"source"`/`"target"`）用于「朗读中」高亮。会抢占正在进行的朗读，播完/出错/被打断时兑现 |
 | `speakSequence(items)` | 依次朗读多段（`[{text,id}]`）；前一段播完再播下一段，被打断则整体中止（自动朗读原文→译文用） |
 | `stopSpeaking()` | 停止当前朗读并熄灭高亮/加载态 |
+| `primeAudio()` | 预热音频链路：提前建好 `AudioContext`、resume、排一段静音唤醒输出设备。由 `App.tsx` 在挂载时与主窗口获得焦点时调用 |
 | `isStreamPlaybackSupported()` | 是否支持 Web Audio（边收边播依赖） |
 | `countSpeechUnits(text)` | 统计文本长度：CJK（含假名/谚文）按字计 + 其余语种按 `[\p{L}\p{N}]+` 单词计，两者相加。供「自动朗读长度上限」（`speech.auto_read_max_units`）判断 |
 
@@ -70,11 +71,15 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
 - **加载状态**：`ttsStore.loadingId` 标记「已发起合成、音频还没到」的窗口期（按钮转圈）。发起请求前置位，**收到第一段音频数据时熄灭**——流式路径由 `StreamingPcmPlayer` 的 `onFirstAudio`（首块 PCM 排入播放）回调，整段路径由 `playWholeAudio` 的 `onStart`（`audio.play()` 兑现）回调；`playOne` 的 `finally` 兜底清除。命中前端缓存时不进入加载态。所有清除都带 `gen === playGen` 守卫，避免被抢占的旧会话熄掉新会话的加载态
 - **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），命中直接整段播；**流式分块播放不写前端缓存**（返回值不含完整音频），重播时靠后端缓存返回整段
 - **AudioContext 单例**：全模块复用一个 `AudioContext`（`getAudioContext()`），播放结束只停 source 不 `close()`——WebKit 对同时存在的 context 数量有硬上限，每次朗读都 new+close 在连续朗读时容易踩到
-- **流式边收边播**（`speech.stream_playback !== false` 且支持 Web Audio）：
+- **音频链路预热**（`primeAudio()` / `ensureAudioContextRunning()` / `warmUpOutputDevice()`）：
+  - `AudioContext` 刚创建或刚 `resume()` 时底层输出设备还在启动（蓝牙耳机可达 1s 以上），这期间已排上时间线的 buffer 会被**直接吞掉**——旧实现把 context 懒创建在第一块 PCM 到达时，于是「第一次朗读（尤其是翻译后自动朗读）没声音，再点一次就正常」；整段播放（`<audio>`）不受影响是因为媒体元素自己会等设备就绪，所以症状看起来像「流式播放在自动播放时失效」
+  - 修复三件套：① `App.tsx` 挂载时和主窗口获得焦点时 `primeAudio()` 提前建好 context；② `playOne` 在**发合成请求前** `await ensureAudioContextRunning()`（resume 并等待完成 + 排一段 `AUDIO_WARMUP_SECONDS`(0.35s) 静音唤醒设备），合成的 1s+ 往返正好当预热时间；③ 首块起播时刻取 `max(currentTime + 预留, warmupUntil)`，保证真实音频一定排在预热之后
+  - `ensureAudioContextRunning()` 返回 `null`（Web Audio 不可用 / resume 后仍非 `running`，如平台要求用户手势）时，本次朗读**回退整段播放**而不是静默失败；`primeAudio()` 另挂一次性 `pointerdown`/`keydown` 监听兜底解锁
+- **流式边收边播**（`speech.stream_playback !== false` 且 context 处于 `running`）：
   1. `new Channel<TtsStreamPayload>()` 作为 invoke 参数传给后端，`onmessage` 分派：`ArrayBuffer` → `pushChunk`，`{event:"start"}` → `setFormat`，`{event:"end"}` → `markInputComplete()`
   2. `StreamingPcmPlayer` 逐块 Int16→Float32（**不再经 base64**），`AudioContext.createBuffer(1, n, sampleRate)` 建块并按 `nextTime` 无缝排布（交给 ctx 重采样避免变调）；处理跨块奇数尾字节对齐
-  3. 首块延后 `STREAM_PREROLL_SECONDS`(0.2s) 起播，吸收网络抖动，避免后续块稍慢就出现断续
-  4. `ctx.state === "suspended"` 时 `resume()`：无用户手势的自动朗读下 context 会被挂起，不 resume 就一声不响什么都不播
+  3. 首块起播时刻 = `max(currentTime + STREAM_PREROLL_SECONDS(0.2s), warmupUntil)`：0.2s 预留吸收网络抖动、避免后续块稍慢就断续，`warmupUntil` 保证不会抢在输出设备预热完成之前
+  4. 播放途中 `ctx.state === "suspended"`（系统挂起 / 设备切换）时补一次 `resume()`；起播前的 resume 由 `ensureAudioContextRunning()` 负责
   5. 收到 `end` 后所有已排块播完 → `done` 兑现；另有两层兜底防止「朗读中」不熄：invoke 返回 5s 后仍无 `end` 则按已收分块收尾，播放器内部 `armDrainWatchdog()` 在时间线走完后仍有未结束 source 时强制收口
   6. `chunkCount===0`（命中后端缓存/非流式协议/服务端不支持）→ 退回 `playWholeAudio` 整段播
 - **整段播放**（`playWholeAudio`）：`detectAudioMime` 嗅探魔数 → `new Audio("data:{mime};base64,...")`
@@ -137,6 +142,7 @@ interface Language { code: string; name: string }
 - 新增语言需同时更新 `languages` 数组，并确认后端 OCR 模块支持该语言
 - `auto` 语言仅适用于源语言，`targetLanguages` 会自动排除
 - 朗读逻辑集中在 `tts.ts`：新增播放入口应复用 `speak`/`speakSequence` 以共享单例抢占与缓存，避免多处 `new Audio` 叠音
+- **不要把 `AudioContext` 的创建/`resume` 推迟到音频数据到达时**：设备冷启动会吞掉开头的声音，必须经 `ensureAudioContextRunning()` 提前就绪，并让首块起播不早于 `warmupUntil`
 - 新增播放路径时记得接上加载态回调（首帧数据到达即 `setLoadingId(null)`），否则按钮会一直转圈到播放结束
 - 流式播放假设分块为单声道 PCM16LE（后端 `start` 控制消息的 `sampleRate`/`channels` 决定重采样率）；后端改音频参数需同步此处
 - **大块数据别走全局事件**：`app.emit` 会把负载拼进 `eval` 字符串广播给所有 webview，音频/图像这类高频大负载必须用 `Channel` + `InvokeResponseBody::Raw`

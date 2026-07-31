@@ -107,7 +107,7 @@
 ## 前端通道与播放
 
 - 分块走 IPC Channel：控制消息为 JSON（`{event:"start"|"end", ...}`），音频分块为二进制 `ArrayBuffer`（PCM16LE 单声道）
-- 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 逐块解码 PCM16→Float32，调度进共享 `AudioContext` 无缝排布；首块预留 0.2s 缓冲吸收网络抖动，收到 `end` 且全部播完时结束
+- 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 逐块解码 PCM16→Float32，调度进共享 `AudioContext` 无缝排布；首块预留 0.2s 缓冲吸收网络抖动，且不早于输出设备预热完成（`AudioContext` 冷启动期间排上时间线的音频会被设备吞掉），收到 `end` 且全部播完时结束
 - 详见 [docs/frontend/lib.md](../frontend/lib.md)
 
 ## API 请求格式
