@@ -69,7 +69,7 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
 - **单例播放 + generation 抢占**：全局 `playGen` 计数，每次 `speak`/`speakSequence`/`stopSpeaking` 递增并停掉当前播放；全程用 `gen === playGen` 判断是否被后来的朗读打断，避免并发播放叠音
 - **朗读状态**：写入 `stores/ttsStore.ts` 的 `speakingId`，对应按钮显示「停止」图标
 - **加载状态**：`ttsStore.loadingId` 标记「已发起合成、音频还没到」的窗口期（按钮转圈）。发起请求前置位，**收到第一段音频数据时熄灭**——流式路径由 `StreamingPcmPlayer` 的 `onFirstAudio`（首块 PCM 排入播放）回调，整段路径由 `playWholeAudio` 的 `onStart`（`audio.play()` 兑现）回调；`playOne` 的 `finally` 兜底清除。命中前端缓存时不进入加载态。所有清除都带 `gen === playGen` 守卫，避免被抢占的旧会话熄掉新会话的加载态
-- **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），命中直接整段播；**流式分块播放不写前端缓存**（返回值不含完整音频），重播时靠后端缓存返回整段
+- **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），键里的三项取自 `resolveActiveProvider()`（与后端 `ServiceConfig::resolved` 同规则，含 provider 级 extra 覆盖）；命中直接整段播；**流式分块播放不写前端缓存**（返回值不含完整音频），重播时靠后端缓存返回整段
 - **AudioContext 单例**：全模块复用一个 `AudioContext`（`getAudioContext()`），播放结束只停 source 不 `close()`——WebKit 对同时存在的 context 数量有硬上限，每次朗读都 new+close 在连续朗读时容易踩到
 - **音频链路预热**（`primeAudio()` / `ensureAudioContextRunning()` / `warmUpOutputDevice()`）：
   - `AudioContext` 刚创建或刚 `resume()` 时底层输出设备还在启动（蓝牙耳机可达 1s 以上），这期间已排上时间线的 buffer 会被**直接吞掉**——旧实现把 context 懒创建在第一块 PCM 到达时，于是「第一次朗读（尤其是翻译后自动朗读）没声音，再点一次就正常」；整段播放（`<audio>`）不受影响是因为媒体元素自己会等设备就绪，所以症状看起来像「流式播放在自动播放时失效」

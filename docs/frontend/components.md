@@ -194,7 +194,10 @@
 - 每个服务 Tab 内有 chip 切换条：「默认」+ 已添加的额外提供商 + `＋ 新增`
 - 选中「默认」时只显示模型字段，使用全局 base_url/api_key
 - 选中额外提供商时显示 name/model/base_url/api_key 两列编辑器 + 删除按钮；base_url/api_key 留空回退到全局
-- `自定义参数`(extra) 在所有提供商间共享；预设 chip 点击后合并进 JSON，已存在的 chip 置灰禁用
+- `自定义参数`(extra) 的**编辑目标跟随当前选中的提供商**：选「默认」→ 编辑服务级共享 extra（默认提供商 + 未单独配置的提供商共用）；选某个提供商 → 编辑该提供商专属 extra（留空继承共享，填写则**整体覆盖**，不逐键合并）
+- 提供商作用域下若 extra 为空，额外显示 `⤵ 复制共享参数` chip，把共享 extra 复制过来再改
+- 预设 chip 点击后合并进当前目标的 JSON，已存在的 chip 置灰禁用；`voice` 预设的默认值取当前生效模型（provider.model 优先于 svc.model）
+- 典型用途：TTS 同时挂硅基流动（audio/speech，`voice` 为 `模型名:音色`）和小米 MiMo（chat+audio，`voice` 为裸音色名），两套参数互不兼容，必须分开放
 - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发
 
 **行为：**

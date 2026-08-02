@@ -27,6 +27,7 @@ interface Settings {
 
 interface ServiceConfig {
   model: string;
+  /** 共享自定义参数：默认提供商 + 所有未单独填写 extra 的提供商都用它 */
   extra: string;
   providers: ExtraProvider[];
   /** -1 = 默认（使用顶层 base_url/api_key + model）；0+ = providers 索引 */
@@ -44,6 +45,8 @@ interface ExtraProvider {
   base_url: string;
   api_key: string;
   model: string;
+  /** 该提供商专用参数；留空继承 ServiceConfig.extra，填写则整体覆盖 */
+  extra: string;
 }
 ```
 

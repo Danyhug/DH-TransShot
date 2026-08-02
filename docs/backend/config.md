@@ -23,19 +23,22 @@
 | `base_url` | String | API 基础 URL；为空时回退到全局 `Settings.base_url` |
 | `api_key` | String | API 密钥；为空时回退到全局 `Settings.api_key` |
 | `model` | String | 模型名称；为空时回退到 `ServiceConfig.model`（默认模型） |
+| `extra` | String | 该提供商专用的自定义参数（JSON 字符串）；为空时回退到 `ServiceConfig.extra`，**非空时整体覆盖**（不与共享 extra 逐键合并） |
+
+> `extra` 之所以整体覆盖而非逐键合并：同一服务下的提供商可能走**完全不同的协议**（典型是 TTS 同时挂硅基流动 audio/speech 与小米 MiMo chat+audio），逐键合并会把另一协议的残留字段（如 `voice: "FunAudioLLM/...:alex"`）带进来，反而制造隐性冲突。
 
 **`ServiceConfig` — 服务配置（翻译/OCR/TTS 通用）**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `model` | String | 默认提供商使用的模型名称 |
-| `extra` | String | JSON 字符串，合并到请求体（所有提供商共享，可覆盖 temperature 等参数） |
+| `extra` | String | 共享自定义参数（JSON 字符串），合并到请求体；默认提供商 + 所有未单独填写 `extra` 的提供商都用它 |
 | `providers` | `Vec<ExtraProvider>` | 额外的模型提供商列表（默认空数组） |
 | `active` | i32 | 当前生效的提供商索引：`-1`（默认值）= 使用全局 base_url+api_key+model；`0+` = `providers[active]` |
 
 `ServiceConfig::with_model_and_extra(model, extra)` 工厂方法：设置 model 和 extra，providers 为空、active=-1。
 
-`ServiceConfig::resolved(default_base_url, default_api_key) -> (String, String, String)` 解析当前生效的 `(base_url, api_key, model)`，根据 `active` 字段选择默认或某个额外提供商，并对额外提供商的空字段做全局回退。
+`ServiceConfig::resolved(default_base_url, default_api_key) -> (String, String, String, String)` 解析当前生效的 `(base_url, api_key, model, extra)`，根据 `active` 字段选择默认或某个额外提供商，并对额外提供商的空字段做全局/共享值回退。三个命令层（translation/ocr/tts）都直接用它的四元组，**不要再单独读 `ServiceConfig.extra`**（那样会绕过 provider 级覆盖）。
 
 **`Settings` — 完整用户配置**
 
@@ -45,7 +48,7 @@
 | `api_key` | String | 环境变量 `DEFAULT_API_KEY`，未设置时 `""` | 全局共享 API 密钥（翻译/OCR/TTS 共用） |
 | `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | 翻译服务配置 |
 | `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
-| `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100, "enable_thinking":false}` | TTS 服务配置 |
+| `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置（默认 provider 走硅基流动 audio/speech；`enable_thinking` 是 chat completions 参数，audio/speech 无此字段，不要加） |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
 | `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `auto_read_max_units=0`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、自动朗读长度上限、流式边收边播开关） |
 
@@ -93,7 +96,7 @@
 - `stream_playback` 仅对小米 MiMo（chat+audio）流式路径有意义；audio/speech 协议始终整段播放
 
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
-- `ServiceConfig.providers` 默认空数组、`active` 默认 -1，旧版 settings.json（无这两个字段）能正常反序列化并保持默认行为
+- `ServiceConfig.providers` 默认空数组、`active` 默认 -1，`ExtraProvider.extra` 默认空串，旧版 settings.json（无这些字段）能正常反序列化并保持原有行为
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`
 
 **`merge_extra(body, extra, tag)` — 请求体合并工具函数**

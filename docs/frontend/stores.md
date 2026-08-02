@@ -87,7 +87,7 @@
   - `value`: 新值
 
 **导出工具函数：**
-- `resolveActiveProvider(settings, service)` — 根据 `service.active` 解析当前生效的 `{ base_url, api_key, model }`；`active < 0` 时回退到全局 base_url/api_key + svc.model；`active >= 0` 时使用 `providers[active]`，其中空字段回退到全局。`useTranslation` 的 API Key 校验、`ActionButtons` 的 TTS 前端缓存键都基于此函数
+- `resolveActiveProvider(settings, service)` — 根据 `service.active` 解析当前生效的 `{ base_url, api_key, model, extra }`；`active < 0` 时回退到全局 base_url/api_key + svc.model/svc.extra；`active >= 0` 时使用 `providers[active]`，其中空字段回退到全局/共享值（`extra` 留空 → 用 `svc.extra`，非空 → 整体覆盖）。`useTranslation` 的 API Key 校验、`lib/tts.ts` 的 TTS 前端缓存键都基于此函数，**必须与后端 `ServiceConfig::resolved` 的回退规则保持一致**（否则前端缓存键会与后端错位）
 - `openSettingsWindow()` — 打开（或 focus）设置窗口。走 `lib/windowUtils.ts` 的 `openCenteredWindow()`，屏幕居中 720×540（最小 640×440）。早期是吸附在主窗口左侧的 340px 窄栏，配置项增多后信息过载，已改为独立窗口 + 左侧分区导航
 
 ## 依赖关系

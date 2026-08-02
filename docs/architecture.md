@@ -154,7 +154,7 @@ pub struct AppState {
 }
 ```
 
-`Settings` 包含三个 `ServiceConfig`（translation / ocr / tts），每个服务独立配置 base_url、api_key、model 和 extra（自定义 JSON 参数）。
+`Settings` 包含三个 `ServiceConfig`（translation / ocr / tts），每个服务独立配置 model 和 extra（自定义 JSON 参数），并可挂多个 `ExtraProvider`（各带 base_url / api_key / model / extra，留空字段回退到全局或服务级共享值）。命令层统一用 `ServiceConfig::resolved()` 拿到当前生效的四元组，详见 [docs/backend/config.md](backend/config.md)。
 
 ## 环境变量
 

@@ -15,6 +15,7 @@
 - audio/speech：OpenAI 兼容标准 TTS（如 SiliconFlow `FunAudioLLM/CosyVoice2`）
 - chat+audio：小米 MiMo 式「聊天补全 + 音频输出」TTS（如 `mimo-v2.5-tts`），文本走 `messages`、音色走 `audio` 对象
 - chat+audio **默认走 SSE 流式**（`stream:true` + `pcm16`），分块实时回传前端播放；结束后把所有 PCM 拼成 WAV 返回（供缓存/重播）。可用 `extra.stream=false` 关掉流式
+  - 注意：这是**本项目的默认选择**（请求体里显式发 `"stream": true`），小米 API 自身的 `stream` 默认值是 `false`
 
 ## 文件清单
 
@@ -52,7 +53,7 @@
 **`synthesize_chat_audio(...)` — 小米 chat+audio 协议入口**
 
 1. `parse_chat_audio_options(extra)` 解析 `extra`（JSON），**只解释四个键**（不整包合并，避免 audio/speech 字段污染 chat 请求体）：
-   - `voice`：音色裸名字，默认 `Milo`；**忽略含 `/` 的 model-scoped 音色**（如 `FunAudioLLM/...:alex`，那是另一协议遗留值）
+   - `voice`：音色裸名字，默认 `mimo_default`（跟随集群，中国区=冰糖中文女声）；**忽略含 `/` 的 model-scoped 音色**（如 `FunAudioLLM/...:alex`，那是另一协议的值），忽略时打 `warn` 日志提示改用裸音色名
    - `format`：**非流式**音频格式，默认 `wav`（仅认 `format` 键，不复用 `response_format`）
    - `style`：风格指令（`user` 消息），默认中性提示；置为空串则不发送 `user` 消息
    - `stream`：是否走 SSE 流式，默认 `true`
@@ -98,7 +99,7 @@
 > **为什么用 Channel 而不是 `app.emit`**：`app.emit` 会把负载 JSON 拼进 `eval` 脚本字符串，广播给**每一个** webview（本项目有 main/screenshot/debug/settings 四个），且必须在主线程逐条执行。长文本几百个 base64 分块会把主线程堵死，表现为「必须等整段流传完才开始播、长文本干脆播不出来」。Channel 只投递给发起调用的 webview，且大于 1KB 的二进制走 IPC 自定义协议（fetch），不进 eval 字符串。
 
 **`synthesize_inner` 流程：**
-1. 从 `AppState.settings` 读取当前生效 TTS 配置（`tts.resolved(...)` 按 `active` 选默认或某个 provider）
+1. 从 `AppState.settings` 读取当前生效 TTS 配置（`tts.resolved(...)` 按 `active` 选默认或某个 provider，**四元组里已包含解析后的 `extra`**：provider 自带 extra 优先，留空才用服务级共享 extra）
 2. 使用 `base_url + model + extra + text` 生成缓存键（文本先规范化：`trim()` + `CRLF -> LF`）
 3. 命中 `AppState.tts_cache` 直接返回缓存 base64（`chunk_count=0`，不推流式分块）；未命中调用 `tts::synthesize()`，成功后写入缓存
 
@@ -124,6 +125,19 @@
 ```
 
 默认 voice 为 `{model}:alex`，可用 voice（以 SiliconFlow 为例）：alex, anna, bella, benjamin, charles, claire, david, diana。可通过 `extra` 覆盖 `voice`/`speed` 等。
+
+**参数取值范围**（据 SiliconFlow 官方 API 文档 `api-reference/audio/create-speech`，2026-08 核对）：
+
+| 参数 | 默认 | 取值 |
+|------|------|------|
+| `speed` | `1.0` | `[0.25, 4.0]` |
+| `gain`（dB） | `0.0` | `[-10, 10]` |
+| `response_format` | `mp3` | `mp3` / `opus` / `wav` / `pcm` |
+| `sample_rate` | 随格式 | **mp3：仅 32000 / 44100（默认 44100）**；wav、pcm：8000 / 16000 / 24000 / 32000 / 44100（默认 44100）；opus：仅 48000 |
+
+> ⚠️ `sample_rate` 与 `response_format` **强耦合**：给 mp3 填 48000（opus 的值）会被服务端拒绝。设置界面的 `sample_rate` 预设 chip 默认填 `44100`，与默认的 mp3 匹配。
+>
+> `enable_thinking` / `temperature` 这类 chat completions 参数在 audio/speech 上没有定义，不要放进 TTS 的 extra。
 
 ### chat+audio 协议（小米 MiMo）
 
@@ -164,7 +178,9 @@ data: {"choices":[{"delta":{"audio":{"data":"<base64 PCM 分块>"}}}]}
 data: [DONE]
 ```
 
-**内置音色**（`mimo-v2.5-tts`，填裸名字）：`mimo_default`（随集群，中国区=冰糖/其它=Mia）、`冰糖`/`茉莉`（中文女）、`苏打`/`白桦`（中文男）、`Mia`/`Chloe`（英文女）、`Milo`/`Dean`（英文男）。默认 `Milo`。
+**内置音色**（`mimo-v2.5-tts`，填裸名字。据小米官方文档「预置音色列表」，2026-08 核对）：`mimo_default`（随部署集群，中国集群=`冰糖`/其它集群=`Mia`）、`冰糖`/`茉莉`（中文女）、`苏打`/`白桦`（中文男）、`Mia`/`Chloe`（英文女）、`Milo`/`Dean`（英文男）。默认 `mimo_default`（本工具主要朗读中译文，写死英文音色读中文效果很差）。
+
+`audio.format` 官方仅两个取值：`wav`（非流式）和 `pcm16`（流式必须用它才能拼接）；**没有 mp3**。预置音色仅 `mimo-v2.5-tts` 模型支持（`-voicedesign` / `-voiceclone` 不支持）。
 
 通过 `extra` 自定义（仅这四个键生效）：
 
@@ -180,10 +196,16 @@ data: [DONE]
   - 结尾的 `#` 是 **raw 标记**，强制原样请求该 chat 端点（否则会被自适应规则错误拼成 `.../v1/audio/speech`）
 - **model**：`mimo-v2.5-tts`
 - **api_key**：小米控制台生成的 Key
-- **`tts.extra` 的 voice 必须是小米音色裸名字**（如 `Milo`、`冰糖`）：若沿用硅基流动的 `FunAudioLLM/...:alex`（含 `/`）会被自动忽略并回退默认音色 `Milo`
+- **自定义参数写在这个 provider 自己的 `extra` 里**（设置界面选中该提供商时编辑的就是它），例如：
+
+  ```json
+  { "voice": "冰糖", "style": "用自然、平稳、清晰的语气朗读。" }
+  ```
+
+  provider 的 `extra` 非空即**整体覆盖**服务级共享 extra，因此硅基流动那套 `voice: "FunAudioLLM/...:alex"` / `speed` / `response_format` / `sample_rate` 不会漏进来。留空则继承共享 extra——此时共享 extra 里的 model-scoped `voice` 含 `/` 会被忽略并回退默认音色 `mimo_default`（日志有 warn）
 - **流式默认开启**：`extra` 不填 `stream` 即走 SSE 流式（`pcm16`）；如需关掉填 `{"stream": false}`。「边收边播」还受前端 `speech.stream_playback` 开关控制
 
-> ⚠️ `tts.extra` 是整个 TTS 服务共享的（默认 provider 与各 provider 共用）。若同时在用两种协议的 provider，注意 extra 里 audio/speech 专用字段（`speed`/`sample_rate`/`response_format`）不会进入 chat+audio 请求体，反之 chat+audio 的 `format`/`style`/`stream` 对 audio/speech 也无意义。
+> ⚠️ 服务级 `extra` 是「默认 provider + 所有未单独填写 extra 的 provider」共用的。同时在用两种协议时，**给非默认协议的 provider 单独填 extra**，不要去改共享的那份（改了会连带影响默认的硅基流动 provider）。
 
 ## 前端播放（音频格式自适应）
 
@@ -200,7 +222,7 @@ data: [DONE]
 - **新增 TTS 协议**时，在 `synthesize()` 的分发处增加判定分支，并新增独立的 `synthesize_xxx()` 函数；避免把不同协议的字段混进同一请求体
 - chat+audio 路径**故意不 `merge_extra`**：其请求体是 chat 结构，audio/speech 的 `response_format`/`speed` 等会报错或被误解；如需暴露更多 chat 参数，在 `parse_chat_audio_options` 里显式解析特定键
 - `messages` 结构（`user`=风格指令 / `assistant`=文本）照搬小米官方示例；若实测需调整（如单条 user、或加 `modalities`），改 `build_chat_audio_messages` 即可
-- 默认音色/格式/风格由 `DEFAULT_CHAT_AUDIO_VOICE`(`Milo`)/`DEFAULT_CHAT_AUDIO_FORMAT`(`wav`)/`DEFAULT_CHAT_AUDIO_STYLE` 常量控制；流式采样率/声道由 `CHAT_AUDIO_STREAM_SAMPLE_RATE`(24000)/`CHAT_AUDIO_STREAM_CHANNELS`(1)
+- 默认音色/格式/风格由 `DEFAULT_CHAT_AUDIO_VOICE`(`mimo_default`)/`DEFAULT_CHAT_AUDIO_FORMAT`(`wav`)/`DEFAULT_CHAT_AUDIO_STYLE` 常量控制；流式采样率/声道由 `CHAT_AUDIO_STREAM_SAMPLE_RATE`(24000)/`CHAT_AUDIO_STREAM_CHANNELS`(1)
 - audio/speech 的默认音色仍是 `{model}:alex`、`response_format` 默认 `mp3`，均可经 `extra` 覆盖
 - **流式格式固定 `pcm16`**：小米流式只有 PCM 裸块能拼接，`wrap_pcm16_wav` 依赖 24kHz/单声道假设；若上游改采样率需同步 `CHAT_AUDIO_STREAM_SAMPLE_RATE` 和事件里的 `sampleRate`
 - 新增会影响音频输出的默认字段时，须同步纳入缓存键（`commands/tts.rs`）
