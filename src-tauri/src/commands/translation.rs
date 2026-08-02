@@ -19,10 +19,9 @@ pub async fn translate_text(
     );
     let (base_url, api_key, model, extra) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        let (b, k, m) = settings
+        settings
             .translation
-            .resolved(&settings.base_url, &settings.api_key);
-        (b, k, m, settings.translation.extra.clone())
+            .resolved(&settings.base_url, &settings.api_key)
     };
     let client = state.http_client.clone();
     info!("[Translation] 使用 model={}, base_url={}", model, base_url);

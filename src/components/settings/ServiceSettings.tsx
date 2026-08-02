@@ -38,11 +38,11 @@ const extraParamPresets: Record<ServiceName, ExtraParamPreset[]> = {
   translation: chatModelPresets("0.3", "平衡创造性与可靠性，越低越稳定精确，越高越发散多样 (0~2)"),
   ocr: chatModelPresets("0.1", "平衡创造性与可靠性，OCR 识别建议设低以保证准确 (0~2)"),
   tts: [
-    { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 Milo、冰糖）" },
+    { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 冰糖、Milo），不填默认 mimo_default。两种格式互不通用，请分别写在各自提供商的参数里" },
     { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
     { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），0 为原始音量 (-10~10)" },
-    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，mp3 体积小，wav 无损，opus 适合流式" },
-    { key: "sample_rate", label: "sample_rate", defaultValue: "48000", tooltip: "采样率 Hz（audio/speech 协议），越高音质越好，opus 仅支持 48000" },
+    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，可选 mp3 / opus / wav / pcm；mp3 体积小，wav 无损，opus 适合流式" },
+    { key: "sample_rate", label: "sample_rate", defaultValue: "44100", tooltip: "采样率 Hz（audio/speech 协议），取值随 format 而变：mp3 仅 32000/44100，wav 和 pcm 支持 8000/16000/24000/32000/44100，opus 仅 48000。填了不支持的值会被服务端拒绝" },
     { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送" },
     { key: "stream", label: "stream", defaultValue: "true", tooltip: "小米 MiMo chat+audio 是否流式合成（边收边播依赖它），默认 true" },
   ],
@@ -88,7 +88,7 @@ function ProviderEditor({
   const addProvider = () => {
     const next: ExtraProvider[] = [
       ...config.providers,
-      { name: `提供商 ${config.providers.length + 1}`, base_url: "", api_key: "", model: "" },
+      { name: `提供商 ${config.providers.length + 1}`, base_url: "", api_key: "", model: "", extra: "" },
     ];
     onProvidersChange(next);
     onActiveChange(next.length - 1);
@@ -194,23 +194,42 @@ function ProviderEditor({
   );
 }
 
+/**
+ * 「自定义参数」编辑器。编辑目标跟随当前选中的提供商：
+ * - 选「默认」→ 编辑服务级共享 extra（默认提供商 + 所有未单独配置的提供商都用它）
+ * - 选某个提供商 → 编辑该提供商专属 extra，留空则继承共享 extra，填写则**整体覆盖**
+ *
+ * 整体覆盖而非逐键合并，是为了让不同协议的提供商互不干扰（典型场景：TTS 同时挂
+ * 硅基流动 audio/speech 与小米 chat+audio，两者的 voice 格式完全不兼容）。
+ */
 function ExtraParams({
-  config,
   service,
-  onChange,
+  model,
+  extra,
+  onExtraChange,
+  providerName,
+  sharedExtra,
 }: {
-  config: ServiceConfig;
   service: ServiceName;
-  onChange: (key: "model" | "extra", value: string) => void;
+  /** 当前生效的模型名（用于 voice 预设的默认值） */
+  model: string;
+  extra: string;
+  onExtraChange: (value: string) => void;
+  /** 非 null 表示正在编辑某个提供商的专属参数 */
+  providerName: string | null;
+  /** 服务级共享参数（提供商作用域下用于「复制共享参数」） */
+  sharedExtra: string;
 }) {
-  const existing = parseExtra(config.extra);
+  const isProvider = providerName !== null;
+  const inherited = isProvider && !extra.trim();
+  const existing = parseExtra(extra);
 
   const addPreset = (preset: ExtraParamPreset) => {
-    const obj = parseExtra(config.extra);
+    const obj = parseExtra(extra);
     if (preset.key in obj) return;
     let val: string = preset.defaultValue;
     if (preset.key === "voice" && !val) {
-      val = config.model ? `${config.model}:` : "";
+      val = model ? `${model}:` : "";
     }
     if (val === "true" || val === "false") {
       obj[preset.key] = val === "true";
@@ -218,7 +237,7 @@ function ExtraParams({
       const num = Number(val);
       obj[preset.key] = val !== "" && !isNaN(num) ? num : val;
     }
-    onChange("extra", JSON.stringify(obj, null, 2));
+    onExtraChange(JSON.stringify(obj, null, 2));
   };
 
   return (
@@ -228,7 +247,9 @@ function ExtraParams({
           自定义参数
         </span>
         <span className="text-xs" style={{ color: "var(--color-text-secondary)", opacity: 0.8 }}>
-          所有提供商共享，随请求原样下发
+          {isProvider
+            ? `仅用于「${providerName}」，留空则继承共享参数`
+            : "默认提供商 + 未单独配置的提供商共用"}
         </span>
       </div>
       <div className="flex flex-wrap gap-1.5" style={{ margin: "8px 0" }}>
@@ -245,11 +266,20 @@ function ExtraParams({
             </Chip>
           );
         })}
+        {inherited && sharedExtra.trim() ? (
+          <Chip
+            dashed
+            title="把共享参数复制过来再改，避免从零开始填"
+            onClick={() => onExtraChange(sharedExtra)}
+          >
+            ⤵ 复制共享参数
+          </Chip>
+        ) : null}
       </div>
       <CodeArea
-        value={config.extra}
-        onChange={(e) => onChange("extra", e.target.value)}
-        placeholder='{"temperature": 0.3}'
+        value={extra}
+        onChange={(e) => onExtraChange(e.target.value)}
+        placeholder={isProvider ? "留空继承共享参数；填写后整体覆盖" : '{"temperature": 0.3}'}
         rows={5}
         style={{ minHeight: "104px" }}
       />
@@ -275,6 +305,26 @@ export function ServiceSettings({
   onProvidersChange: (service: ServiceName, providers: ExtraProvider[]) => void;
   onActiveProviderChange: (service: ServiceName, active: number) => void;
 }) {
+  const config = settings[activeService];
+  const activeProvider =
+    config.active >= 0 && config.providers[config.active] ? config.providers[config.active] : null;
+  const activeIdx = config.active;
+  const activeProviderName = activeProvider
+    ? activeProvider.name?.trim() || `提供商 ${activeIdx + 1}`
+    : null;
+
+  // 提供商作用域下写回该提供商自己的 extra；默认作用域下写回服务级共享 extra
+  const updateExtra = (value: string) => {
+    if (!activeProvider) {
+      onServiceChange(activeService, "extra", value);
+      return;
+    }
+    onProvidersChange(
+      activeService,
+      config.providers.map((p, i) => (i === activeIdx ? { ...p, extra: value } : p)),
+    );
+  };
+
   return (
     <div>
       <SectionHeader
@@ -319,15 +369,18 @@ export function ServiceSettings({
 
       <div style={{ marginTop: "14px" }} className="flex flex-col gap-5">
         <ProviderEditor
-          config={settings[activeService]}
+          config={config}
           onChange={(key, value) => onServiceChange(activeService, key, value)}
           onProvidersChange={(providers) => onProvidersChange(activeService, providers)}
           onActiveChange={(active) => onActiveProviderChange(activeService, active)}
         />
         <ExtraParams
-          config={settings[activeService]}
           service={activeService}
-          onChange={(key, value) => onServiceChange(activeService, key, value)}
+          model={activeProvider?.model.trim() || config.model}
+          extra={activeProvider ? (activeProvider.extra ?? "") : config.extra}
+          onExtraChange={updateExtra}
+          providerName={activeProviderName}
+          sharedExtra={config.extra}
         />
       </div>
     </div>

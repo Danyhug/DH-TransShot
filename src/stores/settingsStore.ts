@@ -41,8 +41,7 @@ export const defaultSettings: Settings = {
   "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",
   "speed": 1.0,
   "response_format": "mp3",
-  "sample_rate": 44100,
-  "enable_thinking": false
+  "sample_rate": 44100
 }`,
     providers: [],
     active: -1,
@@ -61,19 +60,21 @@ export const defaultSettings: Settings = {
 };
 
 /**
- * Resolve the currently-active (base_url, api_key, model) for a given service.
- * `active < 0` or out-of-range falls back to the default (global creds + svc.model).
- * For extra providers, blank fields fall back to the global ones.
+ * Resolve the currently-active (base_url, api_key, model, extra) for a given service.
+ * `active < 0` or out-of-range falls back to the default (global creds + svc.model/extra).
+ * For extra providers, blank fields fall back to the shared ones.
+ * 与后端 `ServiceConfig::resolved` 保持一致（前端 TTS 缓存键依赖它）。
  */
 export function resolveActiveProvider(
   settings: Settings,
   service: ServiceName,
-): { base_url: string; api_key: string; model: string } {
+): { base_url: string; api_key: string; model: string; extra: string } {
   const svc = settings[service];
   const fallback = {
     base_url: settings.base_url,
     api_key: settings.api_key,
     model: svc.model,
+    extra: svc.extra,
   };
   if (svc.active < 0) return fallback;
   const p = svc.providers[svc.active];
@@ -82,6 +83,7 @@ export function resolveActiveProvider(
     base_url: p.base_url.trim() ? p.base_url : settings.base_url,
     api_key: p.api_key.trim() ? p.api_key : settings.api_key,
     model: p.model.trim() ? p.model : svc.model,
+    extra: p.extra?.trim() ? p.extra : svc.extra,
   };
 }
 

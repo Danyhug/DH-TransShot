@@ -8,7 +8,10 @@ use std::time::Instant;
 
 /// chat+audio 协议默认音色（如小米 MiMo），可通过 `extra.voice` 覆盖。
 /// 注意：这是「裸名字」音色（如 `Milo`），不同于 audio/speech 协议的 `{model}:alex` 形态。
-const DEFAULT_CHAT_AUDIO_VOICE: &str = "Milo";
+///
+/// 用 `mimo_default`（跟随集群：中国区=冰糖中文女声）而不是写死某个音色：本工具主要朗读
+/// 中译文，默认落到英文男声 `Milo` 读中文效果很差。
+const DEFAULT_CHAT_AUDIO_VOICE: &str = "mimo_default";
 /// chat+audio 协议**非流式**默认音频格式（小米文档示例为 `wav`），可通过 `extra.format` 覆盖。
 /// 流式路径固定 `pcm16`（官方要求，否则分块无法拼接成完整音频）。
 const DEFAULT_CHAT_AUDIO_FORMAT: &str = "wav";
@@ -176,11 +179,20 @@ fn parse_chat_audio_options(extra: &str) -> ChatAudioOptions {
         serde_json::from_str(extra.trim()).unwrap_or(serde_json::Value::Null);
 
     // voice：忽略 audio/speech 式的 `model:name`（含 '/' 的 model-scoped 音色对 chat+audio 无效）
-    let voice = extra_json
+    let configured_voice = extra_json
         .get("voice")
         .and_then(|v| v.as_str())
         .map(str::trim)
-        .filter(|v| !v.is_empty() && !v.contains('/'))
+        .filter(|v| !v.is_empty());
+    if let Some(v) = configured_voice.filter(|v| v.contains('/')) {
+        warn!(
+            "[TTS] extra.voice=\"{}\" 是 audio/speech 协议的 model-scoped 音色，对 chat+audio 无效，\
+             已回退默认音色 {}；请在该提供商的自定义参数里填裸音色名（如 冰糖 / Milo）",
+            v, DEFAULT_CHAT_AUDIO_VOICE
+        );
+    }
+    let voice = configured_voice
+        .filter(|v| !v.contains('/'))
         .unwrap_or(DEFAULT_CHAT_AUDIO_VOICE);
 
     // format：仅认 chat+audio 专用的 `format` 键；`response_format` 属于另一协议，不复用

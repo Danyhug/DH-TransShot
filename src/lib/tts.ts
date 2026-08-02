@@ -423,7 +423,7 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
 
   const settings = useSettingsStore.getState().settings;
   const tts = resolveActiveProvider(settings, "tts");
-  const key = getTtsCacheKey(tts.base_url, tts.model, settings.tts.extra, normalized);
+  const key = getTtsCacheKey(tts.base_url, tts.model, tts.extra, normalized);
 
   const cached = getCachedAudio(key);
   if (cached) {

@@ -121,8 +121,7 @@ async fn synthesize_inner(
 
     let (base_url, api_key, model, extra) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        let (b, k, m) = settings.tts.resolved(&settings.base_url, &settings.api_key);
-        (b, k, m, settings.tts.extra.clone())
+        settings.tts.resolved(&settings.base_url, &settings.api_key)
     };
     let client = state.http_client.clone();
     info!("[TTS] 使用 model={}, base_url={}", model, base_url);

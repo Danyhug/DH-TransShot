@@ -28,8 +28,7 @@ pub async fn capture_and_ocr(
 
     let (base_url, api_key, model, extra) = {
         let guard = state.settings.lock().map_err(|e| e.to_string())?;
-        let (b, k, m) = guard.ocr.resolved(&guard.base_url, &guard.api_key);
-        (b, k, m, guard.ocr.extra.clone())
+        guard.ocr.resolved(&guard.base_url, &guard.api_key)
     };
     let client = state.http_client.clone();
 

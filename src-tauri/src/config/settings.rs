@@ -14,11 +14,17 @@ pub struct ExtraProvider {
     pub api_key: String,
     #[serde(default)]
     pub model: String,
+    /// 该提供商专用的自定义参数（JSON 字符串）。
+    /// 为空时回退到 `ServiceConfig.extra`；非空时**整体覆盖**（不与共享 extra 逐键合并），
+    /// 便于让不同协议的提供商（如 audio/speech 与小米 chat+audio）各带各的参数互不干扰。
+    #[serde(default)]
+    pub extra: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ServiceConfig {
     pub model: String,
+    /// 共享自定义参数：默认提供商，以及所有未单独填写 `extra` 的额外提供商都用它
     pub extra: String,
     #[serde(default)]
     pub providers: Vec<ExtraProvider>,
@@ -40,20 +46,24 @@ impl ServiceConfig {
         }
     }
 
-    /// Resolve the active (base_url, api_key, model) based on `active` index.
-    /// `active < 0` or out-of-range falls back to the default (global creds + self.model).
-    /// For extra providers, empty `base_url`/`api_key` fall back to the global ones.
+    /// Resolve the active (base_url, api_key, model, extra) based on `active` index.
+    /// `active < 0` or out-of-range falls back to the default (global creds + self.model/extra).
+    /// For extra providers, empty `base_url`/`api_key`/`model`/`extra` fall back to the shared ones.
     pub fn resolved(
         &self,
         default_base_url: &str,
         default_api_key: &str,
-    ) -> (String, String, String) {
-        if self.active < 0 {
-            return (
+    ) -> (String, String, String, String) {
+        let fallback = || {
+            (
                 default_base_url.to_string(),
                 default_api_key.to_string(),
                 self.model.clone(),
-            );
+                self.extra.clone(),
+            )
+        };
+        if self.active < 0 {
+            return fallback();
         }
         let idx = self.active as usize;
         match self.providers.get(idx) {
@@ -73,13 +83,14 @@ impl ServiceConfig {
                 } else {
                     p.model.clone()
                 };
-                (base, key, model)
+                let extra = if p.extra.trim().is_empty() {
+                    self.extra.clone()
+                } else {
+                    p.extra.clone()
+                };
+                (base, key, model, extra)
             }
-            None => (
-                default_base_url.to_string(),
-                default_api_key.to_string(),
-                self.model.clone(),
-            ),
+            None => fallback(),
         }
     }
 }
@@ -201,8 +212,7 @@ impl Default for Settings {
   "voice": "FunAudioLLM/CosyVoice2-0.5B:alex",
   "speed": 1.0,
   "response_format": "mp3",
-  "sample_rate": 44100,
-  "enable_thinking": false
+  "sample_rate": 44100
 }"#,
             ),
             hotkeys: HotkeyConfig::default(),
