@@ -109,6 +109,7 @@
 
 - 分块走 IPC Channel：控制消息为 JSON（`{event:"start"|"end", ...}`），音频分块为二进制 `ArrayBuffer`（PCM16LE 单声道）
 - 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 逐块解码 PCM16→Float32，调度进共享 `AudioContext` 无缝排布；首块预留 0.2s 缓冲吸收网络抖动，且不早于输出设备预热完成（`AudioContext` 冷启动期间排上时间线的音频会被设备吞掉），收到 `end` 且全部播完时结束
+- **哑火兜底**：分块排进时间线却没真正出声时（WebKit 闲置 `AudioContext` 的已知表现），前端会再调一次 `synthesize_speech` 走后端缓存取完整音频整段播；因此**后端缓存必须在流式路径下也写入**（`synthesize_inner` 目前如此），否则兜底会触发一次真实重新合成
 - 详见 [docs/frontend/lib.md](../frontend/lib.md)
 
 ## API 请求格式
@@ -181,6 +182,14 @@ data: [DONE]
 **内置音色**（`mimo-v2.5-tts`，填裸名字。据小米官方文档「预置音色列表」，2026-08 核对）：`mimo_default`（随部署集群，中国集群=`冰糖`/其它集群=`Mia`）、`冰糖`/`茉莉`（中文女）、`苏打`/`白桦`（中文男）、`Mia`/`Chloe`（英文女）、`Milo`/`Dean`（英文男）。默认 `mimo_default`（本工具主要朗读中译文，写死英文音色读中文效果很差）。
 
 `audio.format` 官方仅两个取值：`wav`（非流式）和 `pcm16`（流式必须用它才能拼接）；**没有 mp3**。预置音色仅 `mimo-v2.5-tts` 模型支持（`-voicedesign` / `-voiceclone` 不支持）。
+
+**据小米官方文档 2026-08 核对（`mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5`），以下与本实现相关的约定需注意：**
+
+- **只有 `mimo-v2.5-tts` 是真流式**。`-voicedesign` / `-voiceclone` 的流式「目前降级为兼容模式，仅在所有推理完成后以流式格式返回一次结果」——配这两个模型时边收边播没有意义（分块会在最后一次性涌来），建议在其 provider 的 `extra` 里填 `{"stream": false}`
+- **`-voicedesign` 的 `user` 消息是必填的**（内容即音色描述）。本实现在 `extra.style` 为空串时不发送 `user` 消息，配这个模型会失败
+- **两种风格控制的位置不同，不能混用**：自然语言描述放 `user`（本实现 `extra.style` 走的就是这条，正确）；而 `(东北话)`、`(唱歌)`、`(开心 变快)` 这类**风格标签必须放在 `assistant` 目标文本的开头**，`[吸气]`/`[笑]` 这类音频标签可插在文本任意位置——把它们填进 `extra.style` 不生效
+- 官方流式分块节奏：首块 7680 字节（0.16s 音频），之后每块 15360 字节（0.32s 音频），24kHz/PCM16LE/单声道
+- 认证头官方主推 `api-key: $MIMO_API_KEY`，同时也支持 `Authorization: Bearer`（本实现用后者）
 
 通过 `extra` 自定义（仅这四个键生效）：
 

@@ -82,6 +82,11 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
   4. 播放途中 `ctx.state === "suspended"`（系统挂起 / 设备切换）时补一次 `resume()`；起播前的 resume 由 `ensureAudioContextRunning()` 负责
   5. 收到 `end` 后所有已排块播完 → `done` 兑现；另有两层兜底防止「朗读中」不熄：invoke 返回 5s 后仍无 `end` 则按已收分块收尾，播放器内部 `armDrainWatchdog()` 在时间线走完后仍有未结束 source 时强制收口
   6. `chunkCount===0`（命中后端缓存/非流式协议/服务端不支持）→ 退回 `playWholeAudio` 整段播
+  7. **哑火兜底**（`player.playedThrough`）：`done` 兑现后比对「墙上时钟耗时」与「音频总时长」，前者不足后者一半 → 判定分块虽排进了时间线却没真正出声，再调一次 `synthesize_speech`（**后端缓存必然命中，不会重新合成**）拿完整音频走 `playWholeAudio`。WebKit 里长期闲置的 `AudioContext` 底层音频单元可能已停，但 `state` 仍报 `running`、`onended` 也照常触发，扬声器却一声不响；此时后端已把 `audio` 清空（分块已逐块送达），前端手里没有可播的东西，不兜底就是彻底静音
+- **诊断日志**（排查上述哑火用，见 `StreamingPcmPlayer`）：
+  - 首块：`ctx采样率` / `PCM采样率` / `块时长` / **`峰值`**（≈0 说明拿到的 PCM 本身就是静音，问题在后端而非播放）
+  - 上游流结束：`已排入` / `待播` / `剩余时间线`
+  - 收尾：**`实际耗时` vs `音频总时长`**（前者远小于后者 = 时间线没真走，设备哑火）、`已播完分块` / `被中止`
 - **整段播放**（`playWholeAudio`）：`detectAudioMime` 嗅探魔数 → `new Audio("data:{mime};base64,...")`
 
 ### languages.ts - 语言列表
