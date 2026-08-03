@@ -215,6 +215,9 @@ class StreamingPcmPlayer {
   private stopped = false;
   private settled = false;
   private drainTimer: ReturnType<typeof setTimeout> | null = null;
+  private startedWallMs = 0; // 首块排入时的墙上时钟，用于判断时间线是否真的走完
+  private firstStartAt = 0; // 首块在 ctx 时间线上的起播时刻
+  private endedCount = 0; // 实际触发 onended 的 source 数（时间线真在推进的证据）
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
@@ -234,6 +237,21 @@ class StreamingPcmPlayer {
   /** 已实际排入播放的分块数。 */
   get scheduledChunks() {
     return this.scheduled;
+  }
+
+  /**
+   * 时间线是否真的走完了（`done` 兑现后再读）。
+   *
+   * WebKit 里长期闲置的 AudioContext 底层音频单元可能已经停掉，但 `state` 仍报 `running`：
+   * 分块能排进时间线、`onended` 也照常触发，扬声器却一声不响。此时「墙上时钟耗时」会远小于
+   * 「音频总时长」，据此识别出这种哑火，调用方可回退整段播放。
+   * 被中止 / 没排过块的情况不做判断（返回 `true`）。
+   */
+  get playedThrough(): boolean {
+    if (this.stopped || !this.startedWallMs || this.scheduled === 0) return true;
+    const duration = this.nextTime - this.firstStartAt;
+    if (duration <= 1) return true; // 太短，墙上时钟的误差比信号还大
+    return (performance.now() - this.startedWallMs) / 1000 >= duration * 0.5;
   }
 
   /** 上游声明的分块格式，必须在第一块之前设置。 */
@@ -286,11 +304,27 @@ class StreamingPcmPlayer {
       this.nextTime = startAt + buffer.duration;
       this.scheduled++;
       if (this.scheduled === 1) {
+        this.startedWallMs = performance.now();
+        this.firstStartAt = startAt;
+        // 峰值幅度：≈0 说明拿到的 PCM 本身就是静音（后端/解码问题）；正常人声在 0.1~1.0
+        let peak = 0;
+        for (let i = 0; i < float.length; i++) {
+          const v = float[i] < 0 ? -float[i] : float[i];
+          if (v > peak) peak = v;
+        }
         appLog.info(
           "[TTS] 首块已排入播放, 起播延迟=" +
             (startAt - ctx.currentTime).toFixed(2) +
             "s, ctx=" +
-            ctx.state
+            ctx.state +
+            ", ctx采样率=" +
+            ctx.sampleRate +
+            ", PCM采样率=" +
+            this.sampleRate +
+            ", 块时长=" +
+            buffer.duration.toFixed(3) +
+            "s, 峰值=" +
+            peak.toFixed(3)
         );
         if (this.onFirstAudio) {
           const notify = this.onFirstAudio;
@@ -300,6 +334,7 @@ class StreamingPcmPlayer {
       }
       this.pending.add(src);
       src.onended = () => {
+        this.endedCount++;
         this.pending.delete(src);
         this.maybeFinish();
       };
@@ -312,6 +347,15 @@ class StreamingPcmPlayer {
   markInputComplete() {
     if (this.inputDone) return;
     this.inputDone = true;
+    appLog.info(
+      "[TTS] 上游流结束, 已排入=" +
+        this.scheduled +
+        ", 待播=" +
+        this.pending.size +
+        ", 剩余时间线=" +
+        (this.nextTime - this.ctx.currentTime).toFixed(2) +
+        "s"
+    );
     this.armDrainWatchdog();
     this.maybeFinish();
   }
@@ -353,6 +397,21 @@ class StreamingPcmPlayer {
     if (this.drainTimer) {
       clearTimeout(this.drainTimer);
       this.drainTimer = null;
+    }
+    // 实际耗时应约等于音频总时长；若远小于则说明 source 根本没在时间线上走（输出设备没跑）
+    if (this.startedWallMs) {
+      appLog.info(
+        "[TTS] 流式播放收尾, 实际耗时=" +
+          ((performance.now() - this.startedWallMs) / 1000).toFixed(2) +
+          "s, 音频总时长≈" +
+          (this.scheduled ? (this.nextTime - this.firstStartAt).toFixed(2) : "0") +
+          "s, 已播完分块=" +
+          this.endedCount +
+          "/" +
+          this.scheduled +
+          ", 被中止=" +
+          this.stopped
+      );
     }
     this.resolveDone();
   }
@@ -491,6 +550,14 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
           await player.done;
         } finally {
           clearTimeout(guard);
+        }
+        // 分块排进了时间线却没真正出声（WebKit 闲置 context 音频单元已停）：
+        // 再调一次合成走后端缓存拿完整音频，用 <audio> 兜底，避免用户端彻底静音
+        if (gen === playGen && !player.playedThrough) {
+          appLog.warn("[TTS] 流式播放疑似未出声，回退整段播放 (" + id + ")");
+          const audio = await synthesizeSpeech(normalized); // 后端缓存必然命中，不会重新合成
+          setCachedAudio(key, audio);
+          if (gen === playGen && audio) await playWholeAudio(audio);
         }
       } else {
         // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
