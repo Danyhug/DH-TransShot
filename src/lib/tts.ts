@@ -70,8 +70,8 @@ function detectAudioMime(base64Audio: string): string {
 }
 
 // ── AudioContext 单例 ────────────────────────────────────────────────────
-// 复用同一个 context：WebKit 对同时存在的 AudioContext 数量有硬上限，每次朗读都
-// new + close 在连续朗读时容易踩到；而且复用后只需在首次用户手势时 resume 一次。
+// 单例而非每处随手 new：WebKit 对同时存在的 AudioContext 数量有硬上限。但**不跨朗读会话
+// 复用**——见 `resetAudioContext()`，每次流式朗读前会先关掉旧的再建新的（始终只有一个存活）。
 let sharedCtx: AudioContext | null = null;
 
 function getAudioContext(): AudioContext | null {
@@ -86,6 +86,31 @@ function getAudioContext(): AudioContext | null {
     "[TTS] AudioContext 已创建, state=" + sharedCtx.state + ", sampleRate=" + sharedCtx.sampleRate
   );
   return sharedCtx;
+}
+
+/**
+ * 关闭并丢弃当前 AudioContext，下次取用时重建。
+ *
+ * 为什么必须重建而不能复用：主窗口失焦会自动隐藏，窗口一隐藏 WKWebView 就被标记为遮挡、
+ * 底层音频单元被停掉；窗口再显示时，WebKit **不会**为一个仍处于 `running` 的 context 重新
+ * 拉起音频单元，而是继续用定时器驱动的时钟「空转渲染」——`state` 依旧是 `running`、
+ * `currentTime` 正常推进、`onended` 照常触发，样本却根本没送到输出设备。表现就是
+ * 「第一次朗读有声，之后每次都完全无声，但手动点一下走 `<audio>` 整段播又是好的」。
+ * 这种哑火在 JS 侧没有任何可查的状态位，只能靠换一个新 context 规避。
+ *
+ * 重建成本（创建 + 设备启动）被合成请求的 1s+ 网络往返和 `AUDIO_WARMUP_SECONDS` 静音预热
+ * 吸收，听感上不增加起播延迟。
+ */
+async function resetAudioContext() {
+  const ctx = sharedCtx;
+  sharedCtx = null;
+  warmupUntil = 0;
+  if (!ctx || ctx.state === "closed") return;
+  try {
+    await ctx.close();
+  } catch (e) {
+    appLog.warn("[TTS] 关闭旧 AudioContext 失败: " + String(e));
+  }
 }
 
 /** 浏览器是否支持 Web Audio（边收边播依赖它，否则回退整段播放）。 */
@@ -124,8 +149,12 @@ function warmUpOutputDevice(ctx: AudioContext) {
 /**
  * 拿到一个「确实在跑」的 AudioContext：必要时 resume 并**等待完成**，随后预热输出设备。
  * 返回 `null` 表示 Web Audio 不可用或起不来（如平台要求用户手势），调用方应回退整段播放。
+ *
+ * @param recreate 先关掉旧 context 再建新的（每次流式朗读都要传 `true`，原因见
+ *   [`resetAudioContext`]：复用旧 context 会在窗口隐藏过一次后彻底哑火）。
  */
-async function ensureAudioContextRunning(): Promise<AudioContext | null> {
+async function ensureAudioContextRunning(recreate = false): Promise<AudioContext | null> {
+  if (recreate) await resetAudioContext();
   const ctx = getAudioContext();
   if (!ctx) return null;
   // 覆盖 suspended 与 Safari 的 interrupted（来电/其它 App 抢占音频后会停在这个状态）
@@ -499,9 +528,10 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
 
   try {
     const wantStream = settings.speech?.stream_playback !== false && isStreamPlaybackSupported();
-    // 合成 + 网络往返通常要 1s 以上，正好用这段时间提前 resume context 并唤醒输出设备：
-    // 等第一段 PCM 到达时设备已经在跑，不会被冷启动吞掉开头
-    const ctx = wantStream ? await ensureAudioContextRunning() : null;
+    // 合成 + 网络往返通常要 1s 以上，正好用这段时间重建 context 并唤醒输出设备：
+    // 等第一段 PCM 到达时设备已经在跑，不会被冷启动吞掉开头。
+    // 必须重建而非复用——旧 context 在主窗口隐藏过一次后会「空转渲染」，详见 resetAudioContext()
+    const ctx = wantStream ? await ensureAudioContextRunning(true) : null;
     if (gen !== playGen) return;
     if (wantStream && !ctx) {
       appLog.warn("[TTS] Web Audio 未就绪，本次回退整段播放 (" + id + ")");
