@@ -70,10 +70,13 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
 - **朗读状态**：写入 `stores/ttsStore.ts` 的 `speakingId`，对应按钮显示「停止」图标
 - **加载状态**：`ttsStore.loadingId` 标记「已发起合成、音频还没到」的窗口期（按钮转圈）。发起请求前置位，**收到第一段音频数据时熄灭**——流式路径由 `StreamingPcmPlayer` 的 `onFirstAudio`（首块 PCM 排入播放）回调，整段路径由 `playWholeAudio` 的 `onStart`（`audio.play()` 兑现）回调；`playOne` 的 `finally` 兜底清除。命中前端缓存时不进入加载态。所有清除都带 `gen === playGen` 守卫，避免被抢占的旧会话熄掉新会话的加载态
 - **前端 LRU 缓存**：`base_url\nmodel\nextra\ntext` 为键缓存完整音频（32 条），键里的三项取自 `resolveActiveProvider()`（与后端 `ServiceConfig::resolved` 同规则，含 provider 级 extra 覆盖）；命中直接整段播；**流式分块播放不写前端缓存**（返回值不含完整音频），重播时靠后端缓存返回整段
-- **AudioContext 单例**：全模块复用一个 `AudioContext`（`getAudioContext()`），播放结束只停 source 不 `close()`——WebKit 对同时存在的 context 数量有硬上限，每次朗读都 new+close 在连续朗读时容易踩到
+- **AudioContext 生命周期**：同一时刻只存在一个 context（`getAudioContext()`，WebKit 对并存数量有硬上限），但**不跨朗读会话复用**——`playOne` 每次流式朗读前调 `ensureAudioContextRunning(true)`，由 `resetAudioContext()` 先 `close()` 旧的再建新的
+  - 原因：主窗口失焦会自动隐藏，窗口一隐藏 WKWebView 即被标记为遮挡、底层音频单元停止；窗口再显示时 WebKit **不会**为仍处于 `running` 的 context 重新拉起音频单元，而是继续用定时器驱动的时钟「空转渲染」——`state` 仍是 `running`、`currentTime` 正常推进、`onended` 照常触发、`playedThrough` 判定为正常，样本却没送到输出设备。表现为「**第一次朗读有声，之后每次完全无声，手动点一下走 `<audio>` 整段播又正常**」
+  - 这种哑火在 JS 侧没有任何可查的状态位（所以哑火兜底抓不到），只能靠换新 context 规避；重建成本被合成请求的 1s+ 往返与静音预热吸收，不增加起播延迟
+  - 副作用：每次流式朗读都会打一条 `[TTS] AudioContext 已创建, state=..., sampleRate=...`，可据此确认重建生效
 - **音频链路预热**（`primeAudio()` / `ensureAudioContextRunning()` / `warmUpOutputDevice()`）：
   - `AudioContext` 刚创建或刚 `resume()` 时底层输出设备还在启动（蓝牙耳机可达 1s 以上），这期间已排上时间线的 buffer 会被**直接吞掉**——旧实现把 context 懒创建在第一块 PCM 到达时，于是「第一次朗读（尤其是翻译后自动朗读）没声音，再点一次就正常」；整段播放（`<audio>`）不受影响是因为媒体元素自己会等设备就绪，所以症状看起来像「流式播放在自动播放时失效」
-  - 修复三件套：① `App.tsx` 挂载时和主窗口获得焦点时 `primeAudio()` 提前建好 context；② `playOne` 在**发合成请求前** `await ensureAudioContextRunning()`（resume 并等待完成 + 排一段 `AUDIO_WARMUP_SECONDS`(0.35s) 静音唤醒设备），合成的 1s+ 往返正好当预热时间；③ 首块起播时刻取 `max(currentTime + 预留, warmupUntil)`，保证真实音频一定排在预热之后
+  - 修复三件套：① `App.tsx` 挂载时和主窗口获得焦点时 `primeAudio()` 提前建好 context；② `playOne` 在**发合成请求前** `await ensureAudioContextRunning(true)`（重建 + resume 并等待完成 + 排一段 `AUDIO_WARMUP_SECONDS`(0.35s) 静音唤醒设备），合成的 1s+ 往返正好当预热时间；③ 首块起播时刻取 `max(currentTime + 预留, warmupUntil)`，保证真实音频一定排在预热之后
   - `ensureAudioContextRunning()` 返回 `null`（Web Audio 不可用 / resume 后仍非 `running`，如平台要求用户手势）时，本次朗读**回退整段播放**而不是静默失败；`primeAudio()` 另挂一次性 `pointerdown`/`keydown` 监听兜底解锁
 - **流式边收边播**（`speech.stream_playback !== false` 且 context 处于 `running`）：
   1. `new Channel<TtsStreamPayload>()` 作为 invoke 参数传给后端，`onmessage` 分派：`ArrayBuffer` → `pushChunk`，`{event:"start"}` → `setFormat`，`{event:"end"}` → `markInputComplete()`
@@ -82,7 +85,7 @@ Channel 只投递给发起调用的 webview，大负载走 IPC 自定义协议�
   4. 播放途中 `ctx.state === "suspended"`（系统挂起 / 设备切换）时补一次 `resume()`；起播前的 resume 由 `ensureAudioContextRunning()` 负责
   5. 收到 `end` 后所有已排块播完 → `done` 兑现；另有两层兜底防止「朗读中」不熄：invoke 返回 5s 后仍无 `end` 则按已收分块收尾，播放器内部 `armDrainWatchdog()` 在时间线走完后仍有未结束 source 时强制收口
   6. `chunkCount===0`（命中后端缓存/非流式协议/服务端不支持）→ 退回 `playWholeAudio` 整段播
-  7. **哑火兜底**（`player.playedThrough`）：`done` 兑现后比对「墙上时钟耗时」与「音频总时长」，前者不足后者一半 → 判定分块虽排进了时间线却没真正出声，再调一次 `synthesize_speech`（**后端缓存必然命中，不会重新合成**）拿完整音频走 `playWholeAudio`。WebKit 里长期闲置的 `AudioContext` 底层音频单元可能已停，但 `state` 仍报 `running`、`onended` 也照常触发，扬声器却一声不响；此时后端已把 `audio` 清空（分块已逐块送达），前端手里没有可播的东西，不兜底就是彻底静音
+  7. **哑火兜底**（`player.playedThrough`）：`done` 兑现后比对「墙上时钟耗时」与「音频总时长」，前者不足后者一半 → 判定分块虽排进了时间线却没真正出声，再调一次 `synthesize_speech`（**后端缓存必然命中，不会重新合成**）拿完整音频走 `playWholeAudio`。注意这一层**只能抓住「时间线根本没走」的哑火**；context「空转渲染」那种（时间线照常走、只是没送到设备）它判定为正常，靠的是每次重建 context 来预防
 - **诊断日志**（排查上述哑火用，见 `StreamingPcmPlayer`）：
   - 首块：`ctx采样率` / `PCM采样率` / `块时长` / **`峰值`**（≈0 说明拿到的 PCM 本身就是静音，问题在后端而非播放）
   - 上游流结束：`已排入` / `待播` / `剩余时间线`
