@@ -1,13 +1,19 @@
 import { Channel } from "@tauri-apps/api/core";
 import { synthesizeSpeech, synthesizeSpeechStream } from "./invoke";
-import type { TtsStreamPayload } from "./invoke";
+import type { SpeechResponse, TtsStreamMessage, TtsStreamPayload } from "./invoke";
 import { appLog } from "../stores/logStore";
 import { useTtsStore } from "../stores/ttsStore";
 import { useSettingsStore, resolveActiveProvider } from "../stores/settingsStore";
 
 // ── 完整音频前端缓存（LRU，与后端进程内缓存互补，减少重复请求）──────────────
 const TTS_CACHE_MAX_ENTRIES = 32;
+/**
+ * 缓存总字符数上限（base64 长度累加）。只按条数限制是不够的：一分钟语音的 WAV base64
+ * 就有 ~3.8MB，32 条塞满能吃掉上百 MB JS 堆。
+ */
+const TTS_CACHE_MAX_CHARS = 32 * 1024 * 1024;
 const ttsAudioCache = new Map<string, string>();
+let ttsCacheChars = 0;
 
 function normalizeTtsText(text: string) {
   return text.trim().replace(/\r\n/g, "\n");
@@ -40,14 +46,27 @@ function getCachedAudio(key: string) {
   return cached;
 }
 
+function dropCachedAudio(key: string) {
+  const old = ttsAudioCache.get(key);
+  if (old === undefined) return;
+  ttsAudioCache.delete(key);
+  ttsCacheChars -= old.length;
+}
+
 function setCachedAudio(key: string, value: string) {
   if (!value) return;
-  if (ttsAudioCache.has(key)) ttsAudioCache.delete(key);
+  dropCachedAudio(key);
   ttsAudioCache.set(key, value);
-  while (ttsAudioCache.size > TTS_CACHE_MAX_ENTRIES) {
+  ttsCacheChars += value.length;
+  // 条数、字符数两个上限都要满足；但至少留住刚写入的这条，
+  // 否则单条就超预算时会被立刻淘汰，缓存永远命不中
+  while (
+    ttsAudioCache.size > TTS_CACHE_MAX_ENTRIES ||
+    (ttsCacheChars > TTS_CACHE_MAX_CHARS && ttsAudioCache.size > 1)
+  ) {
     const oldestKey = ttsAudioCache.keys().next().value;
-    if (!oldestKey) break;
-    ttsAudioCache.delete(oldestKey);
+    if (oldestKey === undefined) break;
+    dropCachedAudio(oldestKey);
   }
 }
 
@@ -82,6 +101,7 @@ function getAudioContext(): AudioContext | null {
   if (!Ctor) return null;
   sharedCtx = new Ctor();
   warmupUntil = 0;
+  keepAliveSrc = null;
   appLog.info(
     "[TTS] AudioContext 已创建, state=" + sharedCtx.state + ", sampleRate=" + sharedCtx.sampleRate
   );
@@ -105,6 +125,7 @@ async function resetAudioContext() {
   const ctx = sharedCtx;
   sharedCtx = null;
   warmupUntil = 0;
+  keepAliveSrc = null;
   if (!ctx || ctx.state === "closed") return;
   try {
     await ctx.close();
@@ -122,24 +143,43 @@ export function isStreamPlaybackSupported(): boolean {
 }
 
 /**
- * 输出设备预热时长（秒）。AudioContext 刚创建 / 刚 resume 时底层音频设备还在启动
- * （蓝牙耳机可达 1s 以上），这段时间里已经排上时间线的 buffer 会被直接吞掉——表现就是
- * 「自动朗读第一次没声音，再点一次就正常」。先排一段静音唤醒设备，真实音频排在它之后。
- * 整段播放（`<audio>`）不受影响，因为媒体元素自己会等设备就绪，所以只有流式路径会踩到。
+ * 首块起播距预热开始的最小间隔（秒）——输出设备启动的最低保证。
+ * 真正让设备保持运转的是 [`warmUpOutputDevice`] 排下的循环静音，这里只是个下限。
  */
 const AUDIO_WARMUP_SECONDS = 0.35;
+/**
+ * 输出设备保活时长（秒）。`AudioContext` 刚创建 / 刚 `resume` 时底层设备还在启动
+ * （蓝牙耳机可达 1s 以上），这段时间里已经排上时间线的 buffer 会被直接吞掉——表现就是
+ * 「自动朗读第一次没声音，再点一次就正常」。
+ *
+ * 早先用一段 0.35s 静音唤醒设备，但设备启动比这慢时照样吞，而且静音放完到首块 PCM 到达
+ * 之间还有 1s+ 的空档（合成 + 网络往返），设备可能又空转下去。改成排一段**循环静音**把
+ * 设备一直拽着跑，覆盖整个等待期，到点由 `stop(when)` 自动收，不用定时器。
+ * 整段播放（`<audio>`）不受影响，因为媒体元素自己会等设备就绪，所以只有流式路径会踩到。
+ */
+const AUDIO_KEEPALIVE_SECONDS = 30;
+/** 循环静音 buffer 的长度（秒）；只是个载体，取值不影响听感 */
+const AUDIO_KEEPALIVE_BUFFER_SECONDS = 0.5;
 /** ctx 时间轴上的「预热完成」时刻；ctx 重建时归零 */
 let warmupUntil = 0;
+/** 当前保活中的静音源；ctx 重建 / 自然结束时置空 */
+let keepAliveSrc: AudioBufferSourceNode | null = null;
 
-/** 排一段静音唤醒输出设备（已在预热窗口内则跳过）。 */
+/** 排一段循环静音把输出设备拽着跑（已有保活在跑则跳过）。 */
 function warmUpOutputDevice(ctx: AudioContext) {
-  if (ctx.state !== "running" || ctx.currentTime < warmupUntil) return;
+  if (ctx.state !== "running" || keepAliveSrc) return;
   try {
-    const frames = Math.max(1, Math.ceil(ctx.sampleRate * AUDIO_WARMUP_SECONDS));
+    const frames = Math.max(1, Math.ceil(ctx.sampleRate * AUDIO_KEEPALIVE_BUFFER_SECONDS));
     const src = ctx.createBufferSource();
     src.buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+    src.loop = true;
     src.connect(ctx.destination);
     src.start();
+    src.stop(ctx.currentTime + AUDIO_KEEPALIVE_SECONDS);
+    src.onended = () => {
+      if (keepAliveSrc === src) keepAliveSrc = null;
+    };
+    keepAliveSrc = src;
     warmupUntil = ctx.currentTime + AUDIO_WARMUP_SECONDS;
   } catch (e) {
     appLog.warn("[TTS] 输出设备预热失败: " + String(e));
@@ -230,6 +270,71 @@ export function stopSpeaking() {
 const STREAM_PREROLL_SECONDS = 0.2;
 
 /**
+ * 判定「上游不再发分块」的静默阈值（毫秒）。超过这么久没收到新块又没收到 `end`，
+ * 才按已收到的分块收口。小米流式的正常节奏是每块 0.32s 音频，3s 已经宽松得多。
+ */
+const STREAM_IDLE_TIMEOUT_MS = 3000;
+
+/**
+ * 本地留存流式 PCM 的上限（字节）。24kHz 单声道 PCM16 下约合 5.8 分钟音频。
+ * 超过就不再留存，也就拼不出完整 WAV 去回填缓存——超长朗读本来也不该常驻内存。
+ */
+const STREAM_PCM_KEEP_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * 通道二进制分块 → `ArrayBuffer`；不是二进制则返回 `null`（交给控制消息分支）。
+ *
+ * 正常情况下 Tauri 两条投递路径都直接给 `ArrayBuffer`（<1KB 走 eval 里的
+ * `new Uint8Array([...]).buffer`，更大的走 IPC 自定义协议的 `response.arrayBuffer()`）。
+ * 但自定义协议一旦失败会整体回退 `postMessage`，分块就可能变成普通数组/TypedArray——
+ * 只认 `instanceof ArrayBuffer` 的话会被当成控制消息静默丢掉，表现为「完全没声音」。
+ */
+function asArrayBuffer(message: unknown): ArrayBuffer | null {
+  if (message instanceof ArrayBuffer) return message;
+  if (ArrayBuffer.isView(message)) {
+    const view = message as ArrayBufferView;
+    return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+  }
+  if (Array.isArray(message)) return Uint8Array.from(message as number[]).buffer;
+  return null;
+}
+
+/** `Uint8Array` → base64；分段处理，避免 `String.fromCharCode` 参数过多爆栈 */
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/** 给裸 PCM16LE 套 44 字节 WAV 头（与后端 `wrap_pcm16_wav` 等价） */
+function wrapPcm16Wav(pcm: Uint8Array, sampleRate: number, channels: number): Uint8Array {
+  const BITS_PER_SAMPLE = 16;
+  const blockAlign = (channels * BITS_PER_SAMPLE) / 8;
+  const out = new Uint8Array(44 + pcm.length);
+  const view = new DataView(out.buffer);
+  const ascii = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) out[offset + i] = s.charCodeAt(i);
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + pcm.length, true);
+  ascii(8, "WAVEfmt ");
+  view.setUint32(16, 16, true); // PCM fmt chunk 长度
+  view.setUint16(20, 1, true); // 1 = PCM
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, BITS_PER_SAMPLE, true);
+  ascii(36, "data");
+  view.setUint32(40, pcm.length, true);
+  out.set(pcm, 44);
+  return out;
+}
+
+/**
  * 边收边播的 PCM16LE 播放器。
  * 逐块把二进制 PCM 调度进 AudioContext，按到达顺序无缝排布；上游流结束
  * （`markInputComplete`）且所有已排块播完时，`done` promise 兑现。
@@ -247,6 +352,11 @@ class StreamingPcmPlayer {
   private startedWallMs = 0; // 首块排入时的墙上时钟，用于判断时间线是否真的走完
   private firstStartAt = 0; // 首块在 ctx 时间线上的起播时刻
   private endedCount = 0; // 实际触发 onended 的 source 数（时间线真在推进的证据）
+  private lastChunkWallMs = performance.now(); // 最近一次收到分块的墙上时钟
+  private pcmParts: Uint8Array[] = []; // 已播 PCM 原样留一份，用于本地拼完整 WAV
+  private pcmBytes = 0;
+  private pcmDropped = false; // 超上限已放弃留存，本地拼不出完整音频
+  private wavBase64: string | null = null; // buildWavBase64() 的结果，只算一次
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
@@ -266,6 +376,33 @@ class StreamingPcmPlayer {
   /** 已实际排入播放的分块数。 */
   get scheduledChunks() {
     return this.scheduled;
+  }
+
+  /** 距最近一次收到分块过了多久（毫秒）——用来判断上游是不是真的不发了。 */
+  idleMs() {
+    return performance.now() - this.lastChunkWallMs;
+  }
+
+  /**
+   * 把已收到的 PCM 拼成完整 WAV 的 base64；留存被放弃（超上限）时返回空串。
+   *
+   * 用途有两个：① 流式播完后回填前端缓存（后端流式路径不回传完整音频，不回填的话
+   * 下次重播还要再走一次 IPC 把几 MB base64 搬回来）；② 哑火兜底时直接拿它整段重播，
+   * 省掉一次 `synthesize_speech` 往返。**只在收到 `end` 后调用**，否则可能是截断的。
+   */
+  buildWavBase64(): string {
+    if (this.wavBase64 !== null) return this.wavBase64;
+    if (this.pcmBytes === 0 || this.pcmDropped) return "";
+    const pcm = new Uint8Array(this.pcmBytes);
+    let offset = 0;
+    for (const part of this.pcmParts) {
+      pcm.set(part, offset);
+      offset += part.length;
+    }
+    this.wavBase64 = bytesToBase64(wrapPcm16Wav(pcm, this.sampleRate, 1));
+    // 拼完就把分片放掉，别让原始 PCM 和 base64 两份同时压在堆上
+    this.pcmParts = [];
+    return this.wavBase64;
   }
 
   /**
@@ -293,6 +430,7 @@ class StreamingPcmPlayer {
 
   pushChunk(chunk: ArrayBuffer) {
     if (this.stopped) return;
+    this.lastChunkWallMs = performance.now();
     try {
       const ctx = this.ctx;
       // 播放途中 context 可能被系统挂起（设备切换 / 页面隐藏），不 resume 会一声不响地什么都不播
@@ -312,6 +450,24 @@ class StreamingPcmPlayer {
         bytes = bytes.slice(0, bytes.length - 1);
       }
       if (bytes.length === 0) return;
+
+      // 原样留一份，结束后能在本地拼出完整 WAV（见 buildWavBase64）。
+      // 超上限就放弃留存：AudioBuffer 已经占了 2 倍于 PCM 的堆，再叠 PCM + base64
+      // 三份对超长朗读来说太重，这种情况退回「兜底时问后端要」。
+      if (!this.pcmDropped) {
+        this.pcmParts.push(bytes);
+        this.pcmBytes += bytes.length;
+        if (this.pcmBytes > STREAM_PCM_KEEP_MAX_BYTES) {
+          appLog.warn(
+            "[TTS] 流式 PCM 超过 " +
+              Math.round(STREAM_PCM_KEEP_MAX_BYTES / 1024 / 1024) +
+              "MB，放弃本地留存（不回填前端缓存）"
+          );
+          this.pcmDropped = true;
+          this.pcmParts = [];
+          this.pcmBytes = 0;
+        }
+      }
 
       const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
       const float = new Float32Array(int16.length);
@@ -448,6 +604,7 @@ class StreamingPcmPlayer {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
+    this.leftover = null;
     this.pending.forEach((src) => {
       try {
         src.stop();
@@ -547,19 +704,31 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
       const channel = new Channel<TtsStreamPayload>();
       channel.onmessage = (message) => {
         if (gen !== playGen) return;
-        if (message instanceof ArrayBuffer) {
-          player.pushChunk(message);
+        const pcm = asArrayBuffer(message);
+        if (pcm) {
+          player.pushChunk(pcm);
           return;
         }
-        if (message.event === "start") {
-          player.setFormat(message.sampleRate, message.channels);
-        } else if (message.event === "end") {
+        const control = message as TtsStreamMessage;
+        if (control?.event === "start") {
+          player.setFormat(control.sampleRate, control.channels);
+        } else if (control?.event === "end") {
           endReceived = true;
           player.markInputComplete();
+        } else {
+          // 不认识就丢会变成「完全没声音且毫无线索」，至少留条日志
+          appLog.warn("[TTS] 收到无法识别的通道消息，已忽略: " + typeof message);
         }
       };
 
-      const resp = await synthesizeSpeechStream(normalized, channel);
+      let resp: SpeechResponse;
+      try {
+        resp = await synthesizeSpeechStream(normalized, channel);
+      } catch (e) {
+        // 合成失败但分块可能已经排进时间线：不停掉就会变成 UI 已熄灭、stopSpeaking 也抓不到的幽灵音频
+        player.stop();
+        throw e;
+      }
       if (gen !== playGen) {
         player.stop();
         return;
@@ -568,26 +737,56 @@ async function playOne(text: string, id: string, gen: number): Promise<void> {
         appLog.info(
           "[TTS] 流式播放中, 分块数=" + resp.chunkCount + ", 已排入播放=" + player.scheduledChunks
         );
-        // 兜底：万一 end 控制消息丢失（通道某条消息投递失败会卡住后续消息），
-        // 也别让 done 永远挂着；给分块留足到达时间后再收口
-        const guard = setTimeout(() => {
-          if (!endReceived) {
-            appLog.warn("[TTS] 未收到流结束消息，按已收到的分块收尾");
-            player.markInputComplete();
-          }
-        }, 5000);
+        // 兜底：万一 end 控制消息丢失（通道某条消息投递失败会卡住后续消息），也别让 done 永远挂着。
+        // 用「分块停止到达」而不是「invoke 返回后固定 5s」判定：命令返回时分块往往还在路上，
+        // 定时收口会在播放中途提前兑现 done，让下面的兜底和还在播的流式音频叠在一起。
+        const guard = setInterval(() => {
+          if (endReceived || player.idleMs() < STREAM_IDLE_TIMEOUT_MS) return;
+          appLog.warn(
+            "[TTS] 未收到流结束消息且分块已停止到达 " +
+              Math.round(player.idleMs()) +
+              "ms，按已收到的分块收尾"
+          );
+          player.markInputComplete();
+        }, 1000);
         try {
           await player.done;
         } finally {
-          clearTimeout(guard);
+          clearInterval(guard);
         }
-        // 分块排进了时间线却没真正出声（WebKit 闲置 context 音频单元已停）：
-        // 再调一次合成走后端缓存拿完整音频，用 <audio> 兜底，避免用户端彻底静音
-        if (gen === playGen && !player.playedThrough) {
+
+        // 哑火判定分两种：
+        // ① 后端说推了 N 块、前端一块都没排上 —— 通道分块被丢弃，必然静音（这条最确定）
+        // ② 块排进了时间线却没真正出声 —— WebKit 闲置 context 音频单元已停（playedThrough 启发式）
+        const missing = resp.chunkCount - player.scheduledChunks;
+        if (missing > 0) {
+          appLog.warn(
+            "[TTS] 有 " +
+              missing +
+              " 个分块未排入播放 (后端=" +
+              resp.chunkCount +
+              ", 前端=" +
+              player.scheduledChunks +
+              ")"
+          );
+        }
+        const silent = player.scheduledChunks === 0 || !player.playedThrough;
+        // 收全了才敢当完整音频用；被 guard 提前收口时手上这份可能是截断的
+        const complete = endReceived ? player.buildWavBase64() : "";
+        if (gen === playGen && silent) {
           appLog.warn("[TTS] 流式播放疑似未出声，回退整段播放 (" + id + ")");
-          const audio = await synthesizeSpeech(normalized); // 后端缓存必然命中，不会重新合成
+          // 必须先停：兜底那一路走 <audio>，会把 stopCurrent 改写成 audio.pause，
+          // 此时若流式播放器还活着，两路声音会重叠且再也停不掉
+          player.stop();
+          // 优先用本地已收到的 PCM，省掉一次几 MB 的 IPC 往返；拿不到才回后端要
+          const audio = complete || (await synthesizeSpeech(normalized));
           setCachedAudio(key, audio);
-          if (gen === playGen && audio) await playWholeAudio(audio);
+          // 带上 clearLoading：一块都没排上时 onFirstAudio 没触发过，
+          // 不在这里熄灯按钮会一直转到整段播完
+          if (gen === playGen && audio) await playWholeAudio(audio, clearLoading);
+        } else if (complete) {
+          // 回填前端缓存：流式路径后端不回传完整音频，不回填的话下次重播还要再走一趟 IPC
+          setCachedAudio(key, complete);
         }
       } else {
         // 没有流式分块（后端缓存命中 / audio/speech 协议 / 服务端未流式）→ 整段播放
@@ -631,7 +830,10 @@ export async function speak(text: string, id: string): Promise<void> {
   }
 }
 
-/** 依次朗读多段文本（前一段播完再播下一段）；被外部朗读/停止打断则整体中止。 */
+/**
+ * 依次朗读多段文本（前一段播完再播下一段）；被外部朗读/停止打断则整体中止。
+ * 单段失败不牵连后续段：原文合成挂了，译文该读还是要读。
+ */
 export async function speakSequence(items: { text: string; id: string }[]) {
   const filtered = items.filter((it) => it.text.trim());
   if (filtered.length === 0) return;
@@ -641,7 +843,11 @@ export async function speakSequence(items: { text: string; id: string }[]) {
     for (const item of filtered) {
       if (gen !== playGen) break;
       store.setSpeakingId(item.id);
-      await playOne(item.text, item.id, gen);
+      try {
+        await playOne(item.text, item.id, gen);
+      } catch (e) {
+        appLog.error("[TTS] 朗读失败 (" + item.id + "): " + String(e));
+      }
     }
   } finally {
     if (gen === playGen) {

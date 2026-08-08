@@ -282,11 +282,16 @@ impl Default for AppState {
 }
 
 const TTS_CACHE_MAX_ENTRIES: usize = 64;
+/// 缓存总字节上限（base64 字符数累加）。只按条数限制是不够的：一分钟语音拼出来的
+/// WAV base64 就有 ~3.8MB，64 条塞满能占几百 MB 常驻内存。
+const TTS_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Default)]
 pub struct TtsCache {
     entries: HashMap<String, String>,
     order: VecDeque<String>,
+    /// 当前占用字节数（各 value 的 len 之和）
+    bytes: usize,
 }
 
 impl TtsCache {
@@ -295,15 +300,24 @@ impl TtsCache {
     }
 
     pub fn insert(&mut self, key: String, value: String) {
-        if self.entries.contains_key(&key) {
+        if let Some(old) = self.entries.remove(&key) {
+            self.bytes -= old.len();
             self.order.retain(|existing| existing != &key);
         }
+        self.bytes += value.len();
         self.entries.insert(key.clone(), value);
         self.order.push_back(key);
 
-        while self.order.len() > TTS_CACHE_MAX_ENTRIES {
-            if let Some(oldest_key) = self.order.pop_front() {
-                self.entries.remove(&oldest_key);
+        // 条数和字节数两个上限都要满足；但至少保留刚写入的这条，
+        // 否则单条就超预算时会被立刻淘汰，缓存永远空转
+        while self.order.len() > TTS_CACHE_MAX_ENTRIES
+            || (self.bytes > TTS_CACHE_MAX_BYTES && self.order.len() > 1)
+        {
+            let Some(oldest_key) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(old) = self.entries.remove(&oldest_key) {
+                self.bytes -= old.len();
             }
         }
     }
@@ -311,5 +325,58 @@ impl TtsCache {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.order.clear();
+        self.bytes = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_evicts_by_entry_count() {
+        let mut cache = TtsCache::default();
+        for i in 0..TTS_CACHE_MAX_ENTRIES + 3 {
+            cache.insert(format!("k{i}"), "x".to_string());
+        }
+        assert_eq!(cache.entries.len(), TTS_CACHE_MAX_ENTRIES);
+        assert_eq!(cache.get("k0"), None);
+        assert_eq!(
+            cache.get(&format!("k{}", TTS_CACHE_MAX_ENTRIES + 2)),
+            Some("x".to_string())
+        );
+    }
+
+    /// 只按条数限制时，几条长音频就能吃掉几百 MB
+    #[test]
+    fn cache_evicts_by_total_bytes() {
+        let mut cache = TtsCache::default();
+        let big = "x".repeat(TTS_CACHE_MAX_BYTES / 2 + 1);
+        cache.insert("a".into(), big.clone());
+        cache.insert("b".into(), big.clone());
+        assert_eq!(cache.get("a"), None, "超预算时最旧的一条应被淘汰");
+        assert!(cache.get("b").is_some());
+        assert!(cache.bytes <= TTS_CACHE_MAX_BYTES);
+    }
+
+    /// 单条就超预算时也不能把自己淘汰掉，否则缓存永远是空的
+    #[test]
+    fn cache_keeps_single_oversized_entry() {
+        let mut cache = TtsCache::default();
+        cache.insert("a".into(), "x".repeat(TTS_CACHE_MAX_BYTES + 1));
+        assert!(cache.get("a").is_some());
+    }
+
+    /// 覆盖同一个键时字节数要正确回退，否则会越算越大、把缓存挤空
+    #[test]
+    fn cache_overwrite_tracks_bytes() {
+        let mut cache = TtsCache::default();
+        cache.insert("a".into(), "xxxxx".into());
+        cache.insert("a".into(), "y".into());
+        assert_eq!(cache.bytes, 1);
+        assert_eq!(cache.order.len(), 1);
+        assert_eq!(cache.get("a"), Some("y".to_string()));
+        cache.clear();
+        assert_eq!(cache.bytes, 0);
     }
 }

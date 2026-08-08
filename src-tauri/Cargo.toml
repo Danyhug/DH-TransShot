@@ -32,6 +32,11 @@ tauri-plugin-dialog = "2.7.1"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.8"
 
+# 仅测试用：TTS 流式解析要对着真实 HTTP 响应验（SSE 分帧、末行无换行、非 SSE 兜底），
+# 需要起一个本地假服务端
+[dev-dependencies]
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros"] }
+
 [profile.release]
 strip = true
 lto = true

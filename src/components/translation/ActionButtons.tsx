@@ -27,7 +27,8 @@ export function ActionButtons({ text, speakId }: Props) {
       return;
     }
     appLog.info("[TTS] 准备朗读, 文本长度=" + text.length + " (" + speakId + ")");
-    speak(text, speakId);
+    // 必须接住：合成失败会让 speak 的 promise reject，不接就是一条 unhandled rejection
+    speak(text, speakId).catch((e) => appLog.error("[TTS] 朗读失败: " + String(e)));
   };
 
   return (

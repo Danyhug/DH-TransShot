@@ -44,6 +44,12 @@
 
 **`ChunkSink<'a>` / `on_chunk`** — 流式分块回调 `Fn(&[u8])`，参数是**已解码的 PCM16LE 裸字节**（不是 base64）；命令层把它原样写进 IPC Channel 的二进制消息。`None` 时仍会累积拼成完整音频，只是不实时回调。
 
+> `SpeechResult` 的 `Debug` 是**手写**的，只打 `audio_base64_len` 而不是内容——derive 出来的实现会把几 MB base64 整段塞进日志/panic 信息。
+
+**`StreamAccum<'a>` — 流式解析的累积状态**（`on_chunk` / `pcm` / `chunk_count` / `first_chunk_ms` / `started`）
+
+由 `synthesize_chat_audio` 持有、以 `&mut` 传进 `synthesize_chat_audio_stream`，而不是后者内部自造。这样流中途失败时，调用方仍能读到 `chunk_count`（已推给前端多少块），据此决定**能否回退非流式**。核心方法 `handle_line(&str) -> Result<bool>`：解析一条 SSE 行、必要时推块，返回值表示「这行是不是 `data:` 行」（`saw_sse` 的判据）。
+
 **`synthesize_audio_speech(...)` — 标准协议**
 
 1. 构建请求体：`{ model, input, voice: "{model}:alex", response_format: "mp3" }`
@@ -58,6 +64,7 @@
    - `style`：风格指令（`user` 消息），默认中性提示；置为空串则不发送 `user` 消息
    - `stream`：是否走 SSE 流式，默认 `true`
 2. `stream=true` → 先试 `synthesize_chat_audio_stream`，失败降级 `synthesize_chat_audio_once`；`stream=false` → 直接非流式
+   - **但已经推给前端分块之后不再降级**（`accum.chunk_count > 0` 时直接返回错误，错误里带「已播放 N 个分块」）：那一半音频已经在用户扬声器上响过了，再合成一遍是多花一次钱、多等几秒，听感还是「读到一半跳回开头重读」。此时由前端 `player.stop()` 收场
 
 **`synthesize_chat_audio_once(...)` — chat+audio 非流式**
 
@@ -68,12 +75,14 @@
 **`synthesize_chat_audio_stream(...)` — chat+audio 流式（默认）**
 
 1. 请求体额外带 `stream:true`，音频格式**固定 `pcm16`**（官方要求，只有裸 PCM 分块能直接拼接）
-2. 用 `response.bytes_stream()` 逐块读取，按行解析 SSE（`data: {...}`）：
+2. 用 `response.bytes_stream()` 逐块读取，按行交给 `StreamAccum::handle_line` 解析 SSE（`data: {...}`）：
    - `extract_stream_audio_data` 从 `choices[0].delta.audio.data`（兼容末块 `message.audio.data`）取 base64 PCM
    - 每块 base64 解码后**先** `on_chunk(&bytes)` 实时回传前端、再累积到 PCM 缓冲（首帧延迟优先）；跨块残留的行/字节留到下次
-   - 收到 `error` 字段立即 bail
-3. 若整个响应**不含任何 `data:` 行**（服务端不支持 stream 的兼容端点）→ 整体当普通 JSON 解析，退回非流式结果
-4. 结束后 `wrap_pcm16_wav(pcm, 24000, 1)` 套 44 字节 WAV 头 → base64，返回 `SpeechResult{ audio_base64, chunk_count, sample_rate:24000 }`
+   - 收到**非 null** 的 `error` 字段立即 bail。⚠️ 必须 `.filter(|e| !e.is_null())`：`Value::get` 对「字段存在但值为 null」返回 `Some(Value::Null)`，而不少 OpenAI 兼容网关每一帧都带 `"error": null`，不滤就会第一帧即失败，表现为「边收边播开着却每次都等整段合成完」
+3. **收尾补一次 `handle_line`**：末行可能不带换行符（服务端直接断流），只靠「找 `\n`」的循环会把最后一块音频丢在残留缓冲里
+4. 若整个响应**不含任何 `data:` 行**（服务端不支持 stream 的兼容端点）→ 整体当普通 JSON 解析，退回非流式结果
+   - 解析用的是**另存的完整原文 `raw`**，不是残留的 `buffer`：逐行消费会把所有非 `data:` 行 drain 掉丢弃，格式化过（带换行）的 JSON 就这样被切碎，只剩最后一行必然解析失败。`raw` 只在确认走了 SSE 之前累积，之后立即释放，不给长音频白占一份内存
+5. 结束后 `wrap_pcm16_wav(pcm, 24000, 1)` 套 44 字节 WAV 头 → base64，返回 `SpeechResult{ audio_base64, chunk_count, sample_rate:24000 }`
 
 **辅助函数：**
 - `resolve_tts_endpoint_url(base_url)` — `build_endpoint_url(base_url, "audio/speech")` 自适应拼接（根/版本段/完整端点/`#` raw，规则见 [config.md](config.md)）。用户用 `#` raw 或完整路径指向 `.../chat/completions` 时原样返回该 chat 端点
@@ -96,20 +105,25 @@
 - 通道消息由 Tauri 保证按发送顺序投递，`end` 一定排在所有分块之后，前端无需比对分块计数
 - 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）：`chunkCount == 0` 时 `audio` 是完整音频、前端直接播；**`chunkCount > 0` 时 `audio` 被清空**（音频已逐块送达，再回传一份完整 WAV 会让长文本白白多传数 MB），前端重播时靠后端缓存
 
-> **为什么用 Channel 而不是 `app.emit`**：`app.emit` 会把负载 JSON 拼进 `eval` 脚本字符串，广播给**每一个** webview（本项目有 main/screenshot/debug/settings 四个），且必须在主线程逐条执行。长文本几百个 base64 分块会把主线程堵死，表现为「必须等整段流传完才开始播、长文本干脆播不出来」。Channel 只投递给发起调用的 webview，且大于 1KB 的二进制走 IPC 自定义协议（fetch），不进 eval 字符串。
+> **为什么用 Channel 而不是 `app.emit`**：`app.emit` 会把负载 JSON 拼进 `eval` 脚本字符串，广播给**每一个** webview（本项目有 main/screenshot/debug/settings 四个），且必须在主线程逐条执行。长文本几百个 base64 分块会把主线程堵死，表现为「必须等整段流传完才开始播、长文本干脆播不出来」。Channel 只投递给发起调用的 webview，**大于 1KB 的二进制其数据体走 IPC 自定义协议（fetch）**而不是被塞进 eval 字符串。
+>
+> 准确地说（Tauri 2.11.5 `ipc/channel.rs`）：Channel 的每条消息仍会 `webview.eval` 一小段触发代码，区别在负载本身——`Raw` 小于 `MAX_RAW_DIRECT_EXECUTE_THRESHOLD`(1KB) 时内联成 `new Uint8Array([...]).buffer`，更大则先存进 `ChannelDataIpcQueue`、由前端 `fetch` 取回。两条路径前端拿到的都是 `ArrayBuffer`。只有自定义协议 IPC 整体失败回退 `postMessage` 时形态才会变（前端 `asArrayBuffer()` 对此做了兼容）。
 
 **`synthesize_inner` 流程：**
 1. 从 `AppState.settings` 读取当前生效 TTS 配置（`tts.resolved(...)` 按 `active` 选默认或某个 provider，**四元组里已包含解析后的 `extra`**：provider 自带 extra 优先，留空才用服务级共享 extra）
 2. 使用 `base_url + model + extra + text` 生成缓存键（文本先规范化：`trim()` + `CRLF -> LF`）
 3. 命中 `AppState.tts_cache` 直接返回缓存 base64（`chunk_count=0`，不推流式分块）；未命中调用 `tts::synthesize()`，成功后写入缓存
 
-缓存为进程内内存缓存，最大 64 条，按插入顺序淘汰。保存设置时清空缓存。缓存键与协议无关（不同协议因 base_url 不同天然不撞键）。缓存存的始终是「完整音频 base64」，命中时不再推流式分块，前端整段播放。
+缓存为进程内内存缓存（`config::settings::TtsCache`），**条数与总字节数双上限**：最多 64 条、总计 64MB（`TTS_CACHE_MAX_ENTRIES` / `TTS_CACHE_MAX_BYTES`），按插入顺序淘汰，覆盖同键时正确回退字节计数；单条自身就超预算时保留它不自我淘汰。只按条数限制是不够的——一分钟语音拼出来的 WAV base64 就有 ~3.8MB，64 条塞满能占几百 MB 常驻内存。
+
+保存设置时清空缓存。缓存键与协议无关（不同协议因 base_url 不同天然不撞键）。缓存存的始终是「完整音频 base64」，命中时不再推流式分块，前端整段播放。
 
 ## 前端通道与播放
 
 - 分块走 IPC Channel：控制消息为 JSON（`{event:"start"|"end", ...}`），音频分块为二进制 `ArrayBuffer`（PCM16LE 单声道）
 - 前端 `lib/tts.ts` 的 `StreamingPcmPlayer` 逐块解码 PCM16→Float32，调度进共享 `AudioContext` 无缝排布；首块预留 0.2s 缓冲吸收网络抖动，且不早于输出设备预热完成（`AudioContext` 冷启动期间排上时间线的音频会被设备吞掉），收到 `end` 且全部播完时结束
-- **哑火兜底**：分块排进时间线却没真正出声时（WebKit 闲置 `AudioContext` 的已知表现），前端会再调一次 `synthesize_speech` 走后端缓存取完整音频整段播；因此**后端缓存必须在流式路径下也写入**（`synthesize_inner` 目前如此），否则兜底会触发一次真实重新合成
+- **哑火兜底**（两条判据）：① 后端 `chunkCount > 0` 而前端 `scheduledChunks === 0`（通道分块全被丢弃，必然静音，这条最确定）；② `playedThrough` 启发式判定分块排进时间线却没真正出声（WebKit 闲置 `AudioContext` 的已知表现）。兜底优先用**前端本地留存的 PCM** 拼出完整 WAV 整段播，省掉一次几 MB 的 IPC 往返；本地拿不到（超 16MB 上限已放弃留存）才再调 `synthesize_speech` 走后端缓存，所以**后端缓存在流式路径下也要写入**（`synthesize_inner` 目前如此）
+- **前端 WAV 拼装与后端 `wrap_pcm16_wav` 必须字节一致**：前端流式播完会本地拼 WAV 回填自己的缓存，和后端那份进同一套缓存语义。后端 `wav_bytes_match_frontend_implementation` 测试用固定向量锁死这个契约，改任一侧的 WAV 头都会先让它红
 - 详见 [docs/frontend/lib.md](../frontend/lib.md)
 
 ## API 请求格式
@@ -237,3 +251,4 @@ data: [DONE]
 - 新增会影响音频输出的默认字段时，须同步纳入缓存键（`commands/tts.rs`）
 - 前端整段播放依赖 `detectAudioMime`，新增音频格式时补充对应魔数
 - 日志前缀：`[TTS]`；日志中会带上 `协议=audio/speech|chat+audio(流式/非流式)`、`voice`、`format`、分块数、首块/总耗时，便于排查
+- **改 SSE 解析必须跑 `cargo test --lib tts`**：`tts::tests` 里既有 `handle_line` 的单元用例，也有起本地假 HTTP 服务端的端到端用例（`spawn_once`，靠 `[dev-dependencies]` 的 `tokio` net feature），覆盖末行无换行、格式化 JSON 兜底、已推块不回退这几条只在字节流层面才暴露的路径
