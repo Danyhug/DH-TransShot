@@ -55,11 +55,11 @@
 {
   translation: {
     model: "tencent/Hunyuan-MT-7B",
-    extra: '{\n  "temperature": 0.3,\n  "top_p": 0.9,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
+    extra: '{\n  "temperature": 0.3,\n  "top_p": 0.7,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
   },
   ocr: {
     model: "Qwen/Qwen3.5-4B",
-    extra: '{\n  "temperature": 0.1,\n  "top_p": 0.9,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
+    extra: '{\n  "temperature": 0.1,\n  "top_p": 0.7,\n  "max_tokens": 4096,\n  "enable_thinking": false\n}',
   },
   tts: {
     model: "FunAudioLLM/CosyVoice2-0.5B",
@@ -75,6 +75,8 @@
 ```
 
 前端默认值与后端 `config/settings.rs` 的 `Default` impl 保持一致，包含优化过的 extra 参数。实际值在主窗口 `App.tsx` 初始化或监听 `settings-saved` 事件时通过 `getSettings()` 从后端获取。
+
+> extra 里每个值是「跟随平台默认」还是「刻意偏离」（`temperature` 压低、`enable_thinking` 关掉），见 [docs/backend/config.md](../backend/config.md) 的默认值来历表。改前端这份必须同步改后端那份。
 
 **类型定义：**
 - `ServiceName = "translation" | "ocr" | "tts"` — 服务名称联合类型

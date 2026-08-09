@@ -46,11 +46,29 @@
 |------|------|--------|------|
 | `base_url` | String | 环境变量 `DEFAULT_BASE_URL`，未设置时 `"https://api.siliconflow.cn"` | 全局共享 API 基础 URL（翻译/OCR/TTS 共用） |
 | `api_key` | String | 环境变量 `DEFAULT_API_KEY`，未设置时 `""` | 全局共享 API 密钥（翻译/OCR/TTS 共用） |
-| `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | 翻译服务配置 |
-| `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.9, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
+| `translation` | ServiceConfig | model=`"tencent/Hunyuan-MT-7B"`, extra=`{"temperature":0.3, "top_p":0.7, "max_tokens":4096, "enable_thinking":false}` | 翻译服务配置 |
+| `ocr` | ServiceConfig | model=`"Qwen/Qwen3.5-4B"`, extra=`{"temperature":0.1, "top_p":0.7, "max_tokens":4096, "enable_thinking":false}` | OCR 服务配置 |
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置（默认 provider 走硅基流动 audio/speech；`enable_thinking` 是 chat completions 参数，audio/speech 无此字段，不要加） |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
 | `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `auto_read_max_units=0`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、自动朗读长度上限、流式边收边播开关） |
+
+**默认 `extra` 里每个值的来历**（据硅基流动 / 小米 MiMo 官方 API 文档，2026-08 核对）
+
+改这些值之前先分清「跟随平台默认」还是「刻意偏离」——前者随上游文档更新，后者动了会改变产品行为：
+
+| 参数 | 平台默认 | 本工具默认 | 说明 |
+|------|---------|-----------|------|
+| `temperature` | 0.7 | **0.3**（翻译）/ **0.1**（OCR） | 刻意压低换稳定输出，见 [translation.md](translation.md) |
+| `top_p` | 0.7 | 0.7 | 跟随平台（曾误填 0.9，2026-08 校正） |
+| `max_tokens` | 无默认（受模型上下文窗口约束） | 4096 | 官方示例值；别顶满窗口，留约 10k 给输入 |
+| `enable_thinking` | **true** | **false** | 刻意关掉：翻译/OCR 不需要思维链，开着只是多等几秒多花钱。仅对混合推理模型生效，`tencent/Hunyuan-MT-7B` 不在支持列表里会被忽略 |
+| TTS `speed` / `gain` | 1.0 / 0.0 | 1.0 / 0.0 | 跟随平台（范围 0.25~4.0 / -10~10） |
+| TTS `response_format` | mp3 | mp3 | 跟随平台 |
+| TTS `sample_rate` | mp3 与 wav/pcm 均 44100，opus 仅 48000 | 44100 | 跟随平台；与 `response_format` 强耦合，见 [tts.md](tts.md) |
+| MiMo `voice` / `format` | mimo_default / wav | 同左 | 见 [tts.md](tts.md)，MiMo 参数不写进默认 extra，按 provider 单独配 |
+| MiMo `stream` | false | **true** | 刻意偏离：本工具要边收边播 |
+
+> MiMo 的 chat+audio **没有 `speed` 参数**，`extra.speed` 只对 audio/speech 生效；调 MiMo 语速用 `prefix` / `style`。
 
 **`base_url` 端点自适应拼接（`api_client::build_endpoint_url`）**
 

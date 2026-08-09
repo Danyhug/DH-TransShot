@@ -26,25 +26,29 @@ interface ExtraParamPreset {
   tooltip: string;
 }
 
+// chip 的 defaultValue 一律取「服务端文档标注的默认值」，只有 temperature 例外：翻译/OCR
+// 需要的是稳定输出，点一下就填平台默认的 0.7 反而是帮倒忙。取值据硅基流动官方 API 文档 2026-08 核对。
 const chatModelPresets = (temperatureDefault: string, temperatureTip: string): ExtraParamPreset[] => [
   { key: "temperature", label: "temperature", defaultValue: temperatureDefault, tooltip: temperatureTip },
-  { key: "top_p", label: "top_p", defaultValue: "0.9", tooltip: "核采样，只从概率累计前 90% 的词中选，越低回复越固定 (0~1)" },
-  { key: "max_tokens", label: "max_tokens", defaultValue: "4096", tooltip: "单次回复最大长度，太小会被截断，建议留足输入空间" },
-  { key: "frequency_penalty", label: "frequency_penalty", defaultValue: "0", tooltip: "抑制重复用词，越高越不容易来回说同一个词 (-2.0~2.0)" },
-  { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)" },
+  { key: "top_p", label: "top_p", defaultValue: "0.7", tooltip: "核采样，只从概率累计前 70% 的词中选，越低回复越固定 (0~1)。硅基流动默认 0.7" },
+  { key: "max_tokens", label: "max_tokens", defaultValue: "4096", tooltip: "单次回复最大长度，太小会被截断，建议留足输入空间。接口本身没有默认值，上限取决于模型上下文窗口，别顶满、留约 10k 给输入" },
+  { key: "enable_thinking", label: "enable_thinking", defaultValue: "false", tooltip: "是否开启思维链。平台默认开启（true），翻译/OCR 用不上，开着只是多等几秒多花钱，故本工具默认填 false。只对混合推理模型生效（Qwen3/Qwen3.5、GLM、DeepSeek V3.1+ 等），其它模型会忽略" },
+  { key: "frequency_penalty", label: "frequency_penalty", defaultValue: "0", tooltip: "抑制重复用词，越高越不容易来回说同一个词 (-2.0~2.0)，默认 0" },
+  { key: "presence_penalty", label: "presence_penalty", defaultValue: "0", tooltip: "鼓励新话题，越高越倾向引入新内容而不是反复提旧的 (-2.0~2.0)，默认 0。硅基流动文档未列出该参数，部分服务端会忽略" },
 ];
 
 const extraParamPresets: Record<ServiceName, ExtraParamPreset[]> = {
-  translation: chatModelPresets("0.3", "平衡创造性与可靠性，越低越稳定精确，越高越发散多样 (0~2)"),
-  ocr: chatModelPresets("0.1", "平衡创造性与可靠性，OCR 识别建议设低以保证准确 (0~2)"),
+  translation: chatModelPresets("0.3", "平衡创造性与可靠性，越低越稳定精确，越高越发散多样 (0~2)。平台默认 0.7，这里压到 0.3 让译文更稳定"),
+  ocr: chatModelPresets("0.1", "平衡创造性与可靠性，OCR 识别建议设低以保证准确 (0~2)。平台默认 0.7，这里压到 0.1"),
   tts: [
     { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 冰糖、Milo），不填默认 mimo_default。两种格式互不通用，请分别写在各自提供商的参数里" },
-    { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），1.0 为正常，2.0 倍速，最小 0.25，最大 4.0" },
-    { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），0 为原始音量 (-10~10)" },
-    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，可选 mp3 / opus / wav / pcm；mp3 体积小，wav 无损，opus 适合流式" },
-    { key: "sample_rate", label: "sample_rate", defaultValue: "44100", tooltip: "采样率 Hz（audio/speech 协议），取值随 format 而变：mp3 仅 32000/44100，wav 和 pcm 支持 8000/16000/24000/32000/44100，opus 仅 48000。填了不支持的值会被服务端拒绝" },
-    { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送" },
-    { key: "stream", label: "stream", defaultValue: "true", tooltip: "小米 MiMo chat+audio 是否流式合成（边收边播依赖它），默认 true" },
+    { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），默认 1.0，2.0 为倍速，范围 0.25~4.0。小米 MiMo chat+audio 没有这个参数，调语速请用 prefix 或 style" },
+    { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），默认 0.0 即原始音量，范围 -10~10" },
+    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，默认 mp3，可选 mp3 / opus / wav / pcm；mp3 体积小，wav 无损，opus 适合流式" },
+    { key: "sample_rate", label: "sample_rate", defaultValue: "44100", tooltip: "采样率 Hz（audio/speech 协议），取值随 format 而变：mp3 仅 32000/44100（默认 44100），wav 和 pcm 支持 8000/16000/24000/32000/44100（默认 44100），opus 仅 48000。填了不支持的值会被服务端拒绝" },
+    { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送。这是本工具自带的中性提示，不是官方默认值" },
+    { key: "prefix", label: "prefix", defaultValue: "(语速偏慢)", tooltip: "小米 MiMo chat+audio 行首风格标签，拼在朗读文本最前面，用来调语速/情绪/方言（如 (语速偏慢)、(语速加快)、(慵懒)、(东北话)）。官方无默认值，不填即不加标签；没写括号会自动补上，多个风格写在同一对括号里用空格分隔" },
+    { key: "stream", label: "stream", defaultValue: "true", tooltip: "小米 MiMo chat+audio 是否流式合成（边收边播依赖它）。小米接口自身默认 false，本工具默认按 true 发送；只有 mimo-v2.5-tts 是真流式，voicedesign / voiceclone 建议填 false" },
   ],
 };
 

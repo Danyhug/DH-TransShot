@@ -17,6 +17,8 @@ const DEFAULT_CHAT_AUDIO_VOICE: &str = "mimo_default";
 const DEFAULT_CHAT_AUDIO_FORMAT: &str = "wav";
 /// chat+audio 协议默认风格指令（作为 `user` 消息），可通过 `extra.style` 覆盖为空或自定义。
 const DEFAULT_CHAT_AUDIO_STYLE: &str = "用自然、平稳、清晰的语气朗读。";
+/// 官方认可的行首风格标签左括号：半角 `()`、全角 `（）`、方括号 `[]`。
+const STYLE_TAG_OPENERS: &[char] = &['(', '（', '['];
 /// chat+audio 流式分块的 PCM 参数（小米文档：24kHz / 单声道 / PCM16LE）。
 const CHAT_AUDIO_STREAM_SAMPLE_RATE: u32 = 24000;
 const CHAT_AUDIO_STREAM_CHANNELS: u16 = 1;
@@ -182,8 +184,23 @@ struct ChatAudioOptions {
     format: String,
     /// 风格指令 / `user` 消息内容（默认中性提示；置为空串则不发送 `user` 消息）
     style: String,
+    /// 行首风格标签（如 `(语速偏慢)`），拼在 `assistant` 目标文本最前面；空串表示不加
+    prefix: String,
     /// 是否走 SSE 流式（默认 true，可用 `extra.stream=false` 关掉）
     stream: bool,
+}
+
+/// 把 `extra.prefix` 规范成官方要求的行首风格标签：空白→不加；已经以 `(`/`（`/`[` 开头→原样；
+/// 否则补一对半角括号。
+///
+/// 不自动补括号的话，`"prefix": "语速偏慢"` 会被模型当成正文**念出来**——排查时只听得见
+/// 音频开头多了四个字，看不出是配置写法问题。
+fn normalize_style_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with(STYLE_TAG_OPENERS) {
+        return trimmed.to_string();
+    }
+    format!("({})", trimmed)
 }
 
 fn parse_chat_audio_options(extra: &str) -> ChatAudioOptions {
@@ -227,21 +244,38 @@ fn parse_chat_audio_options(extra: &str) -> ChatAudioOptions {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    // prefix：行首风格标签（语速/情绪/方言）。官方规定它只在 assistant 目标文本**开头**
+    // 生效，塞进 style（user 消息）不认；反过来自然语言描述也只在 user 里生效
+    let prefix = normalize_style_prefix(
+        extra_json
+            .get("prefix")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default(),
+    );
+
     ChatAudioOptions {
         voice: voice.to_string(),
         format: format.to_string(),
         style: style.to_string(),
+        prefix,
         stream,
     }
 }
 
-/// 组织 chat+audio 的 `messages`（官方约定）：`user`=风格指令，`assistant`=要朗读的文本。
-fn build_chat_audio_messages(style: &str, text: &str) -> Vec<serde_json::Value> {
+/// 组织 chat+audio 的 `messages`（官方约定）：`user`=自然语言风格指令，
+/// `assistant`=行首风格标签 + 要朗读的文本。
+///
+/// 两种风格控制的位置是官方硬性规定、不能互换：自然语言描述只在 `user` 里生效，
+/// `(慵懒)`、`(语速偏慢)` 这类标签只在 `assistant` 文本**开头**生效。
+fn build_chat_audio_messages(style: &str, prefix: &str, text: &str) -> Vec<serde_json::Value> {
     let mut messages = Vec::new();
     if !style.is_empty() {
         messages.push(serde_json::json!({ "role": "user", "content": style }));
     }
-    messages.push(serde_json::json!({ "role": "assistant", "content": text }));
+    messages.push(serde_json::json!({
+        "role": "assistant",
+        "content": format!("{prefix}{text}")
+    }));
     messages
 }
 
@@ -297,17 +331,18 @@ async fn synthesize_chat_audio_once(
     text: &str,
 ) -> anyhow::Result<String> {
     info!(
-        "[TTS] 协议=chat+audio(非流式), 发送请求到 {}, model={}, voice={}, format={}, 文本长度={}",
+        "[TTS] 协议=chat+audio(非流式), 发送请求到 {}, model={}, voice={}, format={}, prefix={}, 文本长度={}",
         url,
         model,
         opts.voice,
         opts.format,
+        opts.prefix,
         text.len()
     );
 
     let request_body = serde_json::json!({
         "model": model,
-        "messages": build_chat_audio_messages(&opts.style, text),
+        "messages": build_chat_audio_messages(&opts.style, &opts.prefix, text),
         "audio": { "format": opts.format, "voice": opts.voice }
     });
 
@@ -417,16 +452,17 @@ async fn synthesize_chat_audio_stream(
     accum: &mut StreamAccum<'_>,
 ) -> anyhow::Result<SpeechResult> {
     info!(
-        "[TTS] 协议=chat+audio(流式), 发送请求到 {}, model={}, voice={}, format=pcm16, 文本长度={}",
+        "[TTS] 协议=chat+audio(流式), 发送请求到 {}, model={}, voice={}, format=pcm16, prefix={}, 文本长度={}",
         url,
         model,
         opts.voice,
+        opts.prefix,
         text.len()
     );
 
     let request_body = serde_json::json!({
         "model": model,
-        "messages": build_chat_audio_messages(&opts.style, text),
+        "messages": build_chat_audio_messages(&opts.style, &opts.prefix, text),
         "audio": { "format": "pcm16", "voice": opts.voice },
         "stream": true
     });
@@ -596,6 +632,55 @@ mod tests {
 
     fn data_line(b64: &str) -> String {
         format!(r#"data: {{"choices":[{{"delta":{{"audio":{{"data":"{b64}"}}}}}}]}}"#)
+    }
+
+    /// 裸标签必须自动补括号：不补的话模型会把「语速偏慢」四个字当正文念出来
+    #[test]
+    fn style_prefix_gets_wrapped_when_bare() {
+        assert_eq!(normalize_style_prefix("语速偏慢"), "(语速偏慢)");
+        assert_eq!(
+            normalize_style_prefix("  语速加快 温柔  "),
+            "(语速加快 温柔)"
+        );
+    }
+
+    /// 三种官方括号（半角 / 全角 / 方括号）都算「已经是标签」，不能再套一层
+    #[test]
+    fn style_prefix_keeps_existing_brackets() {
+        assert_eq!(normalize_style_prefix("(慵懒)"), "(慵懒)");
+        assert_eq!(normalize_style_prefix("（东北话）"), "（东北话）");
+        assert_eq!(normalize_style_prefix("[唱歌]"), "[唱歌]");
+        // 行首标签后面还能跟行内音频标签，整串原样透传
+        assert_eq!(normalize_style_prefix("(平静)[吸气]"), "(平静)[吸气]");
+    }
+
+    #[test]
+    fn style_prefix_empty_stays_empty() {
+        assert_eq!(normalize_style_prefix(""), "");
+        assert_eq!(normalize_style_prefix("   "), "");
+    }
+
+    #[test]
+    fn parse_options_reads_prefix() {
+        let opts = parse_chat_audio_options(r#"{"prefix":"语速偏慢"}"#);
+        assert_eq!(opts.prefix, "(语速偏慢)");
+        // 没配就是空串，行为与加这个键之前完全一致
+        assert_eq!(parse_chat_audio_options("").prefix, "");
+    }
+
+    /// 位置是官方硬性规定：标签只在 assistant 文本**开头**生效，混进 user 消息不认
+    #[test]
+    fn prefix_goes_to_head_of_assistant_text() {
+        let messages = build_chat_audio_messages("平稳朗读。", "(语速偏慢)", "你好世界");
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "平稳朗读。");
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[1]["content"], "(语速偏慢)你好世界");
+
+        // style 为空则不发 user 消息，此时 assistant 仍带标签
+        let only_prefix = build_chat_audio_messages("", "(慵懒)", "你好");
+        assert_eq!(only_prefix.len(), 1);
+        assert_eq!(only_prefix[0]["content"], "(慵懒)你好");
     }
 
     #[test]

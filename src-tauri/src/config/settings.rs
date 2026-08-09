@@ -183,6 +183,17 @@ fn default_api_key() -> String {
     std::env::var("DEFAULT_API_KEY").unwrap_or_default()
 }
 
+/// 首次启动（或配置文件缺字段）时写入的默认配置。
+///
+/// extra 里的值分两类，改动前先分清楚（据硅基流动官方 API 文档，2026-08 核对）：
+/// - **跟随平台默认**：`top_p`=0.7、`max_tokens`=4096（接口本身无默认，取决于模型上下文窗口）、
+///   TTS 的 `speed`=1.0 / `response_format`=mp3 / `sample_rate`=44100（mp3 与 wav/pcm 同为 44100，
+///   opus 只有 48000）
+/// - **刻意偏离平台默认**：`temperature` 平台默认 0.7，这里压到 0.3（翻译）/ 0.1（OCR）换取稳定；
+///   `enable_thinking` 平台默认 **true**，这里显式关掉——翻译/OCR 不需要思维链，开着只是白等白花钱
+///
+/// 注意 `enable_thinking` 只对部分模型有效（`tencent/Hunyuan-MT-7B` 不在支持列表里，会被忽略），
+/// 留着是为了换成 Qwen3.5 / GLM 这类混合推理模型时不会突然多出一段思考。
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -192,7 +203,7 @@ impl Default for Settings {
                 "tencent/Hunyuan-MT-7B",
                 r#"{
   "temperature": 0.3,
-  "top_p": 0.9,
+  "top_p": 0.7,
   "max_tokens": 4096,
   "enable_thinking": false
 }"#,
@@ -201,7 +212,7 @@ impl Default for Settings {
                 "Qwen/Qwen3.5-4B",
                 r#"{
   "temperature": 0.1,
-  "top_p": 0.9,
+  "top_p": 0.7,
   "max_tokens": 4096,
   "enable_thinking": false
 }"#,

@@ -197,6 +197,8 @@
 - `自定义参数`(extra) 的**编辑目标跟随当前选中的提供商**：选「默认」→ 编辑服务级共享 extra（默认提供商 + 未单独配置的提供商共用）；选某个提供商 → 编辑该提供商专属 extra（留空继承共享，填写则**整体覆盖**，不逐键合并）
 - 提供商作用域下若 extra 为空，额外显示 `⤵ 复制共享参数` chip，把共享 extra 复制过来再改
 - 预设 chip 点击后合并进当前目标的 JSON，已存在的 chip 置灰禁用；`voice` 预设的默认值取当前生效模型（provider.model 优先于 svc.model）
+- chip 的 `defaultValue` 一律填**服务端文档标注的默认值**（据官方文档 2026-08 核对），只有 `temperature` 例外：翻译/OCR 要稳定输出，填的是 0.3 / 0.1 而非平台默认 0.7。各值来历见 [docs/backend/config.md](../backend/config.md)
+- TTS 的预设 chip 混着两套协议的参数，tooltip 里标了各自适用范围：`speed`/`gain`/`response_format`/`sample_rate` 只对 audio/speech 生效；`style`/`prefix`/`stream` 只对小米 MiMo chat+audio 生效（MiMo 没有 `speed`，调语速用 `prefix`，如 `(语速偏慢)`，详见 [docs/backend/tts.md](../backend/tts.md)）
 - 典型用途：TTS 同时挂硅基流动（audio/speech，`voice` 为 `模型名:音色`）和小米 MiMo（chat+audio，`voice` 为裸音色名），两套参数互不兼容，必须分开放
 - 切换/编辑直接写入 `settings[service].active` / `providers`，保存时一并下发
 

@@ -10,6 +10,13 @@ interface SettingsState {
   updateService: (service: ServiceName, key: keyof ServiceConfig, value: string) => void;
 }
 
+/**
+ * 与后端 `Settings::default()` 一一对应，改一边必须同步另一边。
+ *
+ * extra 的取值依据（硅基流动官方 API 文档，2026-08 核对）：`top_p` / `max_tokens` /
+ * TTS 那几个跟随平台默认；`temperature`（平台 0.7）与 `enable_thinking`（平台 true）
+ * 是刻意偏离——翻译/OCR 要的是稳定输出，不需要思维链。
+ */
 export const defaultSettings: Settings = {
   base_url: "",
   api_key: "",
@@ -17,7 +24,7 @@ export const defaultSettings: Settings = {
     model: "tencent/Hunyuan-MT-7B",
     extra: `{
   "temperature": 0.3,
-  "top_p": 0.9,
+  "top_p": 0.7,
   "max_tokens": 4096,
   "enable_thinking": false
 }`,
@@ -28,7 +35,7 @@ export const defaultSettings: Settings = {
     model: "Qwen/Qwen3.5-4B",
     extra: `{
   "temperature": 0.1,
-  "top_p": 0.9,
+  "top_p": 0.7,
   "max_tokens": 4096,
   "enable_thinking": false
 }`,
