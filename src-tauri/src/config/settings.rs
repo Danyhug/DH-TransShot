@@ -276,6 +276,8 @@ pub struct AppState {
     pub frozen_monitors: Mutex<Vec<MonitorInfo>>,
     pub tts_cache: Mutex<TtsCache>,
     pub http_client: reqwest::Client,
+    /// 本地音频输出（朗读播放）。播放放在 Rust 侧而不是 WebView，原因见 `crate::audio`
+    pub audio: crate::audio::AudioOutput,
 }
 
 impl Default for AppState {
@@ -288,6 +290,7 @@ impl Default for AppState {
             frozen_monitors: Mutex::new(Vec::new()),
             tts_cache: Mutex::new(TtsCache::default()),
             http_client: reqwest::Client::new(),
+            audio: crate::audio::AudioOutput::default(),
         }
     }
 }

@@ -44,7 +44,7 @@ const extraParamPresets: Record<ServiceName, ExtraParamPreset[]> = {
     { key: "voice", label: "voice", defaultValue: "", tooltip: "音色。audio/speech 协议格式为「模型名:音色名」（如 FunAudioLLM/CosyVoice2-0.5B:alex）；小米 MiMo chat+audio 填裸名字（如 冰糖、Milo），不填默认 mimo_default。两种格式互不通用，请分别写在各自提供商的参数里" },
     { key: "speed", label: "speed", defaultValue: "1.0", tooltip: "语速（audio/speech 协议），默认 1.0，2.0 为倍速，范围 0.25~4.0。小米 MiMo chat+audio 没有这个参数，调语速请用 prefix 或 style" },
     { key: "gain", label: "gain", defaultValue: "0.0", tooltip: "音量增益 dB（audio/speech 协议），默认 0.0 即原始音量，范围 -10~10" },
-    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，默认 mp3，可选 mp3 / opus / wav / pcm；mp3 体积小，wav 无损，opus 适合流式" },
+    { key: "response_format", label: "format", defaultValue: "mp3", tooltip: "audio/speech 输出格式，默认 mp3。本地播放支持 mp3 / wav（mp3 体积小，wav 无损）；opus 与裸 pcm 本地解码器不支持，填了会播不出来" },
     { key: "sample_rate", label: "sample_rate", defaultValue: "44100", tooltip: "采样率 Hz（audio/speech 协议），取值随 format 而变：mp3 仅 32000/44100（默认 44100），wav 和 pcm 支持 8000/16000/24000/32000/44100（默认 44100），opus 仅 48000。填了不支持的值会被服务端拒绝" },
     { key: "style", label: "style", defaultValue: "用自然、平稳、清晰的语气朗读。", tooltip: "小米 MiMo chat+audio 风格指令（user 消息），可描述语气/情感/角色；置空则不发送。这是本工具自带的中性提示，不是官方默认值" },
     { key: "prefix", label: "prefix", defaultValue: "(语速偏慢)", tooltip: "小米 MiMo chat+audio 行首风格标签，拼在朗读文本最前面，用来调语速/情绪/方言（如 (语速偏慢)、(语速加快)、(慵懒)、(东北话)）。官方无默认值，不填即不加标签；没写括号会自动补上，多个风格写在同一对括号里用空格分隔" },

@@ -72,16 +72,17 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 ### tts.rs
 
-两个命令共用私有 `synthesize_inner`（规范化文本 → 读配置 → 查缓存 → `tts::synthesize()` → 写缓存）。
+**`speak_text(state, text, on_event) -> Result<(), String>`**
+- 合成 → 送进本地输出设备 → **播完才返回**。合成走私有 `synthesize_inner`（规范化文本 → 读配置 → 查缓存 → `tts::synthesize()` → 写缓存），Mutex 锁的作用域尽量小，取完配置即释放
+- **音频不过 IPC**：`on_event: Channel<InvokeResponseBody>` 上只有一条 JSON 控制消息 `{"event":"start"}`（第一段音频已送入输出设备，前端据此熄灭加载态）
+- 调用即抢占上一段朗读；边收边播与否由后端读 `settings.speech.stream_playback` 决定
+- 等播完的循环靠 `AudioOutput::is_current()`（被抢占）和播放位置停滞（设备断开）两条路径退出，不会挂死
 
-**`synthesize_speech(state, text) -> Result<String, String>`**
-- 非流式回调，返回完整音频 base64（可能是 mp3/wav，格式随协议）
-- Mutex 锁的作用域尽量小，取完配置即释放
+**`stop_speech(state)`**
+- `state.audio.stop()`，停当前朗读并关闭输出设备
 
-**`synthesize_speech_stream(state, text, on_chunk) -> Result<SpeechResponse, String>`**
-- 边收边播版本：`on_chunk: Channel<InvokeResponseBody>` 是前端传入的 IPC Channel，分块以二进制 `Raw(pcm)` 实时下发，首尾各一条 JSON 控制消息（`start` 带 `sampleRate`/`channels`，`end` 带 `chunkCount`）
-- 用 Channel 而非 `app.emit`：后者把负载拼进 `eval` 广播给所有 webview，长文本几百个分块会堵死主线程
-- 返回 `SpeechResponse{ audio, chunkCount, sampleRate }`（camelCase）；`chunkCount==0` 时前端直接播 `audio`，`chunkCount>0` 时 `audio` 为空串（音频已逐块送达）
+> 播放为什么不放在 WebView：主窗口失焦自动隐藏后 WebKit 会让 `AudioContext` 空转渲染（日志一切正常却一声不响），详见 [audio.md](audio.md)。
+
 - 详见 [tts.md](tts.md)
 
 ### clipboard.rs
@@ -113,7 +114,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 ## 依赖关系
 
-- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`、`tts`、`base64`
+- **依赖**：`config::AppState`、`config::Settings`、`screenshot`、`ocr`、`translation::OpenAiCompatProvider`、`tts`、`audio`、`base64`
 - **被依赖**：`lib.rs` 中通过 `generate_handler!` 注册
 - **前端对应**：`src/lib/invoke.ts` 中的类型化封装函数
 

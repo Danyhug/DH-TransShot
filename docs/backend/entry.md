@@ -60,7 +60,7 @@ pub fn run() {
 - `translate_text`
 - `get_settings`、`save_settings`
 - `read_clipboard`、`copy_image_to_clipboard`、`read_selected_text`、`save_file`
-- `synthesize_speech`、`synthesize_speech_stream`
+- `speak_text`、`stop_speech`
 - `suspend_hotkeys`、`resume_hotkeys`
 
 ### main.rs

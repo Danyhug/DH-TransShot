@@ -62,36 +62,28 @@ export async function saveFile(path: string, base64Data: string): Promise<void> 
   return invoke("save_file", { path, base64Data });
 }
 
-export async function synthesizeSpeech(text: string): Promise<string> {
-  return invoke("synthesize_speech", { text });
-}
-
-export interface SpeechResponse {
-  /** 完整音频 base64；走了流式分块（chunkCount > 0）时为空串，音频已由通道逐块送达 */
-  audio: string;
-  /** 本次推送的流式分块数量；0 表示直接播放 audio */
-  chunkCount: number;
-  /** 流式分块采样率 (Hz)，非流式为 0 */
-  sampleRate: number;
-}
-
-/** 流式通道上的控制消息（JSON）；音频分块则以 ArrayBuffer 直接送达。 */
-export type TtsStreamMessage =
-  | { event: "start"; sampleRate: number; channels: number }
-  | { event: "end"; chunkCount: number };
-
-/** 通道消息：二进制 = PCM16LE 分块，对象 = 控制消息。 */
-export type TtsStreamPayload = ArrayBuffer | TtsStreamMessage;
+/**
+ * 播放状态消息。音频本身**不过 IPC**——由 Rust 侧直接送进输出设备，
+ * 这里只剩「已经出声了」这一个信号（前端据此熄灭加载态）。
+ */
+export type TtsPlaybackMessage = { event: "start" };
 
 /**
- * 边收边播版本：分块通过 IPC Channel 以二进制实时推送（顺序由 Tauri 保证）。
- * 用 Channel 而非全局事件，避免大分块被塞进 `eval` 字符串堵死主线程。
+ * 朗读一段文本：后端合成 + 本地播放，**播完才 resolve**。
+ *
+ * 调用即抢占上一段朗读，不需要先调 `stopSpeech()`——两个 invoke 谁先到达没有保证，
+ * 先停后播反而可能把新的这段停掉。
  */
-export async function synthesizeSpeechStream(
+export async function speakText(
   text: string,
-  onChunk: Channel<TtsStreamPayload>
-): Promise<SpeechResponse> {
-  return invoke("synthesize_speech_stream", { text, onChunk });
+  onEvent: Channel<TtsPlaybackMessage>
+): Promise<void> {
+  return invoke("speak_text", { text, onEvent });
+}
+
+/** 停止当前朗读。 */
+export async function stopSpeech(): Promise<void> {
+  return invoke("stop_speech");
 }
 
 export async function suspendHotkeys(): Promise<void> {

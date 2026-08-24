@@ -136,6 +136,7 @@ pub struct AppState {
     pub frozen_monitors: Mutex<Vec<serde_json::Value>>,
     pub tts_cache: Mutex<TtsCache>,
     pub http_client: reqwest::Client,
+    pub audio: crate::audio::AudioOutput,   // 本地音频输出（朗读播放）
 }
 ```
 

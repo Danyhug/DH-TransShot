@@ -98,7 +98,8 @@ appLog.error("[Settings] 配置保存失败: " + String(e));
    - `[Settings]` — 配置读写（commands/settings.rs）
    - `[Hotkey]` — 快捷键（hotkey.rs）
    - `[Tray]` — 系统托盘（tray.rs）
-   - `[TTS]` — TTS 语音合成（tts/mod.rs）
+   - `[TTS]` — TTS 语音合成（tts/mod.rs + commands/tts.rs）
+   - `[Audio]` — 本地音频输出（audio/mod.rs）
 2. **日志级别**：
    - `info!` — 命令入口、API 请求/响应状态、操作完成
    - `warn!` — 配置缺失、API Key 为空等非致命情况
@@ -134,6 +135,7 @@ error!("[OCR] API 错误 ({}): {}", status, body);
 | [docs/backend/tray.md](docs/backend/tray.md) | `tray.rs` | 系统托盘菜单与事件路由 |
 | [docs/backend/hotkey.md](docs/backend/hotkey.md) | `hotkey.rs` | 全局快捷键注册与事件发射 |
 | [docs/backend/tts.md](docs/backend/tts.md) | `tts/` | TTS 语音合成（OpenAI 兼容 Audio Speech API） |
+| [docs/backend/audio.md](docs/backend/audio.md) | `audio/` | 本地音频输出（rodio/cpal）：朗读播放、抢占、设备生命周期 |
 
 ### 前端模块（src/）
 
@@ -178,7 +180,9 @@ src-tauri/src/
 ├── config/                     # 配置与全局状态
 │   ├── mod.rs
 │   └── settings.rs
-├── tts/                        # TTS 语音合成
+├── tts/                        # TTS 语音合成（合成，不含播放）
+│   └── mod.rs
+├── audio/                      # 本地音频输出（rodio/cpal，朗读播放）
 │   └── mod.rs
 ├── tray.rs                     # 系统托盘
 └── hotkey.rs                   # 全局快捷键
@@ -200,7 +204,7 @@ src/
 │   └── common/
 ├── hooks/                      # 业务逻辑 Hooks
 ├── stores/                     # Zustand 状态管理（含 ttsStore 朗读状态）
-├── lib/                        # 工具函数（含 tts.ts 共享朗读/流式播放）
+├── lib/                        # 工具函数（含 tts.ts 朗读编排；播放本身在 Rust 侧）
 ├── types/                      # TypeScript 类型
 └── styles/                     # 全局样式
 ```
@@ -226,6 +230,8 @@ pnpm tauri build        # 构建生产版本
 pnpm exec tsc --noEmit  # TypeScript 类型检查
 pnpm exec vite build    # 仅构建前端
 cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
+cargo test --lib        # Rust 单元测试
+cargo test --lib -- --ignored --test-threads=1   # 音频真机用例（需输出设备，灌静音不发声）
 ```
 
 ## 发版流程

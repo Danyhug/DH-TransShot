@@ -25,12 +25,12 @@
 
 | 事件 | 处理逻辑 |
 |------|---------|
-| `onFocusChanged` | 获得焦点时 `primeAudio()` 预热音频链路；失焦时关闭 settings/debug-log 子窗口后隐藏主窗口（非置顶且焦点未转到子窗口时） |
+| `onFocusChanged` | 失焦时关闭 settings/debug-log 子窗口后隐藏主窗口（非置顶且焦点未转到子窗口时） |
 | `region-selected` | 根据 mode 执行 OCR+翻译流程或仅截图 |
 | `tray-action` | 路由到 `handleAction()` |
 | `hotkey-action` | 路由到 `handleAction()` |
 
-**音频链路预热（`primeAudio()`，来自 `lib/tts.ts`）：** 挂载时 + 每次主窗口获得焦点时调用。主窗口平时是隐藏的，快捷键唤出后紧接着就可能自动朗读；提前建好 `AudioContext` 并唤醒输出设备，避免第一段流式 PCM 在音频设备冷启动期间起播被吞掉（详见 [lib.md](lib.md)）。
+**失焦自动隐藏与朗读无关**：朗读的音频由 Rust 侧直接送进输出设备，窗口隐藏不影响播放（早先播放在 WebView 里时，窗口一隐藏 WebKit 就会让 `AudioContext` 空转渲染、整段静音，详见 [lib.md](lib.md) 与 [backend/audio.md](../backend/audio.md)）。
 
 **`handleAction(action)` 路由：**
 - `"screenshot"` → `startRegion("screenshot")`

@@ -58,7 +58,7 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 | `tray-action` | 后端 → 前端 | `string`（同上） | 托盘菜单触发 |
 | `settings-saved` | 设置窗口 → 主窗口 | — | 设置保存后通知主窗口重载配置 |
 
-> TTS 流式 PCM 分块**不走事件系统**，而是走 `synthesize_speech_stream` 的 IPC Channel 参数（二进制 `ArrayBuffer` + JSON 控制消息）。`app.emit` 会把负载拼进 `eval` 字符串广播给所有 webview，音频这类高频大负载会堵死主线程。详见 [backend/tts.md](backend/tts.md)。
+> 朗读的**音频数据完全不经过前端**：`speak_text` 合成后直接把 PCM 送进操作系统输出设备，IPC Channel 上只回传一条 `{event:"start"}`。这样窗口隐藏（本项目失焦即隐藏）不会影响播放——播放放在 WebView 里时，WebKit 会在窗口被遮挡后让 `AudioContext` 空转渲染，日志一切正常却一声不响。详见 [backend/audio.md](backend/audio.md)。
 
 ## 核心工作流
 
@@ -151,6 +151,7 @@ pub struct AppState {
     pub frozen_monitors: Mutex<Vec<MonitorInfo>>,   // 冻结的显示器信息列表
     pub tts_cache: Mutex<TtsCache>,                 // TTS 内存缓存
     pub http_client: reqwest::Client,               // 共享 HTTP 客户端（连接池复用）
+    pub audio: audio::AudioOutput,                  // 本地音频输出（朗读播放）
 }
 ```
 
@@ -191,9 +192,10 @@ lib.rs（入口）
   │     ├── translation → translation/openai_compat + api_client
   │     ├── settings → config/settings
   │     ├── clipboard
-  │     └── tts → tts/
+  │     └── tts → tts/（合成）+ audio/（播放）
   ├── config/（应用状态 + 配置结构体）
   ├── tts/（TTS 语音合成）
+  ├── audio/（本地音频输出 - rodio/cpal）
   ├── tray.rs（系统托盘 → emit 事件）
   └── hotkey.rs（全局快捷键 → emit 事件）
 

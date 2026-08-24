@@ -4,7 +4,7 @@ use futures_util::StreamExt;
 use log::{error, info, warn};
 use reqwest::Client;
 use serde::Deserialize;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// chat+audio 协议默认音色（如小米 MiMo），可通过 `extra.voice` 覆盖。
 /// 注意：这是「裸名字」音色（如 `Milo`），不同于 audio/speech 协议的 `{model}:alex` 形态。
@@ -55,9 +55,35 @@ impl std::fmt::Debug for SpeechResult {
     }
 }
 
-/// 流式分块回调：参数是**已解码的 PCM16LE 裸字节**（不是 base64）。
-/// 命令层把它原样写进 IPC Channel 的二进制消息，避免 base64 膨胀与 JSON 转义。
-pub type ChunkSink<'a> = &'a (dyn Fn(&[u8]) + Send + Sync);
+/// 流式分块出口：命令层把分块直接送进本地音频输出（[`crate::audio`]）。
+pub trait StreamSink: Send + Sync {
+    /// 一块**已解码的 PCM16LE 裸字节**（不是 base64）。
+    fn chunk(&self, pcm: &[u8]);
+    /// 丢弃已经排进播放队列的音频。
+    ///
+    /// 流刚开头就断、要整段重来时调用；不丢的话重来的整段音频会和它叠在一起。
+    fn discard(&self);
+}
+
+pub type ChunkSink<'a> = &'a dyn StreamSink;
+
+/// 流式中断后「已经播出去这么久」就不再回退整段重来（秒）。
+///
+/// - 阈值以上：那段音频已经在扬声器上响过了，重来一遍是多花一次钱、多等几秒，
+///   听感还是「读到一半跳回开头重读」
+/// - 阈值以下：用户其实什么都没听到——线上出现过 501 字的文本只推了 1 块（0.16s）就断流，
+///   当时「推过块就绝不回退」的规则让这次朗读变成「什么都没播还报个错」
+const MIN_PLAYED_SECS_TO_KEEP: f64 = 2.0;
+
+/// 流式读取的静默上限：这么久没收到新数据就判定上游卡死。
+///
+/// 共享的 reqwest client 没设任何超时，不加这一层上游挂住就一直挂着——线上出现过
+/// 首块之后 15s 才断流、整段朗读白等的情况。小米首块通常 1~8s 到、块间隔 0.32s 量级，
+/// 20s 已经宽松得多。
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// 非流式合成的整体超时：一次请求要等模型把整段音频合完，给得比流式宽松。
+const WHOLE_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// chat+audio 流式分块的采样率（Hz），供命令层告知前端。
 pub fn stream_sample_rate() -> u32 {
@@ -152,7 +178,10 @@ async fn synthesize_audio_speech(
     // extra can override voice, speed, gain, etc.
     merge_extra(&mut request_body, extra, "TTS");
 
-    let mut req = client.post(url).json(&request_body);
+    let mut req = client
+        .post(url)
+        .json(&request_body)
+        .timeout(WHOLE_REQUEST_TIMEOUT);
     if !api_key.is_empty() {
         req = req.bearer_auth(api_key);
     } else {
@@ -301,17 +330,31 @@ async fn synthesize_chat_audio(
             .await
         {
             Ok(result) => return Ok(result),
-            Err(e) if accum.chunk_count > 0 => {
+            Err(e) if accum.played_secs() >= MIN_PLAYED_SECS_TO_KEEP => {
                 error!(
-                    "[TTS] 流式合成中断（已推送 {} 个分块），不回退非流式: {}",
-                    accum.chunk_count, e
+                    "[TTS] 流式合成中断（已播放 {:.1}s / {} 个分块），不回退非流式: {}",
+                    accum.played_secs(),
+                    accum.chunk_count,
+                    e
                 );
                 return Err(e.context(format!(
-                    "流式合成中断（已播放 {} 个分块）",
-                    accum.chunk_count
+                    "流式合成中断（已播放 {:.1}s）",
+                    accum.played_secs()
                 )));
             }
-            Err(e) => warn!("[TTS] 流式合成失败，回退非流式: {}", e),
+            Err(e) => {
+                if accum.chunk_count > 0 {
+                    warn!(
+                        "[TTS] 流式合成在开头就中断（已播放 {:.1}s / {} 个分块），丢弃已播部分并回退非流式: {}",
+                        accum.played_secs(),
+                        accum.chunk_count,
+                        e
+                    );
+                    accum.discard();
+                } else {
+                    warn!("[TTS] 流式合成失败，回退非流式: {}", e);
+                }
+            }
         }
     }
 
@@ -346,7 +389,10 @@ async fn synthesize_chat_audio_once(
         "audio": { "format": opts.format, "voice": opts.voice }
     });
 
-    let mut req = client.post(url).json(&request_body);
+    let mut req = client
+        .post(url)
+        .json(&request_body)
+        .timeout(WHOLE_REQUEST_TIMEOUT);
     if !api_key.is_empty() {
         req = req.bearer_auth(api_key);
     } else {
@@ -379,8 +425,13 @@ struct StreamAccum<'a> {
     on_chunk: Option<ChunkSink<'a>>,
     /// 累积的完整 PCM16LE（结束后套 WAV 头，供缓存与重播）
     pcm: Vec<u8>,
-    /// 已推送给前端的分块数
+    /// **已送去播放**的分块数；没有 sink（关掉了边收边播）时恒为 0。
+    ///
+    /// 不是「解析出多少帧」——命令层拿它判断「还需不需要整段播一遍」，
+    /// 关掉边收边播时一块都没送出去，它必须保持 0，否则会「合成成功但什么都不播」。
     chunk_count: usize,
+    /// 已送去播放的字节数（换算成秒，用于「断流后还要不要整段重来」的判据）
+    pushed_bytes: usize,
     first_chunk_ms: Option<u128>,
     started: Instant,
 }
@@ -391,9 +442,27 @@ impl<'a> StreamAccum<'a> {
             on_chunk,
             pcm: Vec::new(),
             chunk_count: 0,
+            pushed_bytes: 0,
             first_chunk_ms: None,
             started: Instant::now(),
         }
+    }
+
+    /// 已经送进播放队列的音频时长（秒）。判「回退还是保留」用它而不是分块数：
+    /// 一块只有 0.16~0.32s，块数多少跟用户到底听到没听到不是一回事。
+    fn played_secs(&self) -> f64 {
+        let bytes_per_sec =
+            CHAT_AUDIO_STREAM_SAMPLE_RATE as usize * CHAT_AUDIO_STREAM_CHANNELS as usize * 2;
+        self.pushed_bytes as f64 / bytes_per_sec as f64
+    }
+
+    /// 丢掉已经排进播放队列的音频（回退整段重来前调用）。
+    fn discard(&mut self) {
+        if let Some(sink) = self.on_chunk {
+            sink.discard();
+        }
+        self.chunk_count = 0;
+        self.pushed_bytes = 0;
     }
 
     /// 处理一条 SSE 行；返回该行**是否为 `data:` 行**（用于判定服务端是否真的走了 SSE）。
@@ -420,15 +489,16 @@ impl<'a> StreamAccum<'a> {
         };
         match base64::engine::general_purpose::STANDARD.decode(data) {
             Ok(bytes) => {
-                // 先推给前端再累积：边收边播的首帧延迟优先于本地缓冲
+                // 先送去播放再累积：边收边播的首帧延迟优先于本地缓冲
                 if let Some(sink) = self.on_chunk {
-                    sink(&bytes);
+                    sink.chunk(&bytes);
+                    self.chunk_count += 1;
+                    self.pushed_bytes += bytes.len();
                 }
                 self.pcm.extend_from_slice(&bytes);
                 if self.first_chunk_ms.is_none() {
                     self.first_chunk_ms = Some(self.started.elapsed().as_millis());
                 }
-                self.chunk_count += 1;
             }
             Err(e) => warn!("[TTS] 流式分块 base64 解码失败: {}", e),
         }
@@ -474,7 +544,15 @@ async fn synthesize_chat_audio_stream(
         warn!("[TTS] API Key 为空");
     }
 
-    let response = req.send().await?;
+    // 只等响应头。不能用 `RequestBuilder::timeout`——那个会把整段流式响应体也算进去
+    let response = tokio::time::timeout(STREAM_IDLE_TIMEOUT, req.send())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "TTS 流式请求超时（{}s 未收到响应）",
+                STREAM_IDLE_TIMEOUT.as_secs()
+            )
+        })??;
     let status = response.status();
 
     if !status.is_success() {
@@ -491,7 +569,16 @@ async fn synthesize_chat_audio_stream(
     let mut raw: Vec<u8> = Vec::new();
     let mut saw_sse = false;
 
-    while let Some(item) = stream.next().await {
+    loop {
+        let next = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "TTS 流式响应超时（{}s 未收到新数据）",
+                    STREAM_IDLE_TIMEOUT.as_secs()
+                )
+            })?;
+        let Some(item) = next else { break };
         let bytes = item?;
         buffer.extend_from_slice(&bytes);
         if !saw_sse {
@@ -536,7 +623,7 @@ async fn synthesize_chat_audio_stream(
         CHAT_AUDIO_STREAM_CHANNELS,
     );
     info!(
-        "[TTS] 流式合成完成, 分块数={}, PCM={}bytes, 首块耗时={}ms, 总耗时={}ms",
+        "[TTS] 流式合成完成, 已播分块数={}, PCM={}bytes, 首块耗时={}ms, 总耗时={}ms",
         accum.chunk_count,
         accum.pcm.len(),
         accum.first_chunk_ms.unwrap_or(0),
@@ -685,11 +772,24 @@ mod tests {
 
     #[test]
     fn handle_line_collects_pcm() {
-        let mut accum = StreamAccum::new(None);
+        let sink = RecordingSink::default();
+        let mut accum = StreamAccum::new(Some(&sink));
         // "AAEC" -> [0x00, 0x01, 0x02]
         assert!(accum.handle_line(&data_line("AAEC")).unwrap());
         assert_eq!(accum.chunk_count, 1);
         assert_eq!(accum.pcm, vec![0x00, 0x01, 0x02]);
+    }
+
+    /// 关掉边收边播（`on_chunk = None`）时一块都没送去播放，`chunk_count` 必须是 0。
+    /// 它要是跟着解析帧数走，命令层会以为「已经播过了」而什么都不播——听感是彻底静音。
+    #[test]
+    fn chunk_count_stays_zero_without_a_sink() {
+        let mut accum = StreamAccum::new(None);
+        assert!(accum.handle_line(&data_line("AAEC")).unwrap());
+        assert!(accum.handle_line(&data_line("AwQF")).unwrap());
+        assert_eq!(accum.chunk_count, 0, "没送去播放就不该计数");
+        assert_eq!(accum.played_secs(), 0.0);
+        assert_eq!(accum.pcm.len(), 6, "但完整音频照样要攒出来");
     }
 
     /// 非 `data:` 行不算 SSE —— `saw_sse` 靠这个返回值判定，判错会走到非流式兜底解析
@@ -710,7 +810,7 @@ mod tests {
         let mut accum = StreamAccum::new(None);
         let line = r#"data: {"error":null,"choices":[{"delta":{"audio":{"data":"AAEC"}}}]}"#;
         assert!(accum.handle_line(line).unwrap());
-        assert_eq!(accum.chunk_count, 1);
+        assert_eq!(accum.pcm, vec![0x00, 0x01, 0x02], "这一帧的音频不该被丢掉");
     }
 
     #[test]
@@ -746,12 +846,31 @@ mod tests {
     /// 回填缓存，和后端这份写进同一个缓存语义里——两边字节必须一模一样。
     /// 改了任一侧的 WAV 头，这个用例会先炸。
     #[test]
-    fn wav_bytes_match_frontend_implementation() {
+    fn wav_bytes_stay_byte_stable() {
         let wav = wrap_pcm16_wav(&[1, 2, 3, 4, 250, 251, 252, 253], 24000, 1);
         assert_eq!(
             base64::engine::general_purpose::STANDARD.encode(&wav),
             "UklGRiwAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQgAAAABAgME+vv8/Q=="
         );
+    }
+
+    /// 流式拼出来的 WAV 会进缓存，重播时由 rodio 解码后送进输出设备——
+    /// WAV 头写错的话线上表现是「重播无声」，这条先红
+    #[test]
+    fn wrapped_wav_is_decodable_by_the_player() {
+        use rodio::Source;
+
+        let pcm: Vec<u8> = (0..480_i16).flat_map(|v| (v * 64).to_le_bytes()).collect();
+        let wav = wrap_pcm16_wav(
+            &pcm,
+            CHAT_AUDIO_STREAM_SAMPLE_RATE,
+            CHAT_AUDIO_STREAM_CHANNELS,
+        );
+        let decoder = rodio::Decoder::new(std::io::Cursor::new(wav)).expect("WAV 应能被解码");
+
+        assert_eq!(decoder.sample_rate().get(), CHAT_AUDIO_STREAM_SAMPLE_RATE);
+        assert_eq!(decoder.channels().get(), CHAT_AUDIO_STREAM_CHANNELS);
+        assert_eq!(decoder.count(), 480, "480 个 i16 样本应原样解出来");
     }
 
     // ── 对着真实 HTTP 响应验流式解析 ──────────────────────────────────────
@@ -760,7 +879,7 @@ mod tests {
 
     /// 起一个只服务一次的假 HTTP 服务端，返回可直接喂给 `synthesize` 的 base_url
     /// （带 `#` raw 标记，避免被自适应规则拼成 audio/speech）。
-    async fn spawn_once(body: &'static str, content_type: &'static str) -> String {
+    async fn spawn_once(body: String, content_type: &'static str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -800,6 +919,43 @@ mod tests {
         format!("http://{addr}/v1/chat/completions#")
     }
 
+    /// 测试用分块出口：记录推过来的 PCM，以及是否被要求丢弃已播部分
+    #[derive(Default)]
+    struct RecordingSink {
+        pushed: std::sync::Mutex<Vec<u8>>,
+        chunks: std::sync::atomic::AtomicUsize,
+        discarded: std::sync::atomic::AtomicBool,
+    }
+
+    impl StreamSink for RecordingSink {
+        fn chunk(&self, pcm: &[u8]) {
+            self.pushed.lock().unwrap().extend_from_slice(pcm);
+            self.chunks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn discard(&self) {
+            self.pushed.lock().unwrap().clear();
+            self.discarded
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl RecordingSink {
+        fn chunk_count(&self) -> usize {
+            self.chunks.load(std::sync::atomic::Ordering::SeqCst)
+        }
+
+        fn discarded(&self) -> bool {
+            self.discarded.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// 一条 SSE 音频帧
+    fn audio_frame(b64: &str) -> String {
+        format!("data: {{\"choices\":[{{\"delta\":{{\"audio\":{{\"data\":\"{b64}\"}}}}}}]}}\n")
+    }
+
     /// 末帧不带换行符时（服务端直接断流）不能把最后一块音频丢掉
     #[tokio::test]
     async fn stream_keeps_last_frame_without_trailing_newline() {
@@ -808,18 +964,17 @@ mod tests {
             "data: {\"choices\":[{\"delta\":{\"audio\":{\"data\":\"AAEC\"}}}]}\n",
             "data: {\"choices\":[{\"delta\":{\"audio\":{\"data\":\"AwQF\"}}}]}"
         );
-        let url = spawn_once(body, "text/event-stream").await;
+        let url = spawn_once(body.to_string(), "text/event-stream").await;
 
-        let pushed = std::sync::Mutex::new(Vec::<u8>::new());
-        let sink = |b: &[u8]| pushed.lock().unwrap().extend_from_slice(b);
+        let sink = RecordingSink::default();
         let result = synthesize(&Client::new(), &url, "", "m", "", "hi", Some(&sink))
             .await
             .unwrap();
 
         assert_eq!(result.chunk_count, 2, "末帧无换行也要算进来");
         assert_eq!(result.sample_rate, CHAT_AUDIO_STREAM_SAMPLE_RATE);
-        // 推给前端的是解码后的裸 PCM，且顺序与到达一致
-        assert_eq!(*pushed.lock().unwrap(), vec![0, 1, 2, 3, 4, 5]);
+        // 送进播放的是解码后的裸 PCM，且顺序与到达一致
+        assert_eq!(*sink.pushed.lock().unwrap(), vec![0, 1, 2, 3, 4, 5]);
         // 完整音频 = 44 字节 WAV 头 + 6 字节 PCM
         let wav = base64::engine::general_purpose::STANDARD
             .decode(&result.audio_base64)
@@ -833,7 +988,7 @@ mod tests {
     #[tokio::test]
     async fn stream_falls_back_to_pretty_printed_json() {
         let body = "{\n  \"choices\": [\n    {\n      \"message\": {\n        \"audio\": {\n          \"data\": \"QUJD\"\n        }\n      }\n    }\n  ]\n}\n";
-        let url = spawn_once(body, "application/json").await;
+        let url = spawn_once(body.to_string(), "application/json").await;
 
         let result = synthesize(&Client::new(), &url, "", "m", "", "hi", None)
             .await
@@ -843,40 +998,70 @@ mod tests {
         assert_eq!(result.audio_base64, "QUJD");
     }
 
-    /// 已经推给前端分块之后流才出错：不能回退非流式（会多合成一次并从头重播），
-    /// 错误里要带上已播块数，前端据此停掉播放
+    /// 已经播够久（≥ `MIN_PLAYED_SECS_TO_KEEP`）之后流才出错：不回退非流式，
+    /// 那半段已经在扬声器上响过了，重来一遍听感是「读到一半跳回开头重读」。
+    /// 错误里带上已播时长，前端据此收场
     #[tokio::test]
-    async fn stream_error_after_chunks_does_not_fall_back() {
-        let body = concat!(
-            "data: {\"choices\":[{\"delta\":{\"audio\":{\"data\":\"AAEC\"}}}]}\n",
-            "data: {\"error\":{\"message\":\"upstream exploded\"}}\n"
+    async fn stream_error_after_enough_audio_does_not_fall_back() {
+        // 2.5s 音频 = 24000Hz * 单声道 * 2 字节 * 2.5
+        let pcm = vec![0u8; 24_000 * 2 * 5 / 2];
+        let body = format!(
+            "{}data: {{\"error\":{{\"message\":\"upstream exploded\"}}}}\n",
+            audio_frame(&base64::engine::general_purpose::STANDARD.encode(&pcm))
         );
         let url = spawn_once(body, "text/event-stream").await;
 
-        let pushed = std::sync::Mutex::new(0usize);
-        let sink = |_: &[u8]| *pushed.lock().unwrap() += 1;
+        let sink = RecordingSink::default();
         let err = synthesize(&Client::new(), &url, "", "m", "", "hi", Some(&sink))
             .await
             .unwrap_err();
 
-        assert_eq!(*pushed.lock().unwrap(), 1);
+        assert_eq!(sink.chunk_count(), 1);
+        assert!(!sink.discarded(), "播够了就不该丢弃已播部分");
         assert!(
-            format!("{err:#}").contains("已播放 1 个分块"),
-            "错误里要带已播块数，实际: {err:#}"
+            format!("{err:#}").contains("已播放 2.5s"),
+            "错误里要带已播时长，实际: {err:#}"
         );
     }
 
-    /// 一块都没推出去就失败，才允许回退非流式（此时假服务端已下线，回退请求必然失败，
-    /// 错误信息不会带「已播放」字样——以此区分两条路径）
+    /// 流刚开头就断（只播出去零点几秒）：用户其实什么都没听到，必须丢掉已播部分回退非流式。
+    /// 线上就踩过这条——501 字的文本只推了 1 块 0.16s 就断流，旧规则「推过块就不回退」
+    /// 让整次朗读变成「什么都没播还报个错」。
+    /// （此时假服务端已下线，回退请求必然失败，错误信息不带「已播放」字样——以此区分两条路径）
     #[tokio::test]
-    async fn stream_error_before_any_chunk_falls_back() {
-        let body = "data: {\"error\":{\"message\":\"bad voice\"}}\n";
+    async fn stream_error_at_the_very_start_discards_and_falls_back() {
+        let body = format!(
+            "{}data: {{\"error\":{{\"message\":\"upstream exploded\"}}}}\n",
+            audio_frame("AAEC")
+        );
         let url = spawn_once(body, "text/event-stream").await;
 
-        let err = synthesize(&Client::new(), &url, "", "m", "", "hi", None)
+        let sink = RecordingSink::default();
+        let err = synthesize(&Client::new(), &url, "", "m", "", "hi", Some(&sink))
             .await
             .unwrap_err();
 
+        assert_eq!(sink.chunk_count(), 1);
+        assert!(sink.discarded(), "回退前必须丢掉已经排进播放队列的那点音频");
+        assert!(
+            !format!("{err:#}").contains("已播放"),
+            "只播了 0.06s 就该走回退，实际: {err:#}"
+        );
+    }
+
+    /// 一块都没推出去就失败，同样回退非流式（且没有已播音频需要丢弃）
+    #[tokio::test]
+    async fn stream_error_before_any_chunk_falls_back() {
+        let body = "data: {\"error\":{\"message\":\"bad voice\"}}\n";
+        let url = spawn_once(body.to_string(), "text/event-stream").await;
+
+        let sink = RecordingSink::default();
+        let err = synthesize(&Client::new(), &url, "", "m", "", "hi", Some(&sink))
+            .await
+            .unwrap_err();
+
+        assert_eq!(sink.chunk_count(), 0);
+        assert!(!sink.discarded(), "没播过就不用丢");
         assert!(
             !format!("{err:#}").contains("已播放"),
             "没推过块就该走回退，实际: {err:#}"

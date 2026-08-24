@@ -1,4 +1,5 @@
 mod api_client;
+mod audio;
 mod commands;
 mod config;
 mod hotkey;
@@ -45,8 +46,8 @@ pub fn run() {
             commands::clipboard::copy_image_to_clipboard,
             commands::clipboard::read_selected_text,
             commands::clipboard::save_file,
-            commands::tts::synthesize_speech,
-            commands::tts::synthesize_speech_stream,
+            commands::tts::speak_text,
+            commands::tts::stop_speech,
             hotkey::suspend_hotkeys,
             hotkey::resume_hotkeys,
         ])

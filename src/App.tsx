@@ -11,7 +11,6 @@ import { appLog, openDebugWindow, setupMainWindowLogListeners } from "./stores/l
 import { useScreenshot } from "./hooks/useScreenshot";
 import { useTranslation, cancelPendingTranslation } from "./hooks/useTranslation";
 import { captureRegion, captureAndOcr, copyImageToClipboard, getSettings, readSelectedText, readClipboard } from "./lib/invoke";
-import { primeAudio } from "./lib/tts";
 import type { RegionSelectEvent } from "./types";
 
 export default function App() {
@@ -36,10 +35,6 @@ export default function App() {
   useEffect(() => {
     appLog.info("[App] 主窗口初始化");
 
-    // 提前建好 AudioContext 并唤醒输出设备：否则第一次朗读（尤其是翻译后自动朗读）
-    // 会在音频设备冷启动期间起播，开头被吞掉甚至整段听不见
-    primeAudio();
-
     // Load settings into store on startup
     getSettings()
       .then((s) => {
@@ -52,10 +47,6 @@ export default function App() {
 
     // Hide window when it loses focus (unless pinned/always-on-top)
     const unlistenBlur = appWindow.onFocusChanged(async ({ payload: focused }) => {
-      if (focused) {
-        // 窗口刚被快捷键唤出 → 提前唤醒音频输出设备，给随后的自动朗读留足预热时间
-        primeAudio();
-      }
       if (!focused) {
         const isOnTop = await appWindow.isAlwaysOnTop();
         if (!isOnTop) {
