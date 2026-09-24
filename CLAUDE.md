@@ -1,257 +1,103 @@
-# DH-TransShot
+# CLAUDE.md
 
-截屏+翻译二合一桌面工具，支持 macOS 和 Windows。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## 技术栈
+## 项目概述
 
-- **后端**: Rust + Tauri v2
-- **前端**: React 19 + TypeScript + Tailwind CSS v4
-- **状态管理**: Zustand
-- **截图**: xcap
-- **OCR**: 视觉大模型（OpenAI 兼容接口）
-- **翻译**: OpenAI 兼容接口（支持 OpenAI、DeepSeek、Ollama 等）
-- **包管理**: pnpm
+DH-TransShot：截屏 + 翻译二合一桌面工具（macOS / Windows）。后端 Rust + Tauri v2（Tokio），前端 React 19 + TypeScript + Tailwind CSS v4 + Zustand，包管理用 pnpm。OCR、翻译、TTS 全部走 OpenAI 兼容接口（OCR 用视觉大模型）。
 
-## OCR 优化约定
-
-当前 OCR 走视觉模型，性能瓶颈通常不在 Rust 本地逻辑，而在「图像体积 + 上传耗时 + 模型视觉编码」。
-
-修改 OCR 相关逻辑时，优先遵守这些实践：
-
-1. **先裁切再 OCR**：禁止把整屏截图直接送入 OCR；始终只传用户框选区域
-2. **限制输入尺寸**：不要直接上传 Retina 原图，优先把 OCR 输入的最长边限制在约 `2048px`，避免无效视觉 token 和过大的 base64 负载
-3. **优先减小传输体积**：无透明通道的截图优先使用 JPEG；确实需要透明度时再保留 PNG
-4. **阻塞图像处理必须放到 `spawn_blocking`**：base64 解码、图片缩放、裁切、重编码都属于 CPU 密集型工作，不能阻塞 Tauri 的 async 运行时
-5. **提示词保持极简**：OCR prompt 只要求“输出识别文字”，不要添加解释、结构化包装或多余约束
-6. **模型参数优先通过 `ocr.extra` 调优**：优先放顶层兼容参数（如 `max_tokens`）；涉及嵌套视觉字段时需谨慎，避免覆盖默认 `messages` 结构
-7. **日志只记录尺寸和耗时相关信息**：记录原始/处理后分辨率、base64 大小、model、base_url；不要输出完整图片或大段识别文本
-
-## 开发规范（重要）
-
-### 分层文档驱动开发
-
-本项目采用子模块文档体系，所有模块的详细设计文档存放在 `docs/` 目录。
-
-**必须遵守以下规范：**
-
-1. **修改任何模块前，必须先阅读对应的 `docs/*.md` 文件**，了解模块职责、核心逻辑、依赖关系和修改注意事项
-2. **跨模块变更前，必须先阅读 `docs/architecture.md`** 了解整体架构、事件系统和工作流
-3. **新增功能完成后，必须同步更新对应的 `docs/*.md` 文件**，保持文档与代码一致
-4. **新增模块时，必须创建对应的 `docs/*.md` 文件**，遵循统一文档格式
-
-### 格式化与提交
-
-1. **Rust 修改后允许运行 `cargo fmt`**：`cargo fmt` 会格式化整个 crate，相关格式化 diff 可以保留，不需要回滚
-2. **需要拆分变更时用多次 `commit` 分组提交**：例如代码/格式化改动和 Markdown 文档改动分开 `commit`
-
-### 文档优先查阅顺序
-
-- 不了解项目 → 先读 `docs/architecture.md`
-- 修改后端某模块 → 先读 `docs/backend/<模块>.md`
-- 修改前端某模块 → 先读 `docs/frontend/<模块>.md`
-- 涉及主题/样式 → 先读 `docs/theme.md`
-
-### 日志规范
-
-前后端统一使用 `[模块名]` 前缀格式记录日志，方便关联排查。
-
-#### 前端日志
-
-使用 `appLog`（来自 `stores/logStore.ts`），日志会同步显示在独立调试窗口中。
-
-**规范：**
-
-1. **所有关键操作必须有日志**：函数入口、异步操作前后、错误捕获、分支判断
-2. **使用 `[模块名]` 前缀**：
-   - `[App]` — 主窗口编排（App.tsx）
-   - `[Screenshot]` — 截图 hook
-   - `[Overlay]` — 截图覆盖层
-   - `[Translate]` — 翻译 hook
-   - `[Settings]` — 设置 hook
-   - 新增模块时自定义前缀，保持简短
-3. **日志级别**：
-   - `appLog.info()` — 正常流程节点（开始、完成、状态变更）
-   - `appLog.warn()` — 非预期但可处理的情况（输入为空、选区过小、配置缺失）
-   - `appLog.error()` — 操作失败、异常捕获
-4. **携带关键参数**：日志消息中包含有助于排查的上下文值（语言、文本长度、区域坐标、数据大小等），但避免输出完整的大段文本或 base64
-5. **logStore 内部用 `console.log`**：在 `logStore.ts` 自身的函数中（如 `openDebugWindow`）使用 `console.log` 而非 `appLog`，避免递归
-
-**示例：**
-```typescript
-appLog.info("[Translate] 手动翻译: " + sourceLang + " → " + targetLang + ", 文本长度=" + input.length);
-appLog.warn("[Overlay] 选区太小 (" + width + "x" + height + ")，已忽略");
-appLog.error("[Settings] 配置保存失败: " + String(e));
-```
-
-#### 后端日志
-
-使用 `log` crate 的 `info!` / `warn!` / `error!` 宏，日志输出到终端（`pnpm tauri dev` 可见）。
-
-**规范：**
-
-1. **同样使用 `[模块名]` 前缀**：
-   - `[Setup]` — 应用启动初始化（lib.rs）
-   - `[Screenshot]` — 截图命令层（commands/screenshot.rs）
-   - `[Capture]` — 截图底层实现（screenshot/capture.rs）
-   - `[OCR]` — OCR 识别（commands/ocr.rs + ocr/mod.rs）
-   - `[Translation]` — 翻译（commands/translation.rs + translation/openai_compat.rs）
-   - `[Settings]` — 配置读写（commands/settings.rs）
-   - `[Hotkey]` — 快捷键（hotkey.rs）
-   - `[Tray]` — 系统托盘（tray.rs）
-   - `[TTS]` — TTS 语音合成（tts/mod.rs + commands/tts.rs）
-   - `[Audio]` — 本地音频输出（audio/mod.rs）
-2. **日志级别**：
-   - `info!` — 命令入口、API 请求/响应状态、操作完成
-   - `warn!` — 配置缺失、API Key 为空等非致命情况
-   - `error!` — API 错误、截图失败、序列化/持久化失败
-3. **携带关键参数**：region 坐标、base64 大小、HTTP 状态码、model/base_url 等
-4. **禁止输出敏感信息**：不要在日志中输出完整的 api_key
-
-**示例：**
-```rust
-info!("[Screenshot] start_region_select, mode={}", mode);
-info!("[Translation] 发送请求到 {}, model={}", url, model);
-error!("[OCR] API 错误 ({}): {}", status, body);
-```
-
-## 子模块文档索引
-
-### 架构层
-
-| 文档 | 内容 |
-|------|------|
-| [docs/architecture.md](docs/architecture.md) | 整体架构、核心工作流、多窗口架构、事件系统、DPI 处理、模块依赖总览 |
-
-### 后端模块（src-tauri/src/）
-
-| 文档 | 对应代码 | 内容 |
-|------|---------|------|
-| [docs/backend/entry.md](docs/backend/entry.md) | `lib.rs` + `main.rs` | Tauri Builder 入口、插件注册、命令注册 |
-| [docs/backend/commands.md](docs/backend/commands.md) | `commands/` | Tauri 命令层（前后端 RPC 接口） |
-| [docs/backend/screenshot.md](docs/backend/screenshot.md) | `screenshot/` | xcap 截图捕获、base64 编码、区域裁切 |
-| [docs/backend/ocr.md](docs/backend/ocr.md) | `ocr/` | OCR 识别（视觉大模型，OpenAI 兼容 API） |
-| [docs/backend/translation.md](docs/backend/translation.md) | `translation/` | OpenAI 兼容 Chat Completions 翻译客户端 |
-| [docs/backend/config.md](docs/backend/config.md) | `config/` | Settings 结构体、AppState 全局状态 |
-| [docs/backend/tray.md](docs/backend/tray.md) | `tray.rs` | 系统托盘菜单与事件路由 |
-| [docs/backend/hotkey.md](docs/backend/hotkey.md) | `hotkey.rs` | 全局快捷键注册与事件发射 |
-| [docs/backend/tts.md](docs/backend/tts.md) | `tts/` | TTS 语音合成（OpenAI 兼容 Audio Speech API） |
-| [docs/backend/audio.md](docs/backend/audio.md) | `audio/` | 本地音频输出（rodio/cpal）：朗读播放、抢占、设备生命周期 |
-
-### 前端模块（src/）
-
-| 文档 | 对应代码 | 内容 |
-|------|---------|------|
-| [docs/frontend/app.md](docs/frontend/app.md) | `App.tsx` + `ScreenshotApp.tsx` | 主窗口编排、事件监听、工作流路由 |
-| [docs/frontend/components.md](docs/frontend/components.md) | `components/` | UI 组件（翻译面板、截图覆盖层、设置弹窗、标题栏） |
-| [docs/frontend/hooks.md](docs/frontend/hooks.md) | `hooks/` | 自定义 Hooks（截图、翻译、设置） |
-| [docs/frontend/stores.md](docs/frontend/stores.md) | `stores/` | Zustand 状态管理（翻译状态、设置状态） |
-| [docs/frontend/lib.md](docs/frontend/lib.md) | `lib/` | Tauri invoke 封装、语言列表 |
-| [docs/frontend/types.md](docs/frontend/types.md) | `types/` | TypeScript 类型定义 |
-
-### 主题
-
-| 文档 | 对应代码 | 内容 |
-|------|---------|------|
-| [docs/theme.md](docs/theme.md) | `styles/globals.css` | CSS 变量主题、深色/浅色模式、全局样式 |
-
-## 项目结构
-
-```
-src-tauri/src/
-├── lib.rs                      # Tauri Builder 入口
-├── main.rs                     # 程序入口
-├── api_client.rs               # 共享 HTTP 客户端（Chat Completions 请求）
-├── commands/                   # Tauri 命令层（前后端 RPC 接口）
-│   ├── mod.rs
-│   ├── screenshot.rs
-│   ├── ocr.rs
-│   ├── translation.rs
-│   ├── settings.rs
-│   ├── clipboard.rs
-│   └── tts.rs
-├── screenshot/                 # 截图捕获
-│   ├── mod.rs
-│   └── capture.rs
-├── ocr/                        # OCR 识别（视觉大模型）
-│   └── mod.rs
-├── translation/                # LLM 翻译
-│   ├── mod.rs
-│   └── openai_compat.rs
-├── config/                     # 配置与全局状态
-│   ├── mod.rs
-│   └── settings.rs
-├── tts/                        # TTS 语音合成（合成，不含播放）
-│   └── mod.rs
-├── audio/                      # 本地音频输出（rodio/cpal，朗读播放）
-│   └── mod.rs
-├── tray.rs                     # 系统托盘
-└── hotkey.rs                   # 全局快捷键
-
-src/
-├── App.tsx                     # 主窗口编排
-├── ScreenshotApp.tsx           # 截图覆盖层
-├── DebugApp.tsx                # 调试日志窗口
-├── SettingsApp.tsx             # 设置窗口
-├── main.tsx                    # 主窗口 React 入口
-├── screenshot.tsx              # 覆盖层 React 入口
-├── debug.tsx                   # 调试窗口 React 入口
-├── settings.tsx                # 设置窗口 React 入口
-├── components/                 # UI 组件
-│   ├── translation/
-│   ├── screenshot/
-│   ├── settings/
-│   ├── debug/
-│   └── common/
-├── hooks/                      # 业务逻辑 Hooks
-├── stores/                     # Zustand 状态管理（含 ttsStore 朗读状态）
-├── lib/                        # 工具函数（含 tts.ts 朗读编排；播放本身在 Rust 侧）
-├── types/                      # TypeScript 类型
-└── styles/                     # 全局样式
-```
-
-## 全局快捷键
-
-默认快捷键如下，用户可在设置面板中自定义（保存后立即生效，无需重启）：
-
-| 默认快捷键 | 功能 |
-|--------|------|
-| `Alt+A` (macOS: `⌥A`) | 区域截图（框选 → 裁切 → 复制到剪贴板） |
-| `Alt+S` (macOS: `⌥S`) | 区域翻译（框选 → 裁切 → OCR → 翻译 → 显示） |
-| `Alt+Q` (macOS: `⌥Q`) | 翻译选中文本（Accessibility API 读取选中文字 → 翻译 → 显示；若 API 失败则回退到剪贴板模拟） |
-| 标题栏按钮「T」 | 翻译剪贴板内容（直接读取剪贴板文本 → 翻译） |
-
-快捷键字符串格式由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析，支持 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K`、`Alt+F1`、`Ctrl+Space` 等组合（修饰键支持 `Alt`/`Option`/`Ctrl`/`Shift`/`Cmd`/`Super`/`CmdOrCtrl`）。详情见 [docs/backend/hotkey.md](docs/backend/hotkey.md)。
+`AGENT.md` 是指向本文件的符号链接。
 
 ## 常用命令
 
 ```bash
-pnpm tauri dev          # 开发模式运行
-pnpm tauri build        # 构建生产版本
-pnpm exec tsc --noEmit  # TypeScript 类型检查
-pnpm exec vite build    # 仅构建前端
-cargo check             # 仅检查 Rust 编译（需在 src-tauri/ 目录下）
-cargo test --lib        # Rust 单元测试
-cargo test --lib -- --ignored --test-threads=1   # 音频真机用例（需输出设备，灌静音不发声）
+pnpm tauri dev                  # 开发模式运行（后端日志输出到此终端）
+pnpm tauri build                # 构建生产版本
+pnpm exec tsc --noEmit          # TypeScript 类型检查
+pnpm exec vite build            # 仅构建前端
+
+# 以下在 src-tauri/ 目录下执行
+cargo check
+cargo fmt                       # 允许运行，整个 crate 的格式化 diff 可以保留
+cargo test --lib                # Rust 单元测试（测试写在各模块的 #[cfg(test)] 中）
+cargo test --lib <测试名>        # 运行单个测试，如 cargo test --lib tts::
+cargo test --lib -- --ignored --test-threads=1   # audio 真机用例（需输出设备，灌静音不发声）
 ```
+
+前端没有测试框架和 linter，校验靠 `tsc`。
+
+开发配置：根目录 `.env`（不提交）提供 `DEFAULT_BASE_URL` / `DEFAULT_API_KEY`，启动时由 `dotenvy` 加载，作为所有服务的默认值；持久化的 `settings.json` 优先级更高。`.env.test` 是提交到仓库的占位配置。
+
+## 架构要点
+
+完整说明见 `docs/architecture.md`，以下是需要跨文件才能看明白的部分。
+
+**多窗口**：Vite 四入口（`index.html` / `screenshot.html` / `settings.html` / `debug.html`），分别对应 `main.tsx→App.tsx`、`screenshot.tsx→ScreenshotApp.tsx`、`settings.tsx→SettingsApp.tsx`、`debug.tsx→DebugApp.tsx`。
+- 主窗口常驻，失焦即隐藏
+- 截图覆盖层由 `start_region_select` 命令动态创建，每块显示器一个，选区完成或 ESC 后销毁
+- 设置窗口打开期间通过 `suspend_hotkeys` / `resume_hotkeys` 挂起全局快捷键
+- 调试日志窗口吸附在主窗口右侧，展示前端 `appLog` 日志
+
+**事件流**：快捷键（`hotkey.rs`）和托盘（`tray.rs`）都只 emit `hotkey-action` / `tray-action`（载荷为 `"screenshot"` / `"ocr_translate"` / `"clipboard_translate"`），由 `App.tsx` 的 `handleAction` 统一路由。覆盖层选区完成后 emit `region-selected`（物理像素坐标 + mode + monitor_index，截图模式可能带标注后的 `annotatedImage`），主窗口监听后再调用 `capture_region` / `capture_and_ocr` / `translate_text`。设置保存后 emit `settings-saved` 通知主窗口重载。
+
+**冻结截图**：`start_region_select` 先对所有显示器截图并存入 `AppState`（`frozen_screenshots` / `frozen_monitors` / `frozen_window_rects`），覆盖层显示的是冻结图，后续裁切也基于冻结图，而不是重新截屏。
+
+**DPI**：xcap 使用物理像素，前端使用逻辑像素。覆盖层窗口按 `scale_factor` 换算逻辑尺寸创建；`ScreenshotOverlay` emit 时按冻结图实际尺寸与 CSS 尺寸之比换算回物理像素。改选区/裁切逻辑时要特别注意两套坐标。
+
+**后端状态**：`config/` 中的 `AppState` 通过 `tauri::manage()` 注册，命令通过 `State<AppState>` 访问，包含 `Mutex<Settings>`、冻结截图、TTS 缓存、共享 `reqwest::Client`、`audio::AudioOutput`。`Settings` 有三个 `ServiceConfig`（translation / ocr / tts），每个可挂多个 `ExtraProvider`，留空字段回退到服务级或全局值。命令层统一用 `ServiceConfig::resolved()` 取最终生效的 base_url / api_key / model / extra，不要自己拼回退逻辑。`api_client.rs` 封装共享的 Chat Completions 请求。
+
+**TTS / 音频**：`tts/` 只负责合成，`audio/`（rodio/cpal）负责本地播放。`speak_text` 合成后直接把 PCM 送进系统输出设备，IPC Channel 上只回传 `{event:"start"}`，音频数据不经过前端。不要把播放挪回 WebView：窗口隐藏后 WebKit 会让 `AudioContext` 空转，没有任何报错却完全无声。前端 `lib/tts.ts` + `stores/ttsStore.ts` 只做朗读编排和状态管理。
+
+**前后端 RPC**：所有 Tauri 命令在 `lib.rs` 的 `generate_handler!` 中注册，前端统一通过 `src/lib/invoke.ts` 封装调用。新增命令时两边都要改，权限配置在 `src-tauri/capabilities/default.json`。
+
+## 开发规范
+
+### 文档驱动开发
+
+每个模块的设计文档在 `docs/` 下：`docs/architecture.md`（整体架构）、`docs/backend/<模块>.md`、`docs/frontend/<模块>.md`、`docs/theme.md`（CSS 变量主题，对应 `styles/globals.css`）。
+
+1. 修改某个模块前，先读对应的 `docs/*.md`；跨模块变更前，先读 `docs/architecture.md`
+2. 功能完成后同步更新对应文档；新增模块时新建对应文档，格式与现有文档保持一致
+3. 需要拆分变更时分多次 commit，例如代码/格式化改动和 Markdown 文档改动分开提交
+
+### 日志规范
+
+前后端统一使用 `[模块名]` 前缀，方便对照排查。日志中带上关键参数（语言、文本长度、区域坐标、数据大小、HTTP 状态码、model/base_url），但不要输出完整的长文本、base64 或 api_key。
+
+- **前端**：使用 `appLog.info/warn/error`（来自 `stores/logStore.ts`）。关键操作都要记录：函数入口、异步操作前后、错误捕获、分支判断。`logStore.ts` 内部用 `console.log`，避免递归。已有前缀：`[App]` `[Screenshot]` `[Overlay]` `[Translate]` `[Settings]`
+- **后端**：使用 `log` crate 的 `info!` / `warn!` / `error!`。已有前缀：`[Setup]` `[Screenshot]` `[Capture]` `[OCR]` `[Translation]` `[Settings]` `[Hotkey]` `[Tray]` `[TTS]` `[Audio]`
+- 级别：info 用于正常流程节点；warn 用于可处理的异常（输入为空、选区过小、配置缺失、API Key 为空）；error 用于失败和异常
+
+```typescript
+appLog.warn("[Overlay] 选区太小 (" + width + "x" + height + ")，已忽略");
+```
+```rust
+info!("[Translation] 发送请求到 {}, model={}", url, model);
+```
+
+### OCR 优化约定
+
+瓶颈主要在图像体积、上传耗时和模型视觉编码，不在 Rust 本地逻辑。
+
+1. 只把用户框选的区域送去 OCR，不要送整屏截图
+2. 把 OCR 输入的最长边限制在约 2048px，不要直接上传 Retina 原图
+3. 无透明通道时优先编码为 JPEG
+4. base64 解码、缩放、裁切、重编码都是 CPU 密集型操作，必须放进 `spawn_blocking`
+5. OCR prompt 只要求输出识别出的文字，不加解释或结构化包装
+6. 调模型参数优先用 `ocr.extra` 的顶层兼容字段（如 `max_tokens`）；改嵌套视觉字段要谨慎，别覆盖默认的 `messages` 结构
+7. 日志只记录分辨率、base64 大小、耗时、model、base_url
+
+## 全局快捷键
+
+默认 `Alt+A` 区域截图（框选 → 标注 → 复制到剪贴板），`Alt+S` 区域翻译（框选 → OCR → 翻译），`Alt+Q` 翻译选中文本（优先用 Accessibility API 读取，失败时回退为模拟复制并恢复剪贴板）。标题栏的「T」按钮翻译剪贴板内容。快捷键可在设置中修改，保存后立即生效，字符串由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析，详见 `docs/backend/hotkey.md`。
 
 ## 发版流程
 
-当用户说「发版」时，按以下流程执行：
+用户说「发版」时：
 
-1. **确保工作区干净**：所有功能改动先提交，避免把未确认改动打进发版提交
-2. **创建发版提交和 annotated tag**：默认执行 `pnpm release`（递增 patch）；需要大版本时执行 `pnpm release:minor` 或 `pnpm release:major`
-3. **推送提交和 tag**：按脚本输出执行 `git push && git push origin v<版本号>`
-4. **等待 GitHub Actions**：Release workflow 会从 tag 自动同步 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`src-tauri/Cargo.lock` 后再打包
+1. 确认工作区干净，功能改动已提交
+2. 运行 `pnpm release`（patch），需要时用 `pnpm release:minor` / `pnpm release:major`，脚本会创建发版提交和 annotated tag
+3. 按脚本输出执行 `git push && git push origin v<版本号>`
+4. GitHub Actions（`.github/workflows/release.yml`，macOS aarch64 + Windows）会根据 tag 同步 `package.json`、`tauri.conf.json`、`Cargo.toml`、`Cargo.lock` 的版本号再打包
 
-版本号规则：以 `git tag` 为准。不要手动只改某一个版本文件；需要同步指定版本时执行 `pnpm sync-version v<版本号>`。
-
-删除 tag（如打错）：
-```bash
-git tag -d v<版本号>              # 删除本地 tag
-git push origin --delete v<版本号> # 删除远程 tag
-```
-
-## 构建产物
-
-- `src-tauri/target/release/bundle/macos/DH-TransShot.app`
-- `src-tauri/target/release/bundle/dmg/DH-TransShot_<版本号>_aarch64.dmg`
+版本号以 git tag 为准，不要只手动改其中一个文件；需要指定版本时运行 `pnpm sync-version v<版本号>`。打错 tag 时用 `git tag -d v<版本号>` 和 `git push origin --delete v<版本号>` 删除。
