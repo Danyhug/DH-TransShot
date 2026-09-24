@@ -30,6 +30,7 @@ interface TranslationPromptConfig {
   expand_abbreviations: boolean; // 解释缩写（单独缩写 → 候选列表；句中缩写 → 按上下文意译）
   domains: string[];             // 行业偏向 key，多选；空 = 通用
   custom_prompt: string;         // 自定义附加翻译指令
+  base_prompt: string;           // 编辑过的内置翻译规则；空 = 内置默认
 }
 
 interface ServiceConfig {

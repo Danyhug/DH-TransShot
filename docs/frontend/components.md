@@ -189,7 +189,7 @@
 | 分区 | 组件 | 内容 |
 |------|------|------|
 | 服务 | `ServiceSettings` | 全局凭据（API 地址 / 密钥，两列网格 + 地址规则说明）→ 分隔线 → 服务配置：`SegmentedControl` 切换翻译/OCR/TTS、提供商 chip 行、提供商字段组、自定义参数（预设 chip + JSON 编辑区） |
-| 翻译 | `TranslationSettings` | 「解释缩写」开关（`ToggleRow`）→ 行业偏向：10 个可多选 `Chip`（选中为主色，都不选 = 通用）→ 自定义提示词（多行输入，追加到内置提示词末尾）→ 说明块（防注入规则优先；默认 Hunyuan-MT-7B 基本不遵循这些指令，建议换通用对话模型）。整个 `translation_prompt` 对象通过 `onChange` 整体回写。行业 key 与后端 `translation::prompt::DOMAINS` 一一对应 |
+| 翻译 | `TranslationSettings` | 「解释缩写」开关（`ToggleRow`）→ 行业偏向：10 个可多选 `Chip`（选中为主色，都不选 = 通用）→ 自定义提示词（多行输入，追加到内置提示词末尾）→ 内置翻译规则（`CodeArea`，初始展示 `get_default_translation_prompt` 返回的默认规则；与默认相同或清空时存空串；「恢复默认」chip + 已修改状态；草稿单独维护，清空重写时不会弹回默认文本）→ 说明块（防注入规则优先；默认 Hunyuan-MT-7B 基本不遵循这些指令，建议换通用对话模型）。整个 `translation_prompt` 对象通过 `onChange` 整体回写。行业 key 与后端 `translation::prompt::DOMAINS` 一一对应 |
 | 快捷键 | `HotkeySettings` | 三行（区域截图 / 区域翻译 / 翻译选中文本），每行标题 + 说明 + `HotkeyInput` |
 | 朗读 | `SpeechSettings` | 四行：`auto_read_source` / `auto_read_target` 开关 → `auto_read_max_units` 数值行（自动朗读长度上限，0=不限制）→ `stream_playback` 开关，每项带说明文字 |
 

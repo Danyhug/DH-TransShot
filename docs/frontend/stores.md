@@ -75,6 +75,7 @@
     expand_abbreviations: false,
     domains: [],
     custom_prompt: "",
+    base_prompt: "",
   },
 }
 ```

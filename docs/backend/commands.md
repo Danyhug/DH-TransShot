@@ -57,7 +57,11 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 **`translate_text(state, text, source_lang, target_lang) -> Result<String, String>`**
 - 从 `AppState.settings` 读取 LLM 配置（base_url、api_key、model）
 - 创建 `OpenAiCompatProvider` 实例执行翻译
+- 同时读取 `settings.translation_prompt`（缩写解释 / 行业偏向 / 自定义指令 / 编辑过的内置规则）传给 `translate()`
 - Mutex 锁的作用域尽量小，取完配置即释放
+
+**`get_default_translation_prompt() -> String`**
+- 返回内置翻译规则原文 `translation::prompt::DEFAULT_RULES`，供设置页展示与「恢复默认」
 
 ### settings.rs
 

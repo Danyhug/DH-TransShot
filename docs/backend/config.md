@@ -121,6 +121,7 @@
 | `expand_abbreviations` | bool | `false` | 解释缩写：单独输入缩写时输出按可能性排序的「全称 + 含义」候选；句中缩写按上下文译出含义 |
 | `domains` | `Vec<String>` | `[]` | 行业偏向（多选），取值为 `translation::prompt::DOMAINS` 的 key（`it`/`business`/`finance`/`legal`/`medical`/`academic`/`engineering`/`marketing`/`gaming`/`slang`）；空 = 通用 |
 | `custom_prompt` | String | `""` | 自定义附加翻译指令，追加到 system prompt 末尾 |
+| `base_prompt` | String | `""` | 编辑过的内置翻译规则；空 = 用 `translation::prompt::DEFAULT_RULES`。与默认相同时前端也存空串，这样内置规则以后升级时未改动的用户自动跟上 |
 
 - 结构体整体 `#[serde(default)]`，旧版 settings.json 无该字段时回退到全默认，翻译行为与之前完全一致
 - 只被 `commands/translation.rs` 读取并传给 `translation::prompt::build()`，拼装规则见 [translation.md](translation.md)

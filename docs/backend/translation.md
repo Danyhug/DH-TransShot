@@ -91,11 +91,18 @@
 
 **`build(text, source_lang, target_lang, prefs, begin, end) -> Prompts { system, user }`**
 
-在基础提示词之上按 `TranslationPromptConfig` 注入可选段落。`prefs` 全为默认值时输出与改造前完全一致（有单测锁定）。
+system prompt 由两部分组成：
+
+1. **固定的防注入框架**（不可编辑）：角色句、边界标记说明、Absolute rules
+2. **翻译规则**（`Translation rules:` 之后）：`prefs.base_prompt` 非空时用它，否则用内置 `DEFAULT_RULES`；拼装时把 `{source_lang}` / `{target_lang}` 替换成实际语言，其它花括号（如 `{name}`）原样保留
+
+之后再按 `TranslationPromptConfig` 追加可选段落。因为翻译规则可被用户改写，缩写处理不再原地替换某条规则，而是追加独立段落并声明「覆盖前文」。`prefs` 全为默认值时不追加任何段落（有单测锁定）。
+
+`Prompts.abbreviation_mode` 告诉调用方本次是否启用了缩写候选格式；`openai_compat` 据此对回复调用 `tidy_single_candidate()`：**只有一个候选时去掉 `1. ` 序号和解释行缩进**。提示词里也要求单候选不编号，代码兜底保证结果确定。
 
 | 偏好 | 注入内容 |
 |------|---------|
-| `expand_abbreviations` 开 | ① 基础规则里「缩写保持惯用形式」换成「缩写按上下文译出含义并在括号保留原缩写」（如 `首席运营官(COO)`），URL/API/PDF 这类目标语言惯用原形的缩写除外；② 若 `is_short_term(text)`，再追加 **Abbreviation mode** 段：输出 1~4 个候选，格式 `1. <原文全称> — <译文全称>` + 下一行一句话解释；同时把 reply 规则和尾部提醒改成「是缩写就只输出候选列表，否则正常翻译」 |
+| `expand_abbreviations` 开 | ① 追加 **Abbreviations and acronyms** 段（覆盖前文「缩写保持惯用形式」）：缩写按上下文译出含义并在括号保留原缩写（如 `首席运营官(COO)`），URL/API/PDF 这类目标语言惯用原形的缩写除外；② 若 `is_short_term(text)`，再追加 **Abbreviation mode** 段：输出 1~4 个候选，格式 `1. <原文全称> — <译文全称>` + 下一行一句话解释；同时把 reply 规则和尾部提醒改成「是缩写就只输出候选列表，否则正常翻译」 |
 | `domains` 非空 | 追加 **Domain preference** 段（歧义词优先采用这些行业的含义与术语）；缩写模式下候选排序改为「所选行业的含义必须排在前面」 |
 | `custom_prompt` 非空 | 追加到 system prompt 末尾，标注为可信的用户指令，但不能覆盖 Absolute rules |
 
