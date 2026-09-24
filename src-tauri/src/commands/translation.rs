@@ -17,14 +17,23 @@ pub async fn translate_text(
         target_lang,
         text.len()
     );
-    let (base_url, api_key, model, extra) = {
+    let ((base_url, api_key, model, extra), prefs) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        settings
-            .translation
-            .resolved(&settings.base_url, &settings.api_key)
+        (
+            settings
+                .translation
+                .resolved(&settings.base_url, &settings.api_key),
+            settings.translation_prompt.clone(),
+        )
     };
     let client = state.http_client.clone();
     info!("[Translation] 使用 model={}, base_url={}", model, base_url);
+    info!(
+        "[Translation] 提示词偏好: 解释缩写={}, 行业={:?}, 自定义提示词长度={}",
+        prefs.expand_abbreviations,
+        prefs.domains,
+        prefs.custom_prompt.trim().len()
+    );
 
     let provider = OpenAiCompatProvider::new(client);
     let result = provider
@@ -36,6 +45,7 @@ pub async fn translate_text(
             &api_key,
             &model,
             &extra,
+            &prefs,
         )
         .await
         .map_err(|e| e.to_string());

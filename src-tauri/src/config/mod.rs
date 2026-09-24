@@ -1,3 +1,5 @@
 pub mod settings;
 
-pub use settings::{merge_extra, AppState, HotkeyConfig, MonitorInfo, Settings};
+pub use settings::{
+    merge_extra, AppState, HotkeyConfig, MonitorInfo, Settings, TranslationPromptConfig,
+};

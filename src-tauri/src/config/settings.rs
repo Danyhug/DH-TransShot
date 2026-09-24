@@ -160,6 +160,19 @@ impl Default for SpeechConfig {
     }
 }
 
+/// 翻译提示词偏好：注入到翻译 system prompt 里，由 `translation::prompt` 负责拼装。
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct TranslationPromptConfig {
+    /// 解释缩写：原文是单独的缩写时输出按可能性排序的「全称 + 含义」候选；
+    /// 句子里的缩写按上下文译出含义
+    pub expand_abbreviations: bool,
+    /// 行业偏向（`translation::prompt::DOMAINS` 里的 key，可多选）；空 = 通用
+    pub domains: Vec<String>,
+    /// 用户自定义的附加翻译指令，原样追加到 system prompt
+    pub custom_prompt: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Settings {
     #[serde(default = "default_base_url")]
@@ -173,6 +186,8 @@ pub struct Settings {
     pub hotkeys: HotkeyConfig,
     #[serde(default)]
     pub speech: SpeechConfig,
+    #[serde(default)]
+    pub translation_prompt: TranslationPromptConfig,
 }
 
 fn default_base_url() -> String {
@@ -228,6 +243,7 @@ impl Default for Settings {
             ),
             hotkeys: HotkeyConfig::default(),
             speech: SpeechConfig::default(),
+            translation_prompt: TranslationPromptConfig::default(),
         }
     }
 }

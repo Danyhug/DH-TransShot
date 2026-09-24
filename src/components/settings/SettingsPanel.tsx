@@ -7,9 +7,10 @@ import { defaultSettings } from "../../stores/settingsStore";
 import { ServiceSettings, type ServiceName } from "./ServiceSettings";
 import { HotkeySettings } from "./HotkeySettings";
 import { SpeechSettings } from "./SpeechSettings";
-import type { Settings, ExtraProvider, HotkeyConfig } from "../../types";
+import { TranslationSettings } from "./TranslationSettings";
+import type { Settings, ExtraProvider, HotkeyConfig, TranslationPromptConfig } from "../../types";
 
-type SectionKey = "service" | "hotkey" | "speech";
+type SectionKey = "service" | "translation" | "hotkey" | "speech";
 
 const ICON_PROPS = {
   width: 15,
@@ -32,6 +33,20 @@ const navItems: { key: SectionKey; label: string; icon: ReactNode }[] = [
         <rect width="20" height="8" x="2" y="14" rx="2" />
         <path d="M6 6h.01" />
         <path d="M6 18h.01" />
+      </svg>
+    ),
+  },
+  {
+    key: "translation",
+    label: "翻译",
+    icon: (
+      <svg {...ICON_PROPS}>
+        <path d="m5 8 6 6" />
+        <path d="m4 14 6-6 2-3" />
+        <path d="M2 5h12" />
+        <path d="M7 2h1" />
+        <path d="m22 22-5-10-5 10" />
+        <path d="M14 18h6" />
       </svg>
     ),
   },
@@ -117,6 +132,10 @@ export function SettingsPanel() {
     setSettings((prev) => ({ ...prev, speech: { ...prev.speech, [key]: value } }));
   }, []);
 
+  const updateTranslationPrompt = useCallback((next: TranslationPromptConfig) => {
+    setSettings((prev) => ({ ...prev, translation_prompt: next }));
+  }, []);
+
   const save = useCallback(async () => {
     const hk = settings.hotkeys;
     if (!hk?.screenshot?.trim() || !hk?.ocr_translate?.trim() || !hk?.clipboard_translate?.trim()) {
@@ -132,7 +151,11 @@ export function SettingsPanel() {
         "[Settings] 保存配置, translation.model=" +
           settings.translation.model +
           ", ocr.model=" +
-          settings.ocr.model
+          settings.ocr.model +
+          ", 解释缩写=" +
+          (settings.translation_prompt?.expand_abbreviations ?? false) +
+          ", 行业=" +
+          (settings.translation_prompt?.domains ?? []).join("|")
       );
       await saveSettings(settings);
       appLog.info("[Settings] 配置保存成功");
@@ -241,6 +264,12 @@ export function SettingsPanel() {
               onServiceChange={updateService}
               onProvidersChange={updateProviders}
               onActiveProviderChange={updateActiveProvider}
+            />
+          )}
+          {section === "translation" && (
+            <TranslationSettings
+              prefs={settings.translation_prompt}
+              onChange={updateTranslationPrompt}
             />
           )}
           {section === "hotkey" && (

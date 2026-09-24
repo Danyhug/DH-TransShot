@@ -6,6 +6,17 @@ export interface Settings {
   tts: ServiceConfig;
   hotkeys: HotkeyConfig;
   speech: SpeechConfig;
+  translation_prompt: TranslationPromptConfig;
+}
+
+/** 翻译提示词偏好（对应后端 `config::TranslationPromptConfig`，由 `translation::prompt` 拼进 system prompt） */
+export interface TranslationPromptConfig {
+  /** 解释缩写：单独输入缩写时输出按可能性排序的「全称 + 含义」候选；句中缩写按上下文译出含义 */
+  expand_abbreviations: boolean;
+  /** 行业偏向（多选，key 见 TranslationSettings 的 DOMAINS）；空 = 通用 */
+  domains: string[];
+  /** 自定义附加翻译指令，原样追加到 system prompt */
+  custom_prompt: string;
 }
 
 export interface SpeechConfig {
