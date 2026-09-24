@@ -222,7 +222,17 @@ export default function App() {
       await translate(text);
       appLog.info("[App] 选中文本翻译完成");
     } catch (e) {
+      // 典型是 macOS 缺辅助功能权限：后端返回可操作的提示，必须弹出主窗口展示，
+      // 否则用户只会觉得快捷键没反应
       appLog.error("[App] 翻译选中文本失败: " + String(e));
+      useTranslationStore.getState().setError(String(e));
+      try {
+        const appWindow = getCurrentWindow();
+        await appWindow.show();
+        await appWindow.setFocus();
+      } catch (showErr) {
+        appLog.warn("[App] 显示错误时主窗口弹出失败: " + String(showErr));
+      }
     }
   };
 

@@ -5,6 +5,6 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>DH-TransShot 需要录屏权限来截取屏幕内容进行翻译</string>
 	<key>NSAccessibilityUsageDescription</key>
-	<string>DH-TransShot 需要辅助功能权限来读取选中文字并执行翻译</string>
+	<string>DH-TransShot 需要辅助功能（macOS 27 起为「设备控制和数据访问」）权限来读取选中文字并执行翻译</string>
 </dict>
 </plist>

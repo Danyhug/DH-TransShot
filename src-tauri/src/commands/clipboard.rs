@@ -158,28 +158,41 @@ fn pasteboard_change_count() -> i64 {
     }
 }
 
+/// 缺少辅助功能权限时返回给前端的提示（macOS 27 起该权限在设置里改名为「设备控制和数据访问」）。
+#[cfg(target_os = "macos")]
+const AX_PERMISSION_HINT: &str = "缺少辅助功能权限，无法读取选中文字。请在「系统设置 → 隐私与安全性 → 设备控制和数据访问」（macOS 26 及更早为「辅助功能」）中允许 DH-TransShot 后重试；若列表里已有旧条目，先删除再重新添加。";
+
 /// Read selected text from the currently focused application.
-/// Primary: macOS Accessibility API (AXSelectedText).
-/// Fallback: save clipboard → simulate Cmd/Ctrl+C → read → restore clipboard.
+/// macOS: 先确认辅助功能权限（未授权时触发系统授权弹窗并返回明确错误），
+/// 再用原生 AXUIElement 读取 AXSelectedText，读不到时回退到剪贴板模拟。
+/// Windows: 直接走剪贴板模拟。
 #[tauri::command]
 pub async fn read_selected_text() -> Result<String, String> {
     info!("[Clipboard] read_selected_text: 读取选中文本...");
 
     let result = tokio::task::spawn_blocking(|| {
-        // Try Accessibility API first (macOS only)
         #[cfg(target_os = "macos")]
         {
-            if let Ok(text) = get_selected_text_accessibility() {
-                if !text.is_empty() {
+            // 两条路径（AX 读取、CGEventPost 模拟 Cmd+C）都依赖该权限，缺权限时直接报错，
+            // 否则回退路径会返回空串，前端表现为按了快捷键毫无反应
+            if !ax::is_trusted(true) {
+                warn!("[Clipboard] 未获得辅助功能权限，已请求系统授权");
+                return Err(AX_PERMISSION_HINT.to_string());
+            }
+
+            match ax::focused_selected_text() {
+                Ok(text) if !text.is_empty() => {
                     info!(
                         "[Clipboard] Accessibility API 获取成功, 文本长度={}",
                         text.len()
                     );
                     return Ok(text);
                 }
-                info!("[Clipboard] Accessibility API 返回空，尝试剪贴板回退...");
-            } else {
-                info!("[Clipboard] Accessibility API 失败，尝试剪贴板回退...");
+                Ok(_) => info!("[Clipboard] Accessibility API 返回空，尝试剪贴板回退..."),
+                Err(e) => info!(
+                    "[Clipboard] Accessibility API 失败 ({})，尝试剪贴板回退...",
+                    e
+                ),
             }
         }
 
@@ -192,37 +205,180 @@ pub async fn read_selected_text() -> Result<String, String> {
     result
 }
 
-/// Use macOS Accessibility API to read the selected text directly.
+/// 原生 Accessibility API（ApplicationServices + CoreFoundation 裸 FFI）。
+///
+/// 以前用 `osascript` 驱动 System Events 读 AXSelectedText，额外依赖「自动操作」权限，
+/// 且授权常被记到 osascript/终端而不是本应用；应用自己也从未申请过辅助功能权限，
+/// 导致 macOS 27 上设置列表里根本找不到 DH-TransShot。直接调用 AX API 后权限归属到本应用。
 #[cfg(target_os = "macos")]
-fn get_selected_text_accessibility() -> Result<String, String> {
-    let script = r#"
-tell application "System Events"
-    set frontApp to name of first application process whose frontmost is true
-    tell process frontApp
-        try
-            set selectedText to value of attribute "AXSelectedText" of focused UI element
-            return selectedText
-        end try
-    end tell
-end tell
-return ""
-"#;
+mod ax {
+    use std::ffi::{c_void, CString};
+    use std::os::raw::c_char;
 
-    let output = std::process::Command::new("osascript")
-        .args(["-e", script])
-        .output()
-        .map_err(|e| format!("osascript failed: {}", e))?;
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+    type CFDictionaryRef = *const c_void;
+    type AXUIElementRef = *const c_void;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Accessibility API error: {}", stderr));
+    const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
+    const K_AX_ERROR_SUCCESS: i32 = 0;
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        static kCFTypeDictionaryKeyCallBacks: [u8; 0];
+        static kCFTypeDictionaryValueCallBacks: [u8; 0];
+        static kCFBooleanTrue: CFTypeRef;
+        static kCFBooleanFalse: CFTypeRef;
+        fn CFStringCreateWithCString(
+            alloc: *const c_void,
+            c_str: *const c_char,
+            encoding: u32,
+        ) -> CFStringRef;
+        fn CFDictionaryCreate(
+            alloc: *const c_void,
+            keys: *const CFTypeRef,
+            values: *const CFTypeRef,
+            num_values: isize,
+            key_callbacks: *const c_void,
+            value_callbacks: *const c_void,
+        ) -> CFDictionaryRef;
+        fn CFGetTypeID(cf: CFTypeRef) -> usize;
+        fn CFStringGetTypeID() -> usize;
+        fn CFStringGetLength(s: CFStringRef) -> isize;
+        fn CFStringGetMaximumSizeForEncoding(length: isize, encoding: u32) -> isize;
+        fn CFStringGetCString(
+            s: CFStringRef,
+            buffer: *mut c_char,
+            size: isize,
+            encoding: u32,
+        ) -> bool;
+        fn CFRelease(cf: CFTypeRef);
     }
 
-    let text = String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string();
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        static kAXTrustedCheckOptionPrompt: CFStringRef;
+        fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+        fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+        fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f32) -> i32;
+        fn AXUIElementCopyAttributeValue(
+            element: AXUIElementRef,
+            attribute: CFStringRef,
+            value: *mut CFTypeRef,
+        ) -> i32;
+    }
 
-    Ok(text)
+    /// 持有一个 CF 对象，离开作用域自动 CFRelease。
+    struct Owned(CFTypeRef);
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CFRelease(self.0) };
+            }
+        }
+    }
+
+    fn cf_string(s: &str) -> Owned {
+        let c = CString::new(s).expect("CF string literal contains NUL");
+        Owned(unsafe {
+            CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), K_CF_STRING_ENCODING_UTF8)
+        })
+    }
+
+    /// CFString → Rust String；非 CFString 或转换失败返回 None。
+    fn to_string(cf: CFTypeRef) -> Option<String> {
+        unsafe {
+            if cf.is_null() || CFGetTypeID(cf) != CFStringGetTypeID() {
+                return None;
+            }
+            let len = CFStringGetLength(cf);
+            let cap = CFStringGetMaximumSizeForEncoding(len, K_CF_STRING_ENCODING_UTF8) + 1;
+            let mut buf = vec![0u8; cap.max(1) as usize];
+            if !CFStringGetCString(
+                cf,
+                buf.as_mut_ptr() as *mut c_char,
+                cap,
+                K_CF_STRING_ENCODING_UTF8,
+            ) {
+                return None;
+            }
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            buf.truncate(end);
+            String::from_utf8(buf).ok()
+        }
+    }
+
+    /// 当前进程是否已获辅助功能授权。`prompt = true` 时，未授权会把应用登记进设置列表
+    /// 并弹出系统授权框（系统只会弹一次，之后需用户去设置里手动打开）。
+    pub fn is_trusted(prompt: bool) -> bool {
+        unsafe {
+            let keys = [kAXTrustedCheckOptionPrompt];
+            let values = [if prompt {
+                kCFBooleanTrue
+            } else {
+                kCFBooleanFalse
+            }];
+            let options = Owned(CFDictionaryCreate(
+                std::ptr::null(),
+                keys.as_ptr(),
+                values.as_ptr(),
+                1,
+                kCFTypeDictionaryKeyCallBacks.as_ptr() as *const c_void,
+                kCFTypeDictionaryValueCallBacks.as_ptr() as *const c_void,
+            ));
+            AXIsProcessTrustedWithOptions(options.0)
+        }
+    }
+
+    fn copy_attribute(element: AXUIElementRef, name: &str) -> Result<Owned, String> {
+        let attr = cf_string(name);
+        let mut value: CFTypeRef = std::ptr::null();
+        let err = unsafe { AXUIElementCopyAttributeValue(element, attr.0, &mut value) };
+        if err != K_AX_ERROR_SUCCESS || value.is_null() {
+            return Err(format!("读取 {} 失败, AXError={}", name, err));
+        }
+        Ok(Owned(value))
+    }
+
+    /// 读取当前焦点控件的选中文字。
+    pub fn focused_selected_text() -> Result<String, String> {
+        let system = Owned(unsafe { AXUIElementCreateSystemWide() });
+        if system.0.is_null() {
+            return Err("AXUIElementCreateSystemWide 失败".to_string());
+        }
+        // 默认 6 秒；前台应用卡死时别让快捷键跟着卡住，超时后走剪贴板回退
+        unsafe { AXUIElementSetMessagingTimeout(system.0, 1.0) };
+
+        let focused = copy_attribute(system.0, "AXFocusedUIElement")?;
+        let selected = copy_attribute(focused.0, "AXSelectedText")?;
+        to_string(selected.0).ok_or_else(|| "AXSelectedText 不是字符串".to_string())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn cf_string_round_trips_utf8() {
+            for s in ["", "KPI", "你好，世界 👋"] {
+                let cf = cf_string(s);
+                assert_eq!(to_string(cf.0).as_deref(), Some(s));
+            }
+        }
+
+        #[test]
+        fn non_string_is_rejected() {
+            assert_eq!(to_string(std::ptr::null()), None);
+            assert_eq!(to_string(unsafe { kCFBooleanTrue }), None);
+        }
+
+        /// 只查询不弹窗，确认 FFI 链接与调用本身可用（结果取决于运行环境的授权状态）
+        #[test]
+        fn trust_query_does_not_crash() {
+            let _ = is_trusted(false);
+        }
+    }
 }
 
 /// Fallback: simulate Cmd/Ctrl+C, wait for the copy to actually land, read the
