@@ -51,6 +51,7 @@
 | `tts` | ServiceConfig | model=`"FunAudioLLM/CosyVoice2-0.5B"`, extra=`{"voice":"...:alex", "speed":1.0, "response_format":"mp3", "sample_rate":44100}` | TTS 服务配置（默认 provider 走硅基流动 audio/speech；`enable_thinking` 是 chat completions 参数，audio/speech 无此字段，不要加） |
 | `hotkeys` | HotkeyConfig | `screenshot="Alt+A"`, `ocr_translate="Alt+S"`, `clipboard_translate="Alt+Q"` | 三个动作的快捷键字符串，使用 `Alt+A`、`Ctrl+Shift+S`、`Cmd+K` 等格式（由 `tauri_plugin_global_shortcut::Shortcut::from_str` 解析） |
 | `speech` | SpeechConfig | `auto_read_source=false`, `auto_read_target=false`, `auto_read_max_units=0`, `stream_playback=true` | 朗读行为配置（翻译后自动朗读、自动朗读长度上限、流式边收边播开关） |
+| `translation_prompt` | TranslationPromptConfig | `expand_abbreviations=false`, `domains=[]`, `custom_prompt=""` | 翻译提示词偏好（缩写解释、行业偏向、自定义指令） |
 
 **默认 `extra` 里每个值的来历**（据硅基流动 / 小米 MiMo 官方 API 文档，2026-08 核对）
 
@@ -113,6 +114,17 @@
 - `auto_read_max_units` **只在前端生效**（后端不参与判断）：`hooks/useTranslation.ts` 用 `lib/tts.ts` 的 `countSpeechUnits()` 计数，超限的那一段不入自动朗读队列；手动点喇叭不受限制。默认 `0`（不限制）以保持旧版行为
 - `stream_playback` 仅对小米 MiMo（chat+audio）流式路径有意义；audio/speech 协议始终整段播放
 
+**`TranslationPromptConfig` — 翻译提示词偏好**
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `expand_abbreviations` | bool | `false` | 解释缩写：单独输入缩写时输出按可能性排序的「全称 + 含义」候选；句中缩写按上下文译出含义 |
+| `domains` | `Vec<String>` | `[]` | 行业偏向（多选），取值为 `translation::prompt::DOMAINS` 的 key（`it`/`business`/`finance`/`legal`/`medical`/`academic`/`engineering`/`marketing`/`gaming`/`slang`）；空 = 通用 |
+| `custom_prompt` | String | `""` | 自定义附加翻译指令，追加到 system prompt 末尾 |
+
+- 结构体整体 `#[serde(default)]`，旧版 settings.json 无该字段时回退到全默认，翻译行为与之前完全一致
+- 只被 `commands/translation.rs` 读取并传给 `translation::prompt::build()`，拼装规则见 [translation.md](translation.md)
+
 - `base_url` 和 `api_key` 字段使用 `#[serde(default)]`，旧版 settings.json（无顶层 base_url/api_key）能正常反序列化并回退到默认值
 - `ServiceConfig.providers` 默认空数组、`active` 默认 -1，`ExtraProvider.extra` 默认空串，旧版 settings.json（无这些字段）能正常反序列化并保持原有行为
 - 所有结构体实现 `Serialize`、`Deserialize`、`Clone`
@@ -172,7 +184,7 @@ DEFAULT_API_KEY=sk-your-api-key
 - **被依赖**：
   - `lib.rs` 创建并注册 `AppState`
   - `commands/screenshot.rs` 读写 `frozen_screenshots`、`frozen_mode`、`frozen_window_rects`、`frozen_monitors`
-  - `commands/translation.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.translation`、`http_client`
+  - `commands/translation.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.translation`、`settings.translation_prompt`、`http_client`
   - `commands/ocr.rs` 读取 `settings.base_url`、`settings.api_key`、`settings.ocr`、`http_client`
   - `commands/settings.rs` 读写 `settings`
   - `commands/tts.rs` 读取 `settings`、`tts_cache`、`http_client`

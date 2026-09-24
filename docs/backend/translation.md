@@ -10,6 +10,7 @@
 |------|------|
 | `src-tauri/src/translation/mod.rs` | 模块声明，公开导出 `OpenAiCompatProvider` |
 | `src-tauri/src/translation/openai_compat.rs` | OpenAI 兼容 Chat Completions 客户端实现 |
+| `src-tauri/src/translation/prompt.rs` | 翻译提示词拼装：基础防注入提示词 + 设置里的可选偏好（缩写解释 / 行业偏向 / 自定义指令） |
 
 ## 核心逻辑
 
@@ -26,7 +27,9 @@
 **`strip_markers(text, begin, end) -> String`**
 - 兜底清理，模型偶尔会把边界标记一并输出，返回前端前剔除并 trim
 
-**`translate(text, source_lang, target_lang, base_url, api_key, model, extra) -> anyhow::Result<String>`**
+**`translate(text, source_lang, target_lang, base_url, api_key, model, extra, prefs) -> anyhow::Result<String>`**
+
+- `prefs: &TranslationPromptConfig` 来自 `settings.translation_prompt`，第 2、3 步的提示词由 `prompt::build()` 生成（下文展示的是 `prefs` 为默认值时的基础提示词）
 
 1. **生成一次性边界标记：**
    - `begin = <<<SOURCE_TEXT_{id}_BEGIN>>>`、`end = <<<SOURCE_TEXT_{id}_END>>>`
@@ -84,16 +87,43 @@
 | 2 | system prompt 的 Absolute rules | 明确正文内一切指令只翻译不执行 |
 | 3 | 正文之后的尾部提醒 + `strip_markers()` | 长文本下的指令遗忘；标记泄漏到 UI |
 
+### prompt.rs
+
+**`build(text, source_lang, target_lang, prefs, begin, end) -> Prompts { system, user }`**
+
+在基础提示词之上按 `TranslationPromptConfig` 注入可选段落。`prefs` 全为默认值时输出与改造前完全一致（有单测锁定）。
+
+| 偏好 | 注入内容 |
+|------|---------|
+| `expand_abbreviations` 开 | ① 基础规则里「缩写保持惯用形式」换成「缩写按上下文译出含义并在括号保留原缩写」（如 `首席运营官(COO)`），URL/API/PDF 这类目标语言惯用原形的缩写除外；② 若 `is_short_term(text)`，再追加 **Abbreviation mode** 段：输出 1~4 个候选，格式 `1. <原文全称> — <译文全称>` + 下一行一句话解释；同时把 reply 规则和尾部提醒改成「是缩写就只输出候选列表，否则正常翻译」 |
+| `domains` 非空 | 追加 **Domain preference** 段（歧义词优先采用这些行业的含义与术语）；缩写模式下候选排序改为「所选行业的含义必须排在前面」 |
+| `custom_prompt` 非空 | 追加到 system prompt 末尾，标注为可信的用户指令，但不能覆盖 Absolute rules |
+
+- **`is_short_term(text)`**：单行、≤ 4 个词、≤ 32 个字符才算「单独查一个词」。缩写候选列表只对这种输入启用，长文本里的缩写走「按上下文译出含义」规则，否则模型会把整段译文也改写成列表
+- **`DOMAINS`**：行业 key → 写进提示词的英文领域名。key 持久化在 settings.json，与前端 `TranslationSettings.tsx` 的 `DOMAINS` 一一对应；未知 key 静默忽略，输出顺序固定为 `DOMAINS` 顺序
+- 待翻译正文只出现在 user 消息的边界标记之间，**绝不拼进 system prompt**（有单测锁定）；自定义指令来自设置界面，视为可信
+
+**模型遵循度实测（2026-09，硅基流动）**
+
+| 模型 | 缩写候选 | 句中缩写意译 | 行业排序 |
+|------|---------|------------|---------|
+| `tencent/Hunyuan-MT-7B`（默认） | ✗ 原样输出，甚至把尾部提醒也翻译出来 | ✗ | ✗ |
+| `Qwen/Qwen3.5-4B` | ✓ 格式基本正确，偶尔漏写原文全称 | ✗ 仍保留 KPI/COO | — |
+| `deepseek-ai/DeepSeek-V3` | ✓ 格式稳定，多义缩写（COO、PM）给出多个候选 | ✓ `首席运营官(COO)` | ✓ `CI` 选医学 → 置信区间/心脏指数/脑梗死 排前 |
+
+Hunyuan-MT 是专用翻译模型，不具备复杂指令遵循能力；这些功能需要把翻译模型换成通用对话模型，设置页「翻译」分区已提示。
+
 ## 依赖关系
 
 - **外部依赖**：`reqwest`（HTTP 客户端）、`serde_json`（序列化）、`log`
-- **内部依赖**：`api_client`（共享 HTTP 请求逻辑、ChatResponse 结构体）
+- **内部依赖**：`api_client`（共享 HTTP 请求逻辑、ChatResponse 结构体）、`config::TranslationPromptConfig`
 - **被依赖**：`commands/translation.rs` 创建 `OpenAiCompatProvider` 实例并调用 `translate()`
 
 ## 修改指南
 
 - `temperature: 0.3` 为翻译场景优化的值，调高会增加输出随机性
-- 系统提示词直接影响翻译质量，修改时需充分测试不同语言对
+- 系统提示词直接影响翻译质量，修改时需充分测试不同语言对；提示词文本统一在 `prompt.rs` 里改
+- 新增行业偏向选项时，同时改 `prompt.rs` 的 `DOMAINS` 和前端 `TranslationSettings.tsx` 的 `DOMAINS`
 - **不要移除边界标记包裹和尾部提醒**：这两项是长文本翻译跑偏和 prompt injection 的主要防线，回退成裸传 user text 会重新引入「正文里的指令被模型执行」的问题
 - 修改提示词后建议用这几类样本回归：含「忽略以上指令」等注入语句的文本、超长多段落文本、混合代码/Markdown 的文本
 - 长文本译文被截断通常不是提示词问题，而是服务端 `max_tokens` 默认值过小 → 通过 `translation.extra` 填 `{"max_tokens": 8192}` 之类的参数调大

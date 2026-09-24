@@ -23,6 +23,13 @@ interface Settings {
   tts: ServiceConfig;
   hotkeys: HotkeyConfig;
   speech: SpeechConfig;
+  translation_prompt: TranslationPromptConfig;
+}
+
+interface TranslationPromptConfig {
+  expand_abbreviations: boolean; // 解释缩写（单独缩写 → 候选列表；句中缩写 → 按上下文意译）
+  domains: string[];             // 行业偏向 key，多选；空 = 通用
+  custom_prompt: string;         // 自定义附加翻译指令
 }
 
 interface ServiceConfig {

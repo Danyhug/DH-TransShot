@@ -71,6 +71,11 @@
     auto_read_max_units: 0,
     stream_playback: true,
   },
+  translation_prompt: {
+    expand_abbreviations: false,
+    domains: [],
+    custom_prompt: "",
+  },
 }
 ```
 
