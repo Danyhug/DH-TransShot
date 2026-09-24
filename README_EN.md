@@ -66,7 +66,7 @@ Go to the [Releases](../../releases) page to download the installer for your pla
 
 > macOS users need to grant permissions on first use in **System Settings → Privacy & Security**:
 > - **Screen Recording** — Required for region screenshot and OCR
-> - **Accessibility** — Required for "Translate Selected Text" (`Alt+Q`) to read selected text via Accessibility API
+> - **Accessibility** (renamed to **Device Control and Data Access** in macOS 27) — Required for "Translate Selected Text" (`Alt+Q`) to read selected text via Accessibility API; the app requests it the first time you press `Alt+Q`
 > - **Input Monitoring** — Improves global hotkey interception reliability and prevents Option+letter from occasionally typing special characters
 
 ### Build from Source

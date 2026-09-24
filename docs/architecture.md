@@ -112,7 +112,8 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
   → App.tsx handleAction("clipboard_translate")
   → handleSelectedTextTranslate()
     → readSelectedText()
-      → 优先: Accessibility API 读取选中文字 (AXSelectedText)
+      → macOS: 检查辅助功能权限，未授权 → 触发系统授权框并返回错误，主窗口显示提示
+      → 优先: 原生 AX API 读取选中文字 (AXSelectedText)
       → 回退: 保存剪贴板 → 模拟 Cmd/Ctrl+C → 读取 → 恢复原剪贴板
     → setSourceText() 填入源文本
     → 主窗口 show + focus

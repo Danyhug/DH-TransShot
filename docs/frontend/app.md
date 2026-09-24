@@ -35,7 +35,7 @@
 **`handleAction(action)` 路由：**
 - `"screenshot"` → `startRegion("screenshot")`
 - `"ocr_translate"` → `startRegion("ocr_translate")`
-- `"clipboard_translate"` → `handleSelectedTextTranslate()`（Accessibility API 读取选中文字 → 翻译 → 显示主窗口）
+- `"clipboard_translate"` → `handleSelectedTextTranslate()`（Accessibility API 读取选中文字 → 翻译 → 显示主窗口；读取失败（如 macOS 缺辅助功能权限）时把后端返回的提示写入 `translationStore.error` 并弹出主窗口，不再静默失败）
 
 **`handleAction` 不再提前 show/focus 主窗口** — 主窗口的显示由覆盖层关闭回调根据 mode 决定。
 

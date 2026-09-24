@@ -102,7 +102,8 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 **`read_selected_text() -> Result<String, String>`**
 - 读取当前焦点应用的选中文本
-- 优先使用 macOS Accessibility API（`AXSelectedText` 属性），直接读取选中文字
+- macOS 下先调用 `AXIsProcessTrustedWithOptions(prompt=true)` 检查辅助功能权限：未授权时系统会把应用登记进权限列表并弹出授权框（系统只弹一次），命令直接返回 `Err(可操作的中文提示)`，**不再走回退路径**（回退的 `CGEventPost` 同样需要该权限，只会静默返回空串）
+- 已授权时用原生 AX API 读取：`AXUIElementCreateSystemWide` → `AXFocusedUIElement` → `AXSelectedText`（裸 FFI，见 `clipboard.rs` 的 `ax` 模块；消息超时设为 1s，前台应用卡死时不拖住快捷键）。以前用 `osascript` 驱动 System Events，额外依赖「自动操作」权限且授权会记到 osascript/终端头上，已移除。背景见 [docs/macos-permissions.md](../macos-permissions.md)
 - 若 Accessibility API 失败或返回空（浏览器/Electron 的网页输入框常返回空），回退到剪贴板模拟：
   - 保存当前剪贴板内容（用于事后恢复）
   - macOS 下尽力等待 Option/Alt 释放（`CGEventSourceFlagsState` 轮询），但**不再因超时放弃**——`CGEventSetFlags` 已强制干净的 Cmd+C
