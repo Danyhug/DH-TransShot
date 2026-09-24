@@ -19,7 +19,7 @@ tauri-plugin-store = "2"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
 futures-util = "0.3"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-base64 = "0.22"
+base64 = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
@@ -27,7 +27,7 @@ anyhow = "1"
 log = "0.4"
 tauri-plugin-log = "2"
 dotenvy = "0.15"
-tauri-plugin-dialog = "2.7.1"
+tauri-plugin-dialog = "2.7.3"
 # 只要播放 + 解码，不要 recording（默认特性里带着，会把麦克风采集一起编进来）。
 # 用 wav / mp3 / flac / vorbis 这几个「伞形」特性而不是底层的 symphonia-*：
 # 例如 wav = symphonia-wav（RIFF 容器）+ symphonia-pcm（PCM 编解码），
@@ -35,7 +35,7 @@ tauri-plugin-dialog = "2.7.1"
 rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav", "mp3", "flac", "vorbis"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-xcap = "0.8"
+xcap = "0.9"
 
 # 仅测试用：TTS 流式解析要对着真实 HTTP 响应验（SSE 分帧、末行无换行、非 SSE 兜底），
 # 需要起一个本地假服务端
