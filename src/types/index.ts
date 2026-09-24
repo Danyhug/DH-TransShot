@@ -17,6 +17,8 @@ export interface TranslationPromptConfig {
   domains: string[];
   /** 自定义附加翻译指令，原样追加到 system prompt */
   custom_prompt: string;
+  /** 编辑过的内置翻译规则；空串 = 使用后端内置默认规则 */
+  base_prompt: string;
 }
 
 export interface SpeechConfig {

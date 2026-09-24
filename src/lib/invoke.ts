@@ -38,6 +38,11 @@ export async function translateText(
   return invoke("translate_text", { text, sourceLang, targetLang });
 }
 
+/** 内置翻译规则原文（后端 `translation::prompt::DEFAULT_RULES`），设置里展示和「恢复默认」用 */
+export async function getDefaultTranslationPrompt(): Promise<string> {
+  return invoke("get_default_translation_prompt");
+}
+
 export async function getSettings(): Promise<Settings> {
   return invoke("get_settings");
 }

@@ -1,4 +1,4 @@
-use super::prompt::build;
+use super::prompt::{build, tidy_single_candidate};
 use crate::config::TranslationPromptConfig;
 use log::info;
 use reqwest::Client;
@@ -85,7 +85,11 @@ impl OpenAiCompatProvider {
         )
         .await?;
 
-        Ok(strip_markers(&translated, &begin, &end))
+        let translated = strip_markers(&translated, &begin, &end);
+        if prompts.abbreviation_mode {
+            return Ok(tidy_single_candidate(&translated));
+        }
+        Ok(translated)
     }
 }
 

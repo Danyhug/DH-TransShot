@@ -68,6 +68,7 @@ export const defaultSettings: Settings = {
     expand_abbreviations: false,
     domains: [],
     custom_prompt: "",
+    base_prompt: "",
   },
 };
 

@@ -29,10 +29,11 @@ pub async fn translate_text(
     let client = state.http_client.clone();
     info!("[Translation] 使用 model={}, base_url={}", model, base_url);
     info!(
-        "[Translation] 提示词偏好: 解释缩写={}, 行业={:?}, 自定义提示词长度={}",
+        "[Translation] 提示词偏好: 解释缩写={}, 行业={:?}, 自定义提示词长度={}, 内置规则已编辑={}",
         prefs.expand_abbreviations,
         prefs.domains,
-        prefs.custom_prompt.trim().len()
+        prefs.custom_prompt.trim().len(),
+        !prefs.base_prompt.trim().is_empty()
     );
 
     let provider = OpenAiCompatProvider::new(client);
@@ -54,4 +55,10 @@ pub async fn translate_text(
         Err(e) => error!("[Translation] 翻译失败: {}", e),
     }
     result
+}
+
+/// 内置翻译规则原文，供设置界面展示和「恢复默认」。
+#[tauri::command]
+pub fn get_default_translation_prompt() -> String {
+    crate::translation::prompt::DEFAULT_RULES.to_string()
 }

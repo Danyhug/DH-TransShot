@@ -40,6 +40,7 @@ pub fn run() {
             commands::screenshot::get_frozen_screenshot,
             commands::ocr::capture_and_ocr,
             commands::translation::translate_text,
+            commands::translation::get_default_translation_prompt,
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::clipboard::read_clipboard,

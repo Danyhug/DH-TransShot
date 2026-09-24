@@ -171,6 +171,9 @@ pub struct TranslationPromptConfig {
     pub domains: Vec<String>,
     /// 用户自定义的附加翻译指令，原样追加到 system prompt
     pub custom_prompt: String,
+    /// 编辑过的内置翻译规则；空 = 使用 `translation::prompt::DEFAULT_RULES`。
+    /// 存空串而不是默认文本，内置规则后续升级时未改过的用户能自动跟上
+    pub base_prompt: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
