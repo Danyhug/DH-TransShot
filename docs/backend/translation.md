@@ -10,7 +10,7 @@
 |------|------|
 | `src-tauri/src/translation/mod.rs` | 模块声明，公开导出 `OpenAiCompatProvider` |
 | `src-tauri/src/translation/openai_compat.rs` | OpenAI 兼容 Chat Completions 客户端实现 |
-| `src-tauri/src/translation/prompt.rs` | 翻译提示词拼装：基础防注入提示词 + 设置里的可选偏好（缩写解释 / 行业偏向 / 自定义指令） |
+| `src-tauri/src/translation/prompt.rs` | 翻译提示词拼装：基础防注入提示词 + 设置里的可选偏好（缩写与标识符解释 / 行业偏向 / 自定义指令） |
 
 ## 核心逻辑
 
@@ -51,7 +51,8 @@
    - 从第一个字符译到最后一个字符，无论多长都不摘要、不压缩、不跳过、不提前停止
    - 地道自然的 {target}，传达含义与语气而非逐字直译
    - 保留原结构与格式：换行、段落、列表、Markdown、缩进
-   - 代码/命令/路径/URL/邮箱/反引号与代码块内容原样保留
+   - 代码/路径/URL/邮箱/反引号与代码块内容原样保留
+   - 命令行选项/flag 与连字符、下划线连接的词（`--dangerously-skip-permissions`、`read-only`、`snake_case`）是普通文本而非代码：按「把 `-`/`_` 当空格」译出整个 token 的含义，不得原样透传
    - 占位符与变量原样保留（{name}、%s、{0}、$VAR）
    - 专有名词、品牌名、通用技术术语/缩写保持惯用形式
    - 已经是 {target} 的部分保持不变
@@ -102,11 +103,12 @@ system prompt 由两部分组成：
 
 | 偏好 | 注入内容 |
 |------|---------|
-| `expand_abbreviations` 开 | ① 追加 **Abbreviations and acronyms** 段（覆盖前文「缩写保持惯用形式」）：缩写按上下文译出含义并在括号保留原缩写（如 `首席运营官(COO)`），URL/API/PDF 这类目标语言惯用原形的缩写除外；② 若 `is_short_term(text)`，再追加 **Abbreviation mode** 段：输出 1~4 个候选，格式 `1. <原文全称> — <译文全称>` + 下一行一句话解释；同时把 reply 规则和尾部提醒改成「是缩写就只输出候选列表，否则正常翻译」 |
+| `expand_abbreviations` 开 | ① 追加 **Abbreviations and acronyms** 段（覆盖前文「缩写保持惯用形式」）：缩写按上下文译出含义并在括号保留原缩写（如 `首席运营官(COO)`），URL/API/PDF 这类目标语言惯用原形的缩写除外；② 若 `is_standalone_identifier(text)`（单独一个标识符/路径，如 `stores/settingsStore`），追加 **Identifier and path mode** 段，并把关键指令同时写进 user 尾部提醒：按 `/`、`-`、`_`、`.`、`::` 与驼峰边界拆词，逐词译出、保留分隔符，且**不进入缩写候选格式**；③ 否则若 `is_short_term(text)`，追加 **Abbreviation mode** 段：输出 1~4 个候选，格式 `1. <原文全称> — <译文全称>` + 下一行一句话解释；同时把 reply 规则和尾部提醒改成「是缩写就只输出候选列表，否则正常翻译」 |
 | `domains` 非空 | 追加 **Domain preference** 段（歧义词优先采用这些行业的含义与术语）；缩写模式下候选排序改为「所选行业的含义必须排在前面」 |
 | `custom_prompt` 非空 | 追加到 system prompt 末尾，标注为可信的用户指令，但不能覆盖 Absolute rules |
 
 - **`is_short_term(text)`**：单行、≤ 4 个词、≤ 32 个字符才算「单独查一个词」。缩写候选列表只对这种输入启用，长文本里的缩写走「按上下文译出含义」规则，否则模型会把整段译文也改写成列表
+- **`is_standalone_identifier(text)`**：`is_short_term` 且不含空白、不以 `-` 开头，并含 `/`、`_`、`.`、`:` 之一或有驼峰边界（如 `stores/settingsStore`、`useScreenshot`）。这种输入是用户在查一个代码符号，按词段译出含义；**关键指令必须同时放进 user 尾部提醒**，只放在 system 规则里模型会当代码原样返回。整篇文档里的路径不满足「单独的短词」条件，仍由「原样保留」规则保护
 - **`DOMAINS`**：行业 key → 写进提示词的英文领域名。key 持久化在 settings.json，与前端 `TranslationSettings.tsx` 的 `DOMAINS` 一一对应；未知 key 静默忽略，输出顺序固定为 `DOMAINS` 顺序
 - 待翻译正文只出现在 user 消息的边界标记之间，**绝不拼进 system prompt**（有单测锁定）；自定义指令来自设置界面，视为可信
 
@@ -132,7 +134,7 @@ Hunyuan-MT 是专用翻译模型，不具备复杂指令遵循能力；这些功
 - 系统提示词直接影响翻译质量，修改时需充分测试不同语言对；提示词文本统一在 `prompt.rs` 里改
 - 新增行业偏向选项时，同时改 `prompt.rs` 的 `DOMAINS` 和前端 `TranslationSettings.tsx` 的 `DOMAINS`
 - **不要移除边界标记包裹和尾部提醒**：这两项是长文本翻译跑偏和 prompt injection 的主要防线，回退成裸传 user text 会重新引入「正文里的指令被模型执行」的问题
-- 修改提示词后建议用这几类样本回归：含「忽略以上指令」等注入语句的文本、超长多段落文本、混合代码/Markdown 的文本
+- 修改提示词后建议用这几类样本回归：含「忽略以上指令」等注入语句的文本、超长多段落文本、混合代码/Markdown 的文本、带 `--flag`/连字符/下划线 token 的文本（需译出含义而非原样透传）
 - 长文本译文被截断通常不是提示词问题，而是服务端 `max_tokens` 默认值过小 → 通过 `translation.extra` 填 `{"max_tokens": 8192}` 之类的参数调大
 - `base_url` 由 `api_client::build_endpoint_url` 按填写形态自适应拼接端点（根/版本段/完整端点/`#` raw），规则详见 [config.md](config.md)
 - 空 `api_key` 时不发送 Authorization header（适配 Ollama 等本地服务）

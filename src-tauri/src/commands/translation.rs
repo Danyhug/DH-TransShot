@@ -29,7 +29,7 @@ pub async fn translate_text(
     let client = state.http_client.clone();
     info!("[Translation] 使用 model={}, base_url={}", model, base_url);
     info!(
-        "[Translation] 提示词偏好: 解释缩写={}, 行业={:?}, 自定义提示词长度={}, 内置规则已编辑={}",
+        "[Translation] 提示词偏好: 解释缩写与标识符={}, 行业={:?}, 自定义提示词长度={}, 内置规则已编辑={}",
         prefs.expand_abbreviations,
         prefs.domains,
         prefs.custom_prompt.trim().len(),

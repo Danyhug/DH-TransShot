@@ -164,7 +164,8 @@ impl Default for SpeechConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct TranslationPromptConfig {
-    /// 解释缩写：原文是单独的缩写时输出按可能性排序的「全称 + 含义」候选；
+    /// 解释缩写与标识符：原文是单独的缩写时输出按可能性排序的「全称 + 含义」候选；
+    /// 原文是单独的标识符/路径（如 `stores/settingsStore`）时按词段译出含义；
     /// 句子里的缩写按上下文译出含义
     pub expand_abbreviations: bool,
     /// 行业偏向（`translation::prompt::DOMAINS` 里的 key，可多选）；空 = 通用

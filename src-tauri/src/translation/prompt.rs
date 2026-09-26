@@ -1,4 +1,4 @@
-//! 翻译提示词拼装：基础防注入提示词 + 设置里的可选偏好（缩写解释 / 行业偏向 / 自定义指令）。
+//! 翻译提示词拼装：基础防注入提示词 + 设置里的可选偏好（缩写与标识符解释 / 行业偏向 / 自定义指令）。
 //!
 //! 待翻译正文只会出现在 user 消息的边界标记之间，绝不拼进 system prompt；
 //! 用户自定义指令来自设置界面（可信），放在 system prompt 末尾。
@@ -33,6 +33,24 @@ pub fn is_short_term(text: &str) -> bool {
         && t.split_whitespace().count() <= 4
 }
 
+/// 判断正文是否是一个「单独的标识符 / 路径」（如 `stores/settingsStore`、`useScreenshot`）。
+///
+/// 这种输入是用户在查一个代码符号的含义，而不是待保留的代码片段，所以要按词段翻译；
+/// 整篇文档里的路径不满足「单独的短词」条件，仍由「原样保留」规则保护。
+/// 以 `-` 开头的命令行选项不算标识符（由命令选项规则处理）。
+pub fn is_standalone_identifier(text: &str) -> bool {
+    let t = text.trim();
+    if !is_short_term(t) || t.starts_with('-') {
+        return false;
+    }
+    let has_separator = ['/', '_', '.', ':'].iter().any(|sep| t.contains(*sep));
+    let has_camel_boundary = t
+        .chars()
+        .zip(t.chars().skip(1))
+        .any(|(a, b)| a.is_lowercase() && b.is_uppercase());
+    has_separator || has_camel_boundary
+}
+
 /// 内置翻译规则（设置里可编辑，`TranslationPromptConfig.base_prompt` 为空时使用）。
 ///
 /// 拼装时把 `{source_lang}` / `{target_lang}` 替换成实际语言；其余花括号（如 `{name}`）原样保留。
@@ -42,7 +60,8 @@ pub const DEFAULT_RULES: &str = "\
 - Translate the WHOLE text, from the first character to the last. Never summarize, compress, skip or stop early, however long the input is.
 - Produce natural, fluent, idiomatic {target_lang} as a native speaker would write it; convey meaning and tone rather than translating word for word.
 - Preserve the original structure and formatting: line breaks, paragraphs, lists, Markdown, indentation.
-- Do NOT translate or alter code, commands, file paths, URLs, email addresses, or content inside backticks/code blocks; keep them verbatim.
+- Keep code, content inside backticks/code blocks, file paths, URLs and email addresses unchanged; do not translate or alter them.
+- Command-line options, flags and hyphenated/underscored names are ordinary text, NOT code, even though they look like commands or identifiers: translate the meaning of the whole token into {target_lang} exactly as if its dashes/hyphens/underscores were spaces. E.g. --dangerously-skip-permissions -> the {target_lang} for \"dangerously skip permissions\"; read-only -> the {target_lang} for \"read only\"; snake_case -> the {target_lang} for \"snake case\". Never pass such a token through untranslated.
 - Keep placeholders and variables unchanged (e.g. {name}, %s, {0}, $VAR).
 - Keep proper nouns, brand names, and well-known technical terms/acronyms in their conventional form; do not force-translate them.
 - Keep any part that is already in {target_lang} unchanged.";
@@ -68,7 +87,9 @@ pub fn build(
         source_lang
     };
     let tgt = target_lang;
-    let abbreviation_mode = prefs.expand_abbreviations && is_short_term(text);
+    // 单独一个标识符/路径（如 stores/settingsStore）走「按词段翻译」，不进入缩写候选格式
+    let identifier_mode = prefs.expand_abbreviations && is_standalone_identifier(text);
+    let abbreviation_mode = prefs.expand_abbreviations && is_short_term(text) && !identifier_mode;
     let domains: Vec<&str> = DOMAINS
         .iter()
         .filter(|(key, _)| prefs.domains.iter().any(|d| d == key))
@@ -151,6 +172,14 @@ pub fn build(
         ));
     }
 
+    if identifier_mode {
+        system.push_str(&format!(
+            "\n\n\
+             Identifier and path mode (this overrides any rule above about keeping code and paths unchanged):\n\
+             The source text is a single technical name — an identifier, file path or module path — not a code block to preserve verbatim. Split it into words at `/`, `-`, `_`, `.`, `::` and camelCase boundaries, then translate every word into {tgt} while keeping the original separators. E.g. `stores/settingsStore` -> the {tgt} for \"stores/settings store\"; `useScreenshot` -> the {tgt} for \"use screenshot\". Never return the source token unchanged."
+        ));
+    }
+
     let custom = prefs.custom_prompt.trim();
     if !custom.is_empty() {
         system.push_str(&format!(
@@ -162,7 +191,9 @@ pub fn build(
 
     // 正文包在标记内；结尾再补一条提醒 —— 长文本时系统提示词离生成位置很远，
     // 靠近末尾的这句能显著提升指令遵循率，避免模型转而“回应”正文内容。
-    let reply_hint = if abbreviation_mode {
+    let reply_hint = if identifier_mode {
+        format!("Reply with its complete {tgt} translation only. The source text is a single technical name, not code to preserve: split it at `/`, `-`, `_`, `.`, `::` and camelCase boundaries and translate every word into {tgt}, keeping the original separators. Do NOT return the source token unchanged.")
+    } else if abbreviation_mode {
         format!("If it is an abbreviation, reply with the ranked candidate list only; otherwise reply with its complete {tgt} translation only.")
     } else {
         format!("Reply with its complete {tgt} translation only.")
@@ -240,6 +271,51 @@ mod tests {
         assert!(!is_short_term("Our KPI for this quarter is revenue growth"));
     }
 
+    #[test]
+    fn standalone_identifier_detection() {
+        assert!(is_standalone_identifier("stores/settingsStore"));
+        assert!(is_standalone_identifier("hooks/useScreenshot"));
+        assert!(is_standalone_identifier("lib/invoke"));
+        assert!(is_standalone_identifier("useScreenshot"));
+        assert!(is_standalone_identifier("config.json"));
+        // 普通缩写 / 多词 / 命令行选项 / 长文本都不算标识符
+        assert!(!is_standalone_identifier("KPI"));
+        assert!(!is_standalone_identifier("COO of ACME"));
+        assert!(!is_standalone_identifier("--dangerously-skip-permissions"));
+        assert!(!is_standalone_identifier("The stores/settingsStore module holds settings."));
+        assert!(!is_standalone_identifier(""));
+    }
+
+    /// 单独一个标识符/路径时按词段翻译；关闭「解释缩写」开关则不注入
+    #[test]
+    fn identifier_mode_translates_segments() {
+        let p = build(
+            "stores/settingsStore",
+            "auto",
+            "Chinese",
+            &prefs(true, &[], ""),
+            BEGIN,
+            END,
+        );
+        assert!(p.system.contains("Identifier and path mode"));
+        assert!(!p.system.contains("Abbreviation mode"));
+        assert!(!p.abbreviation_mode);
+        // 关键指令要放在生成位置附近的 user 提醒里，放 system 里模型不遵循
+        assert!(p.user.contains("not code to preserve"));
+        assert!(p.user.contains("Do NOT return the source token unchanged"));
+
+        let off = build(
+            "stores/settingsStore",
+            "auto",
+            "Chinese",
+            &prefs(false, &[], ""),
+            BEGIN,
+            END,
+        );
+        assert!(!off.system.contains("Identifier and path mode"));
+        assert!(!off.user.contains("Do NOT return the source token unchanged"));
+    }
+
     /// 默认配置必须和改造前的提示词行为一致：不注入任何可选段落
     #[test]
     fn default_prefs_add_nothing() {
@@ -260,6 +336,24 @@ mod tests {
         assert!(p
             .user
             .ends_with("Reply with its complete Chinese translation only."));
+    }
+
+    /// 连字符/下划线词（含 `--flag` 这类选项）必须按普通文本翻译，
+    /// 不能被「代码/命令原样保留」规则误判成不可翻译内容
+    #[test]
+    fn default_rules_translate_hyphenated_words() {
+        let p = build(
+            "--dangerously-skip-permissions",
+            "auto",
+            "Chinese",
+            &TranslationPromptConfig::default(),
+            BEGIN,
+            END,
+        );
+        assert!(p
+            .system
+            .contains("Command-line options, flags and hyphenated/underscored names are ordinary text"));
+        assert!(p.system.contains("--dangerously-skip-permissions"));
     }
 
     #[test]

@@ -11,7 +11,7 @@ export interface Settings {
 
 /** 翻译提示词偏好（对应后端 `config::TranslationPromptConfig`，由 `translation::prompt` 拼进 system prompt） */
 export interface TranslationPromptConfig {
-  /** 解释缩写：单独输入缩写时输出按可能性排序的「全称 + 含义」候选；句中缩写按上下文译出含义 */
+  /** 解释缩写与标识符：单独输入缩写时输出「全称 + 含义」候选；单独输入标识符/路径（如 stores/settingsStore）时按词段译出含义；句中缩写按上下文译出含义 */
   expand_abbreviations: boolean;
   /** 行业偏向（多选，key 见 TranslationSettings 的 DOMAINS）；空 = 通用 */
   domains: string[];

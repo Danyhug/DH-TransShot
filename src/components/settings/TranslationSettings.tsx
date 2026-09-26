@@ -21,7 +21,7 @@ const DOMAINS: { key: string; label: string }[] = [
   { key: "slang", label: "网络用语" },
 ];
 
-/** 「翻译」分区：缩写解释开关、行业偏向（多选）、自定义提示词与内置翻译规则编辑。 */
+/** 「翻译」分区：缩写与标识符解释开关、行业偏向（多选）、自定义提示词与内置翻译规则编辑。 */
 export function TranslationSettings({
   prefs,
   onChange,
@@ -78,8 +78,8 @@ export function TranslationSettings({
         <Group>
           <RowList>
             <ToggleRow
-              label="解释缩写"
-              description="单独翻译 KPI、COO、NSFW 这类缩写时，按可能性列出几个候选的全称和含义；句子里的缩写则按上下文译出含义"
+              label="解释缩写与标识符"
+              description="单独翻译 KPI、COO、NSFW 这类缩写时按可能性列出候选全称；单独翻译 stores/settingsStore、useScreenshot 这类标识符/路径时按词段译成目标语言。句子里的缩写按上下文译出含义。"
               checked={current.expand_abbreviations}
               onChange={(v) => onChange({ ...current, expand_abbreviations: v })}
             />
