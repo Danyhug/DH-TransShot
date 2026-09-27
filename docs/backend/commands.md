@@ -21,8 +21,8 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 ### screenshot.rs
 
 **`start_region_select(app, state, mode) -> Result<(), String>`**
-- 关闭所有已有的 `screenshot-overlay-*` 覆盖层窗口
-- 关闭 settings 和 debug-log 子窗口（避免遮挡覆盖层）
+- 关闭所有已有的 `screenshot-overlay-*` 覆盖层窗口（走 `window_lifecycle` 的让帧销毁，见下）
+- 关闭 settings 和 debug-log 子窗口（避免遮挡覆盖层；同样走让帧销毁）
 - 采集窗口矩形列表（`list_window_rects()`），存入 `AppState.frozen_window_rects`
 - 收集所有显示器信息（`MonitorInfo`：名称、物理坐标、物理尺寸、scale_factor）
 - 计算每个显示器的逻辑矩形，调用 `capture_monitors()` 逐显示器截图
@@ -35,6 +35,8 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
   - `screenshot` 模式：不做额外操作
   - `ocr_translate` 模式：show + focus 主窗口
 - 监听 `close-all-overlays` 事件，关闭所有覆盖层窗口
+
+> 关闭窗口一律走 `window_lifecycle`（先 `hide()` 让帧、再 `close()`）：直接 `close()` 一个还活着的 webview 会让 WebKit 的 display link 偶发访问已释放的滚动树，把整个 App 打崩。见 [window_lifecycle.md](window_lifecycle.md)。
 
 **`get_frozen_screenshot(state, monitor_index) -> Result<serde_json::Value, String>`**
 - 参数 `monitor_index` 指定要获取哪个显示器的截图

@@ -8,7 +8,7 @@
 
 | 文件 | 职责 |
 |------|------|
-| `src-tauri/src/screenshot/mod.rs` | 模块声明，公开导出 `capture_monitors`、`capture_region_from_full`、`capture_region_bytes`、`list_window_rects` |
+| `src-tauri/src/screenshot/mod.rs` | 模块声明，公开导出 `capture_monitors`、`capture_region_from_full`、`capture_region_bytes`、`list_window_rects`，以及覆盖层 label 前缀常量 `OVERLAY_LABEL_PREFIX` |
 | `src-tauri/src/screenshot/capture.rs` | 截图逻辑实现 + 窗口矩形列表采集 |
 
 ## 核心逻辑
@@ -85,6 +85,12 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 - **外部依赖**：`image`（图像处理）、`base64`（编码）、`core-foundation`（macOS CF 类型）、`xcap`（非 macOS 截图）
 - **系统框架**：`CoreGraphics.framework`（macOS 截图 + 窗口列表）
 - **被依赖**：`commands/screenshot.rs` 调用 `capture_monitors()`、`capture_region_from_full()`、`list_window_rects()`
+
+## 覆盖层窗口的创建与销毁
+
+覆盖层窗口（label `screenshot-overlay-<显示器序号>`）不在本模块创建/销毁，而在 `commands/screenshot.rs`；label 前缀统一用本模块的 `OVERLAY_LABEL_PREFIX`，不要散落字面量。
+
+**销毁必须走 `window_lifecycle`**（先 `hide()` 让帧、再 `close()`）。直接 `close()` 一个还活着的 webview 会让 WebKit 的 display link 偶发访问已释放的滚动树，把整个 App 打崩（`EXC_BAD_ACCESS (SIGSEGV)`，崩溃栈上没有本项目的帧）。崩溃现场、成因和修改指南见 [window_lifecycle.md](window_lifecycle.md)。
 
 ## 修改指南
 

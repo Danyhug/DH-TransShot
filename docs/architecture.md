@@ -46,6 +46,8 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 - **调试日志窗口**：`openDebugWindow()` 创建，吸附在主窗口右侧（`openDockedWindow`）
 - Vite 配置了 `index.html` / `screenshot.html` / `settings.html` / `debug.html` 四入口构建
 
+> **销毁窗口一律走 `window_lifecycle`**：macOS 上直接 `close()` 一个还活着的 webview，WebKit 的 display link 可能访问已经释放的滚动树，偶发把整个 App 打崩（栈上没有任何本项目的帧）。统一封装是先 `hide()` 让帧、再 `close()`，详见 [backend/window_lifecycle.md](backend/window_lifecycle.md)。
+
 ## 事件系统
 
 窗口间通过 Tauri 事件系统（`emit` / `listen`）通信：
@@ -197,6 +199,7 @@ lib.rs（入口）
   ├── config/（应用状态 + 配置结构体）
   ├── tts/（TTS 语音合成）
   ├── audio/（本地音频输出 - rodio/cpal）
+  ├── window_lifecycle.rs（窗口销毁「先隐藏让帧再关闭」，避免 WebKit display link 野指针）
   ├── tray.rs（系统托盘 → emit 事件）
   └── hotkey.rs（全局快捷键 → emit 事件）
 

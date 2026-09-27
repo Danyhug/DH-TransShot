@@ -22,6 +22,7 @@
 | 函数 | 参数 | 返回值 | 对应后端命令 |
 |------|------|--------|-------------|
 | `startRegionSelect(mode)` | `mode: string` | `Promise<void>` | `start_region_select` |
+| `closeWindowDeferred(label)` | `label: string` | `Promise<void>` | `close_window_deferred` |
 | `captureRegion(monitorIndex, x, y, width, height)` | 5 个 number | `Promise<string>` | `capture_region` |
 | `getFrozenScreenshot(monitorIndex)` | `monitorIndex: number` | `Promise<ScreenshotInitEvent>` | `get_frozen_screenshot` |
 | `captureAndOcr(monitorIndex, x, y, width, height, language)` | 5 个 number + string | `Promise<string>` | `capture_and_ocr` |
@@ -142,6 +143,7 @@ interface Language { code: string; name: string }
 
 - 新增 Tauri 命令时同步添加 invoke 封装函数，保持类型安全
 - invoke 参数名必须与后端 `#[tauri::command]` 函数参数名的 camelCase 形式一致
+- **关闭窗口用 `closeWindowDeferred(label)`，不要用 `getCurrentWindow().close()`**：macOS 上直接销毁还活着的 webview 会让 WebKit 的 display link 偶发访问已释放的滚动树，把整个 App 打崩。见 [backend/window_lifecycle.md](../backend/window_lifecycle.md)
 - 新增语言需同时更新 `languages` 数组，并确认后端 OCR 模块支持该语言
 - `auto` 语言仅适用于源语言，`targetLanguages` 会自动排除
 - 朗读逻辑集中在 `tts.ts`：新增播放入口应复用 `speak`/`speakSequence` 以共享单例抢占与缓存，避免多处 `new Audio` 叠音

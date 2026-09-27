@@ -35,6 +35,7 @@ cargo test --lib -- --ignored --test-threads=1   # audio 真机用例（需输�
 **多窗口**：Vite 四入口（`index.html` / `screenshot.html` / `settings.html` / `debug.html`），分别对应 `main.tsx→App.tsx`、`screenshot.tsx→ScreenshotApp.tsx`、`settings.tsx→SettingsApp.tsx`、`debug.tsx→DebugApp.tsx`。
 - 主窗口常驻，失焦即隐藏
 - 截图覆盖层由 `start_region_select` 命令动态创建，每块显示器一个，选区完成或 ESC 后销毁
+- **销毁任何窗口都必须走 `window_lifecycle`（先 `hide()` 让帧再 `close()`）**：macOS 上直接 `close()` 还活着的 webview 会让 WebKit 的 display link 偶发访问已释放的滚动树，整个 App 段错误退出且崩溃栈上没有本项目的帧。前端对应 `closeWindowDeferred()`，见 `docs/backend/window_lifecycle.md`
 - 设置窗口打开期间通过 `suspend_hotkeys` / `resume_hotkeys` 挂起全局快捷键
 - 调试日志窗口吸附在主窗口右侧，展示前端 `appLog` 日志
 
