@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getSettings, saveSettings, suspendHotkeys, resumeHotkeys } from "../../lib/invoke";
+import {
+  closeWindowDeferred,
+  getSettings,
+  saveSettings,
+  suspendHotkeys,
+  resumeHotkeys,
+} from "../../lib/invoke";
 import { appLog } from "../../stores/logStore";
 import { defaultSettings } from "../../stores/settingsStore";
 import { ServiceSettings, type ServiceName } from "./ServiceSettings";
@@ -173,7 +179,8 @@ export function SettingsPanel() {
     } catch (e) {
       appLog.warn("[Settings] 保存后恢复快捷键失败: " + String(e));
     }
-    await getCurrentWindow().close();
+    // 交给后端先隐藏让帧再销毁，避免在 WebKit 刷新过程中拆掉 webview
+    await closeWindowDeferred(getCurrentWindow().label);
   }, [settings]);
 
   const close = useCallback(async () => {
@@ -182,7 +189,7 @@ export function SettingsPanel() {
     } catch (e) {
       appLog.warn("[Settings] 关闭前恢复快捷键失败: " + String(e));
     } finally {
-      await getCurrentWindow().close();
+      await closeWindowDeferred(getCurrentWindow().label);
     }
   }, []);
 

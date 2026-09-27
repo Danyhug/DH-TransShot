@@ -8,6 +8,7 @@ mod screenshot;
 mod translation;
 mod tray;
 mod tts;
+mod window_lifecycle;
 
 use config::{AppState, Settings};
 use log::{info, warn};
@@ -49,6 +50,7 @@ pub fn run() {
             commands::clipboard::save_file,
             commands::tts::speak_text,
             commands::tts::stop_speech,
+            window_lifecycle::close_window_deferred,
             hotkey::suspend_hotkeys,
             hotkey::resume_hotkeys,
         ])

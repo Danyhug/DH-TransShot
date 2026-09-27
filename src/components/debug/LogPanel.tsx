@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readClipboard } from "../../lib/invoke";
+import { closeWindowDeferred, readClipboard } from "../../lib/invoke";
 import { MAX_LOGS } from "../../stores/logStore";
 import type { LogEntry } from "../../stores/logStore";
 
@@ -72,7 +72,8 @@ export function LogPanel() {
   };
 
   const close = () => {
-    getCurrentWindow().close();
+    // 交给后端先隐藏让帧再销毁；这个面板有滚动列表且在实时追加日志
+    void closeWindowDeferred(getCurrentWindow().label);
   };
 
   return (

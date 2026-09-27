@@ -282,7 +282,9 @@ mod tests {
         assert!(!is_standalone_identifier("KPI"));
         assert!(!is_standalone_identifier("COO of ACME"));
         assert!(!is_standalone_identifier("--dangerously-skip-permissions"));
-        assert!(!is_standalone_identifier("The stores/settingsStore module holds settings."));
+        assert!(!is_standalone_identifier(
+            "The stores/settingsStore module holds settings."
+        ));
         assert!(!is_standalone_identifier(""));
     }
 
@@ -313,7 +315,9 @@ mod tests {
             END,
         );
         assert!(!off.system.contains("Identifier and path mode"));
-        assert!(!off.user.contains("Do NOT return the source token unchanged"));
+        assert!(!off
+            .user
+            .contains("Do NOT return the source token unchanged"));
     }
 
     /// 默认配置必须和改造前的提示词行为一致：不注入任何可选段落
@@ -350,9 +354,9 @@ mod tests {
             BEGIN,
             END,
         );
-        assert!(p
-            .system
-            .contains("Command-line options, flags and hyphenated/underscored names are ordinary text"));
+        assert!(p.system.contains(
+            "Command-line options, flags and hyphenated/underscored names are ordinary text"
+        ));
         assert!(p.system.contains("--dangerously-skip-permissions"));
     }
 

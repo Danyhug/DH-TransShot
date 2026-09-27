@@ -1,26 +1,30 @@
 use crate::config::AppState;
 use crate::config::MonitorInfo;
+use crate::screenshot::OVERLAY_LABEL_PREFIX;
+use crate::window_lifecycle::{
+    close_many_deferred, close_overlays_deferred, TEARDOWN_SETTLE_DELAY,
+};
 use log::{error, info};
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// Close all existing screenshot overlay windows (labels matching "screenshot-overlay-*").
+///
+/// 真正的销毁是异步且带让帧的（见 `window_lifecycle`），这里只负责发起，所以从事件
+/// 回调里调用不会阻塞，也不会在 display link 刷新过程中拆掉 webview。
 pub fn close_all_overlays(app: &tauri::AppHandle) {
-    for win in app.webview_windows().values() {
-        if win.label().starts_with("screenshot-overlay") {
-            info!("[Screenshot] 关闭覆盖层窗口: {}", win.label());
-            let _ = win.close();
-        }
-    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        close_overlays_deferred(&app, None).await;
+    });
 }
 
 /// Close all screenshot overlay windows except the one with label `keep_label`.
 pub fn close_other_overlays(app: &tauri::AppHandle, keep_label: &str) {
-    for win in app.webview_windows().values() {
-        if win.label().starts_with("screenshot-overlay") && win.label() != keep_label {
-            info!("[Screenshot] 关闭其他覆盖层窗口: {}", win.label());
-            let _ = win.close();
-        }
-    }
+    let app = app.clone();
+    let keep_label = keep_label.to_string();
+    tauri::async_runtime::spawn(async move {
+        close_overlays_deferred(&app, Some(&keep_label)).await;
+    });
 }
 
 /// Start region selection: capture per-monitor screenshots, store them in AppState,
@@ -37,21 +41,24 @@ pub async fn start_region_select(
     let has_existing = app
         .webview_windows()
         .keys()
-        .any(|k| k.starts_with("screenshot-overlay"));
+        .any(|k| k.starts_with(OVERLAY_LABEL_PREFIX));
     if has_existing {
         info!("[Screenshot] 覆盖层窗口已存在，先关闭旧窗口");
-        close_all_overlays(&app);
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // 自带让帧等待，销毁完成后才继续建新窗口
+        close_overlays_deferred(&app, None).await;
     }
 
     // 0. Close settings and debug-log windows (they would obscure the overlay)
-    if let Some(w) = app.get_webview_window("settings") {
-        info!("[Screenshot] 关闭 settings 窗口");
-        let _ = w.close();
-    }
-    if let Some(w) = app.get_webview_window("debug-log") {
-        info!("[Screenshot] 关闭 debug-log 窗口");
-        let _ = w.close();
+    let stale_windows: Vec<tauri::WebviewWindow> = ["settings", "debug-log"]
+        .iter()
+        .filter_map(|label| app.get_webview_window(label))
+        .collect();
+    if !stale_windows.is_empty() {
+        info!(
+            "[Screenshot] 关闭 settings / debug-log 窗口, count={}",
+            stale_windows.len()
+        );
+        close_many_deferred(stale_windows).await;
     }
 
     // 1. Brief delay before capture
@@ -184,10 +191,11 @@ pub async fn start_region_select(
 
         if build_overlay().is_err() {
             info!("[Screenshot] 覆盖层[{}]创建失败，尝试关闭残留窗口后重试", i);
-            if let Some(existing) = app.get_webview_window(&label) {
-                let _ = existing.close();
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let stale: Vec<tauri::WebviewWindow> =
+                app.get_webview_window(&label).into_iter().collect();
+            close_many_deferred(stale).await;
+            // 等窗口真正从窗口树上消失，复用同一个 label 才不会撞名
+            tokio::time::sleep(TEARDOWN_SETTLE_DELAY).await;
             build_overlay().map_err(|e: tauri::Error| e.to_string())?;
         }
     }

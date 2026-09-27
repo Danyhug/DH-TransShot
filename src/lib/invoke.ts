@@ -5,6 +5,17 @@ export async function startRegionSelect(mode: string): Promise<void> {
   return invoke("start_region_select", { mode });
 }
 
+/**
+ * 关闭窗口（后端先 `hide()` 让帧，再 `close()`）。
+ *
+ * 不要改用 `getCurrentWindow().close()`：在 display link 刷新过程中直接销毁还活着的
+ * webview，会让 WebKit 访问已经释放的滚动树，偶发把整个 App 打崩（`EXC_BAD_ACCESS`，
+ * 崩溃栈里没有本项目的帧）。详见后端 `src-tauri/src/window_lifecycle.rs`。
+ */
+export async function closeWindowDeferred(label: string): Promise<void> {
+  return invoke("close_window_deferred", { label });
+}
+
 export async function captureRegion(
   monitorIndex: number,
   x: number,

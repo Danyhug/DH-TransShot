@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getFrozenScreenshot, saveFile } from "../../lib/invoke";
+import { closeWindowDeferred, getFrozenScreenshot, saveFile } from "../../lib/invoke";
 import { save } from "@tauri-apps/plugin-dialog";
 import { appLog } from "../../stores/logStore";
 import type { WindowRect, MonitorInfo } from "../../types";
@@ -347,7 +347,8 @@ export function ScreenshotOverlay() {
         }
       }
       appLog.error("[Overlay] 获取冻结截图最终失败，关闭覆盖层");
-      getCurrentWindow().close();
+      // 走后端的「先隐藏再销毁」，别在这里直接 close
+      await closeWindowDeferred(label);
     };
 
     loadScreenshot();
