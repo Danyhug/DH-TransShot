@@ -36,6 +36,15 @@ static HOTKEY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 后台等待 Alt/Option 释放后 emit `hotkey-action`。等待修饰键释放可以避免截图窗口切换焦点或模拟复制时把仍按下的 Alt 带入后续操作。
 
+- macOS：轮询 `CGEventSourceFlagsState`，最多约 500ms
+- Windows：轮询 `GetAsyncKeyState`（Alt/Shift/Win），最多约 500ms，见 `win_input.rs`
+
+### Windows：屏蔽 Alt 菜单激活
+
+`RegisterHotKey` 只吞掉触发键（如 Q），前台应用仍会收到 Alt 的按下和松开。在它看来就是「单独按了一下 Alt」，于是进入菜单栏模式（Chrome 会把焦点移到右上角菜单按钮），之后模拟的 Ctrl+C 落进菜单，Alt+Q 读不到选中文本。
+
+handler 收到 `Pressed` 时，如果 Alt/Win 仍按着，就立即调用 `win_input::mask_modifier_menu()` 注入一次未分配的虚拟键 `vkE8`（与 AutoHotkey 的 `MenuMaskKey` 思路相同），打断「单独 Alt」的判定。这一步必须在用户松开 Alt 之前执行，所以放在 handler 里同步完成，不放进后台线程。
+
 触发动作后不会自动注销/重注册快捷键。频繁刷新系统注册既没有必要，也会增加注销失败后出现“已占用”残留状态的概率。
 
 ## 设置窗口录入

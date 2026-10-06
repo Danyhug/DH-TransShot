@@ -199,6 +199,7 @@ lib.rs（入口）
   ├── config/（应用状态 + 配置结构体）
   ├── tts/（TTS 语音合成）
   ├── audio/（本地音频输出 - rodio/cpal）
+  ├── win_input.rs（Windows：按键状态查询、SendInput 模拟 Ctrl+C、屏蔽 Alt 菜单激活）
   ├── window_lifecycle.rs（窗口销毁「先隐藏让帧再关闭」，避免 WebKit display link 野指针）
   ├── tray.rs（系统托盘 → emit 事件）
   └── hotkey.rs（全局快捷键 → emit 事件）

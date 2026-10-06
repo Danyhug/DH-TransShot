@@ -94,7 +94,7 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 ### clipboard.rs
 
 **`read_clipboard() -> Result<String, String>`**
-- 使用 `pbpaste`（macOS）或 `Get-Clipboard`（Windows）读取剪贴板文本
+- macOS 使用 `pbpaste`，Windows 使用原生 Win32 剪贴板 API 读取 `CF_UNICODETEXT`（`clipboard.rs` 的 `win_clipboard` 模块）
 - 在 `spawn_blocking` 中执行以避免阻塞异步运行时
 
 **`copy_image_to_clipboard(image_base64) -> Result<(), String>`**
@@ -109,14 +109,18 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 - 若 Accessibility API 失败或返回空（浏览器/Electron 的网页输入框常返回空），回退到剪贴板模拟：
   - 保存当前剪贴板内容（用于事后恢复）
   - macOS 下尽力等待 Option/Alt 释放（`CGEventSourceFlagsState` 轮询），但**不再因超时放弃**——`CGEventSetFlags` 已强制干净的 Cmd+C
-  - **模拟 Cmd+C 用 CGEvent 直接 post**，并通过 `CGEventSetFlags` 显式只设 Cmd 修饰位 —— 这样即使硬件层 Alt 状态尚未完全清零，目标应用也只会收到干净的 Cmd+C，不会被解析为 `Cmd+Option+C`（Chrome 的"检查元素"）。Windows 仍用 `SendKeys "^c"`
+  - **模拟 Cmd+C 用 CGEvent 直接 post**，并通过 `CGEventSetFlags` 显式只设 Cmd 修饰位 —— 这样即使硬件层 Alt 状态尚未完全清零，目标应用也只会收到干净的 Cmd+C，不会被解析为 `Cmd+Option+C`（Chrome 的"检查元素"）。Windows 用 `SendInput`（见 `win_input.rs`）：先给仍按着的 Alt/Shift/Win 注入 key-up（前面垫一个屏蔽键 `vkE8`），再发送 Ctrl+C
   - **检测复制是否真正落地（取代固定 150ms 等待）**：
     - macOS：轮询 `NSPasteboard.changeCount`（Objective-C 运行时读取），复制前后计数变化即表示写入成功，最多轮询约 1s，一旦变化立即返回
-    - Windows：轮询 `Get-Clipboard`，内容相对复制前发生变化即返回，最多约 720ms
+    - Windows：轮询 `GetClipboardSequenceNumber`，语义与 changeCount 相同，最多约 1s
   - 读取新剪贴板内容作为选中文字
   - 恢复原剪贴板内容
   - 若计数/内容始终未变化（没有选中文本），返回空字符串
 - 用 `changeCount` 而非"内容比较"判定，可避免"选中文本恰好等于当前剪贴板"时的误判，也避免慢应用响应不及 150ms 时的偶发失败
+- Windows 以前整条路径走 PowerShell（`Get-Clipboard` + `SendKeys`），已全部换成原生 API，原因：
+  - 每次启动 PowerShell 要几百毫秒，`Add-Type System.Windows.Forms` 更慢，整条路径动辄数秒
+  - `SendKeys` 不会清理用户仍按着的 Alt，目标应用收到的是 Ctrl+Alt+C
+  - stdout 按 OEM 代码页（中文系统为 GBK）输出却按 UTF-8 解码，中文选区乱码，且乱码还会被「恢复」回用户剪贴板
 - 用于"翻译选中文本"功能（Alt+Q）
 
 ## 依赖关系
