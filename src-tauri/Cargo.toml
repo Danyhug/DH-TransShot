@@ -37,6 +37,18 @@ rodio = { version = "0.22.2", default-features = false, features = ["playback", 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.9"
 
+# Windows 下选中文本读取：原生剪贴板 + SendInput 模拟 Ctrl+C，取代 PowerShell
+# （进程启动慢、SendKeys 不清理仍按着的 Alt、stdout 走 OEM 代码页导致中文乱码）。
+# 版本与 global-hotkey 依赖的保持一致，不额外引入一份
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
+
 # 仅测试用：TTS 流式解析要对着真实 HTTP 响应验（SSE 分帧、末行无换行、非 SSE 兜底），
 # 需要起一个本地假服务端
 [dev-dependencies]

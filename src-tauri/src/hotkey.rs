@@ -53,7 +53,12 @@ fn wait_for_modifier_release() {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn wait_for_modifier_release() {
+    crate::win_input::wait_for_modifiers_release(500);
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn wait_for_modifier_release() {
     std::thread::sleep(std::time::Duration::from_millis(120));
 }
@@ -103,6 +108,9 @@ fn apply_hotkeys(app: &AppHandle, cfg: &HotkeyConfig) {
             if event.state != ShortcutState::Pressed {
                 return;
             }
+            // Must run while Alt is still held, before the user releases it.
+            #[cfg(target_os = "windows")]
+            crate::win_input::mask_modifier_menu();
             info!("[Hotkey] 触发: {:?} -> {}", shortcut, action);
             dispatch_hotkey_action(app.clone(), action.clone());
         }) {

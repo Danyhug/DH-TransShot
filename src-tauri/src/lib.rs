@@ -8,6 +8,8 @@ mod screenshot;
 mod translation;
 mod tray;
 mod tts;
+#[cfg(target_os = "windows")]
+mod win_input;
 mod window_lifecycle;
 
 use config::{AppState, Settings};

@@ -165,7 +165,7 @@ const AX_PERMISSION_HINT: &str = "缺少辅助功能权限，无法读取选中�
 /// Read selected text from the currently focused application.
 /// macOS: 先确认辅助功能权限（未授权时触发系统授权弹窗并返回明确错误），
 /// 再用原生 AXUIElement 读取 AXSelectedText，读不到时回退到剪贴板模拟。
-/// Windows: 直接走剪贴板模拟。
+/// Windows: 直接走剪贴板模拟（原生 SendInput + 剪贴板序列号，见 `win_input`）。
 #[tauri::command]
 pub async fn read_selected_text() -> Result<String, String> {
     info!("[Clipboard] read_selected_text: 读取选中文本...");
@@ -480,51 +480,56 @@ fn restore_clipboard_macos(text: &str) {
         });
 }
 
-/// Windows clipboard fallback: poll `Get-Clipboard` until the content changes,
-/// returning early instead of relying on a single fixed wait.
+/// Windows clipboard fallback driven by `GetClipboardSequenceNumber`, the
+/// counterpart of macOS changeCount: it increments on every clipboard write, so
+/// a copy is detected even when the selection equals the previous content.
+///
+/// Previously this shelled out to PowerShell (`Get-Clipboard` + `SendKeys`):
+/// each call took hundreds of ms, SendKeys merged the still-held Alt into
+/// Ctrl+Alt+C, and stdout came back in the OEM code page so non-ASCII text was
+/// garbled — and then written back over the user's clipboard.
 #[cfg(target_os = "windows")]
 fn get_selected_text_clipboard_fallback_windows() -> Result<String, String> {
-    let saved_clipboard: Option<String> = powershell_command("Get-Clipboard")
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned());
+    let saved_clipboard = match win_clipboard::read_text() {
+        Ok(text) => text,
+        Err(e) => {
+            warn!("[Clipboard] 读取原剪贴板失败，结束后不恢复: {}", e);
+            None
+        }
+    };
 
-    let copy_result = powershell_command(
-        "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^c\")",
-    )
-    .output()
-    .map_err(|e| format!("powershell failed: {}", e))?;
-    if !copy_result.status.success() {
-        let stderr = String::from_utf8_lossy(&copy_result.stderr);
-        warn!("[Clipboard] 模拟复制失败: {}", stderr);
+    if !crate::win_input::wait_for_modifiers_release(500) {
+        warn!("[Clipboard] Alt/Shift/Win 仍处于按下状态，仍继续（会先注入 key-up）");
     }
 
-    let saved_trimmed = saved_clipboard.as_deref().unwrap_or("").trim().to_string();
+    let seq_before = win_clipboard::sequence_number();
+    if let Err(e) = crate::win_input::send_ctrl_c() {
+        warn!("[Clipboard] 模拟 Ctrl+C 失败: {}", e);
+    }
 
-    // Poll up to ~720ms; return as soon as the clipboard differs from before.
-    let mut new_text = String::new();
-    for _ in 0..6 {
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        let current = powershell_command("Get-Clipboard")
-            .output()
-            .map_err(|e| e.to_string())
-            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())?;
-        if current.trim() != saved_trimmed {
-            new_text = current;
+    // Poll up to ~1s; stop the instant the clipboard actually changes.
+    let mut copied = false;
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        if win_clipboard::sequence_number() != seq_before {
+            copied = true;
             break;
         }
     }
 
-    if new_text.trim().is_empty() {
-        info!("[Clipboard] 剪贴板内容未变化，可能没有选中文本");
+    if !copied {
+        info!("[Clipboard] 剪贴板序列号未变化，可能没有选中文本");
         return Ok(String::new());
     }
 
-    // Restore old clipboard content (best effort).
+    let new_text = win_clipboard::read_text()?.unwrap_or_default();
+
+    // Restore the previous clipboard content (best effort).
     if let Some(ref old_text) = saved_clipboard {
-        let ps_script = format!("Set-Clipboard -Value '{}'", old_text.replace('\'', "''"));
-        let _ = powershell_command(&ps_script).output();
-        info!("[Clipboard] 原剪贴板内容已恢复");
+        match win_clipboard::write_text(old_text) {
+            Ok(()) => info!("[Clipboard] 原剪贴板内容已恢复"),
+            Err(e) => warn!("[Clipboard] 恢复原剪贴板失败: {}", e),
+        }
     }
 
     info!(
@@ -532,6 +537,98 @@ fn get_selected_text_clipboard_fallback_windows() -> Result<String, String> {
         new_text.len()
     );
     Ok(new_text)
+}
+
+/// 原生 Win32 剪贴板读写（CF_UNICODETEXT）。
+#[cfg(target_os = "windows")]
+mod win_clipboard {
+    use windows_sys::Win32::Foundation::GlobalFree;
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
+        IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
+    };
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+    };
+    use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
+
+    pub fn sequence_number() -> u32 {
+        unsafe { GetClipboardSequenceNumber() }
+    }
+
+    /// 打开期间独占剪贴板，离开作用域自动 CloseClipboard。
+    struct Opened;
+
+    impl Opened {
+        /// 刚执行复制的应用可能还占着剪贴板，短暂重试。
+        fn open() -> Result<Self, String> {
+            for _ in 0..10 {
+                if unsafe { OpenClipboard(std::ptr::null_mut()) } != 0 {
+                    return Ok(Opened);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err("OpenClipboard 失败（剪贴板被其他程序占用）".to_string())
+        }
+    }
+
+    impl Drop for Opened {
+        fn drop(&mut self) {
+            unsafe { CloseClipboard() };
+        }
+    }
+
+    /// 读取剪贴板文本；剪贴板里没有文本（空或只有图片等）时返回 None。
+    pub fn read_text() -> Result<Option<String>, String> {
+        let _clipboard = Opened::open()?;
+        unsafe {
+            if IsClipboardFormatAvailable(CF_UNICODETEXT as u32) == 0 {
+                return Ok(None);
+            }
+            let handle = GetClipboardData(CF_UNICODETEXT as u32);
+            if handle.is_null() {
+                return Err("GetClipboardData 失败".to_string());
+            }
+            let ptr = GlobalLock(handle) as *const u16;
+            if ptr.is_null() {
+                return Err("GlobalLock 失败".to_string());
+            }
+            // 以 NUL 结尾，但不信任它一定存在，用块大小兜底
+            let max_len = GlobalSize(handle) / 2;
+            let wide = std::slice::from_raw_parts(ptr, max_len);
+            let len = wide.iter().position(|&c| c == 0).unwrap_or(max_len);
+            let text = String::from_utf16_lossy(&wide[..len]);
+            GlobalUnlock(handle);
+            Ok(Some(text))
+        }
+    }
+
+    pub fn write_text(text: &str) -> Result<(), String> {
+        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let _clipboard = Opened::open()?;
+        unsafe {
+            if EmptyClipboard() == 0 {
+                return Err("EmptyClipboard 失败".to_string());
+            }
+            let handle = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2);
+            if handle.is_null() {
+                return Err("GlobalAlloc 失败".to_string());
+            }
+            let ptr = GlobalLock(handle) as *mut u16;
+            if ptr.is_null() {
+                GlobalFree(handle);
+                return Err("GlobalLock 失败".to_string());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+            GlobalUnlock(handle);
+            // 成功后内存归系统所有，失败时才需要自己释放
+            if SetClipboardData(CF_UNICODETEXT as u32, handle).is_null() {
+                GlobalFree(handle);
+                return Err("SetClipboardData 失败".to_string());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Read text from the system clipboard.
@@ -548,10 +645,7 @@ pub async fn read_clipboard() -> Result<String, String> {
         }
         #[cfg(target_os = "windows")]
         {
-            powershell_command("Get-Clipboard")
-                .output()
-                .map_err(|e| e.to_string())
-                .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+            win_clipboard::read_text().map(Option::unwrap_or_default)
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {

@@ -1001,6 +1001,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-store",
  "tokio",
+ "windows-sys 0.59.0",
  "xcap",
 ]
 
