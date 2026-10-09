@@ -45,7 +45,7 @@
     --shot-shadow:0 0 0 1px rgba(255,255,255,.06),0 40px 100px -30px rgba(0,0,0,.8);
     --mask:rgba(0,0,0,.55);
     --noise-op:.32;
-    --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c; --shot-mask:rgba(15,14,12,.38); --shot-mask-hover:rgba(15,14,12,.12);
+    --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c;
   }
 }
 :root[data-theme="dark"]{
@@ -56,7 +56,7 @@
   --shot-shadow:0 0 0 1px rgba(255,255,255,.06),0 40px 100px -30px rgba(0,0,0,.8);
   --mask:rgba(0,0,0,.55);
   --noise-op:.32;
-  --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c; --shot-mask:rgba(15,14,12,.38); --shot-mask-hover:rgba(15,14,12,.12);
+  --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c;
 }
 
 *{box-sizing:border-box;margin:0;padding:0}
@@ -189,7 +189,12 @@ header.nav.hide{transform:translateY(-100%)}
 @keyframes hint{0%{transform:scaleY(0)}50%{transform:scaleY(1)}100%{transform:scaleY(1);opacity:0}}
 @media (max-width:900px){
   .hero-grid{grid-template-columns:1fr}
-  .hero-visual{position:absolute;inset:0;height:auto;opacity:.32;pointer-events:none;z-index:-1}
+  /* 移动端：粒子 Logo 单独占一块放在文字上方，不再垫在文字下面 */
+  .hero{align-items:flex-start;padding:84px 0 56px}
+  .hero-visual{order:-1;height:min(26svh,210px);margin:0 0 4px;pointer-events:none}
+  .hero .eyebrow{letter-spacing:.18em;font-size:10px}
+  .hero h1{margin-top:20px!important}
+  .hero .tag{margin-top:26px}
   .hud,.scroll-hint{display:none}
 }
 
@@ -246,8 +251,6 @@ header.nav.hide{transform:translateY(-100%)}
 .shot:not(.on){position:absolute;inset:0 0 auto 0;opacity:0;transform:translateY(14px) scale(.985);pointer-events:none}
 .shot .frame{display:flex;justify-content:center;align-items:center;padding:clamp(18px,4vw,56px);border-radius:20px;background:var(--bg-2);border:1px solid var(--line)}
 .shot .pic{position:relative;display:block;border-radius:12px;box-shadow:var(--shot-shadow);overflow:hidden;max-width:100%}
-.shot .pic::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--shot-mask,transparent);transition:background .5s var(--ease);pointer-events:none}
-.shot .frame:hover .pic::after{background:var(--shot-mask-hover,transparent)}
 .shot img{display:block;max-width:100%;height:auto;max-height:62vh;width:auto}
 .shot figcaption{display:flex;justify-content:space-between;gap:20px;margin-top:16px;font-size:13px;color:var(--ink-3)}
 .shot figcaption span:last-child{font-family:var(--mono);font-size:11px;letter-spacing:.14em}
@@ -631,24 +634,24 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;font-size:13px;color
   <div class="wrap">
     <div class="eyebrow reveal">Interface · 实机截图</div>
     <h2 class="title reveal" style="--d:.08s">它长这样，<em>就这么简单</em><span class="en">Real screenshots, nothing mocked</span></h2>
-    <p class="lede reveal" style="--d:.16s">下面每一张都是 TransShot 本身的截图（浅色主题），应用会跟随系统自动切换深浅色。</p>
+    <p class="lede reveal" style="--d:.16s">下面每一张都是 TransShot 的实机截图（深色主题），应用会跟随系统自动切换深浅色。</p>
 
     <div class="gallery reveal">
       <div class="tabs" role="tablist" aria-label="界面截图">
         <button class="tab" role="tab" aria-selected="true" data-i="0"><span class="n">01</span><b>主窗口</b><small>窗口置顶、语言互换，原文与译文各自朗读和复制。</small></button>
         <button class="tab" role="tab" aria-selected="false" data-i="1"><span class="n">02</span><b>服务配置</b><small>全局凭据一处填写，翻译 / OCR / TTS 可分别覆盖。</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-i="2"><span class="n">03</span><b>TTS 多提供商</b><small>每个提供商独立地址、模型与 JSON 参数，常用参数一键插入。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="2"><span class="n">03</span><b>翻译偏好</b><small>解释缩写、选择行业偏向、追加自定义指令，对所有翻译方式生效。</small></button>
         <button class="tab" role="tab" aria-selected="false" data-i="3"><span class="n">04</span><b>朗读行为</b><small>翻译后自动朗读原文或译文，并给自动朗读设长度上限。</small></button>
         <button class="tab" role="tab" aria-selected="false" data-i="4"><span class="n">05</span><b>快捷键</b><small>三个全局快捷键随录随用，保存即生效。</small></button>
         <button class="tab" role="tab" aria-selected="false" data-i="5"><span class="n">06</span><b>调试日志</b><small>吸附在主窗口右侧，前后端日志实时对照。</small></button>
       </div>
       <div class="viewer">
-        <figure class="shot on"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/main.webp"><img src="assets/main.png" width="800" height="840" alt="TransShot 主窗口：上方原文、下方译文，标题栏有截图、区域翻译、剪贴板翻译、日志与设置按钮" loading="lazy" style="max-height:min(62vh,560px)" decoding="async"></picture></span></div><figcaption><span>主窗口 · 英文 → 中文简体</span><span>01 / 06</span></figcaption></figure>
+        <figure class="shot on"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/main.webp"><img src="assets/main.png" width="800" height="842" alt="TransShot 主窗口：上方原文、下方译文，标题栏有截图、区域翻译、剪贴板翻译、日志与设置按钮" loading="lazy" style="max-height:min(62vh,560px)" decoding="async"></picture></span></div><figcaption><span>主窗口 · 英文 → 中文简体</span><span>01 / 06</span></figcaption></figure>
         <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-service.webp"><img src="assets/settings-service.png" width="1440" height="1080" alt="设置窗口的服务页：全局 API 地址与密钥、地址填写规则、翻译 OCR TTS 服务配置" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 服务</span><span>02 / 06</span></figcaption></figure>
-        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-tts.webp"><img src="assets/settings-tts.png" width="1440" height="1080" alt="TTS 提供商配置：名称、模型、API 地址与密钥，以及 voice、speed 等自定义参数快捷插入" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · TTS 提供商</span><span>03 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-translate.webp"><img src="assets/settings-translate.png" width="1440" height="1080" alt="翻译偏好设置：解释缩写与标识符开关、行业偏向多选、自定义附加翻译指令" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 翻译</span><span>03 / 06</span></figcaption></figure>
         <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-speech.webp"><img src="assets/settings-speech.png" width="1440" height="1080" alt="朗读设置：自动朗读原文、译文与长度上限" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 朗读</span><span>04 / 06</span></figcaption></figure>
         <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-hotkey.webp"><img src="assets/settings-hotkey.png" width="1440" height="1080" alt="快捷键设置：区域截图、区域翻译、翻译选中文本" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 快捷键</span><span>05 / 06</span></figcaption></figure>
-        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/debug.webp"><img src="assets/debug.png" width="1540" height="846" alt="主窗口与右侧吸附的调试日志窗口，显示 TTS 流式播放日志" loading="lazy" decoding="async"></picture></span></div><figcaption><span>主窗口 + 调试日志</span><span>06 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/debug.webp"><img src="assets/debug.png" width="1540" height="842" alt="主窗口与右侧吸附的调试日志窗口，显示翻译与自动朗读日志" loading="lazy" decoding="async"></picture></span></div><figcaption><span>主窗口 + 调试日志</span><span>06 / 06</span></figcaption></figure>
       </div>
     </div>
   </div>
@@ -1223,7 +1226,7 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;font-size:13px;color
   const place = () => {
     const w = innerWidth, h = innerHeight, r = hv.getBoundingClientRect();
     const visH = 2 * Math.tan(camera.fov * Math.PI / 360) * camera.position.z, k = visH / h;
-    const framePx = Math.min(r.width, r.height) * (w >= 900 ? .78 : .7);
+    const framePx = Math.min(r.width, r.height) * (w >= 900 ? .78 : .86);
     hv.style.setProperty('--frame', framePx + 'px');
     group.position.x = (r.left + r.width / 2 - w / 2) * k;
     group.position.y = -(r.top + r.height / 2 - h / 2) * k;
@@ -1261,7 +1264,7 @@ footer{border-top:1px solid var(--line);padding:70px 0 40px;font-size:13px;color
     group.scale.setScalar(baseScale * (1 + Math.sin(t * 1.4) * .012 * breathe));
     group.rotation.y += ((mouse.nx * .2) - group.rotation.y) * .05;
     group.rotation.x += ((mouse.ny * .12) - group.rotation.x) * .05;
-    mat.opacity = (innerWidth < 900 ? .4 : 1) * (1 - sp * .6);
+    mat.opacity = 1 - sp * .6;
     // 离开 Hero 后 Logo 已散开，只剩背景星点，降到约 30fps
     if (sp < 1 || (frameNo++ & 1)) renderer.render(scene, camera);
     requestAnimationFrame(frame);
