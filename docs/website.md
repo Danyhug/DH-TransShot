@@ -33,8 +33,19 @@
 
 颜色全部定义为 `:root` 上的 CSS 变量，亮色为默认值，暗色在 `prefers-color-scheme: dark`（`:root:not([data-theme="light"])`）和 `:root[data-theme="dark"]` 下各定义一次。导航栏按钮手动切换后写入 `localStorage`（`transshot-theme`），`<head>` 内联脚本在首帧前恢复，避免闪烁。
 
-强调色只有一个朱红（选区颜色），粒子颜色也从 `--p-base` / `--p-accent` / `--p-bg` 读取，主题切换时重新着色：亮色用正常混合，暗色用加法混合。暗色下截图叠加 `--shot-mask` 蒙版，悬停时减淡。
+强调色只有一个朱红（选区颜色），粒子颜色也从 `--p-base` / `--p-accent` / `--p-bg` 读取，主题切换时重新着色：亮色用正常混合，暗色用加法混合。界面截图只有一套（应用深色主题），亮暗两种页面主题共用，不做蒙版或滤镜处理。
 
 ## 更新截图
 
-截图源文件在仓库根目录 `image/`。替换后需要同时更新 `website/assets/` 下同名的 `.png` 和 `.webp`，并核对 `index.html` 中 `<img>` 的 `width` / `height`。
+截图是应用在深色主题下，于 Retina 屏上按窗口截取的 2x 原图（`screencapture -x -o -l <窗口ID>`，不带阴影）。`debug` 是主窗口与调试日志窗口并排拼接的图，中间留 20px 透明间隙。
+
+| 文件 | 内容 |
+|------|------|
+| `main` | 主窗口 |
+| `settings-service` | 设置 → 服务 |
+| `settings-translate` | 设置 → 翻译 |
+| `settings-speech` | 设置 → 朗读 |
+| `settings-hotkey` | 设置 → 快捷键 |
+| `debug` | 主窗口 + 调试日志 |
+
+替换时同时更新同名的 `.png` 和 `.webp`，并核对 `index.html` 中 `<img>` 的 `width` / `height`。截图里不要出现真实的 API 地址、密钥或模型路由名。
