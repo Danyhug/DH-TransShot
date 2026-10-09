@@ -11,6 +11,8 @@
 | `website/index.html` | 整个页面：HTML / CSS / JS 全部内嵌 |
 | `website/assets/*.webp` | 界面截图（主用，体积约为 PNG 的 1/3） |
 | `website/assets/*.png` | 同名截图的 PNG 兜底，供不支持 WebP 的浏览器使用 |
+| `website/favicon.svg` / `favicon-32.png` | 浏览器标签页图标（SVG 为主，PNG 兜底） |
+| `website/apple-touch-icon.png` | iOS 添加到主屏幕时的图标（180×180，满版无圆角，由系统裁切） |
 | `.github/workflows/pages.yml` | 部署工作流 |
 
 ## 部署
@@ -53,3 +55,11 @@ Hero 粒子是页面内联脚本直接调用 WebGL 绘制的（一个着色器�
 | `debug-light` | `debug-dark` | 主窗口 + 调试日志（并排拼接，中间留 20px 透明间隙） |
 
 替换时同时更新同名的 `.png` 和 `.webp`，并核对 `index.html` 中 `<img>` 的 `width` / `height`。截图里不要出现真实的 API 地址、密钥或模型路由名。
+
+## 图标
+
+App 图标、官网 favicon 与导航栏 Logo 是同一个图形：四角取景框 + T，右下角那一角用强调色朱红。源文件是仓库根目录的 `icon.svg`（1024×1024，macOS 图标网格：824×824 圆角方块、四周留 100px）。
+
+- **App 图标**：在仓库根目录运行 `pnpm tauri icon icon.svg`，重新生成 `src-tauri/icons/` 下所有平台的图标。托盘也直接使用其中的 `32x32.png`
+- **官网**：`website/favicon.svg` 是 `icon.svg` 的副本，`favicon-32.png` 复制自 `src-tauri/icons/32x32.png`；`apple-touch-icon.png` 是去掉留白和圆角的满版版本
+- 根目录的 `icon.png` 是 `icon.svg` 渲染出的 1024px PNG，供不支持 SVG 的场景使用
