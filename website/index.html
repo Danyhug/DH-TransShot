@@ -1,0 +1,1276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DH-TransShot — 框住它，就读懂它</title>
+<meta name="description" content="DH-TransShot：常驻托盘的截屏 + 翻译工具。一个快捷键框选屏幕，视觉模型读出文字并翻译、朗读。macOS / Windows，开源 MIT。">
+<meta name="color-scheme" content="light dark">
+<script>
+  // 尽早应用用户选择的主题，避免闪烁
+  try { const t = localStorage.getItem('transshot-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  try { if (sessionStorage.getItem('transshot-intro')) document.documentElement.classList.add('skip-intro'); sessionStorage.setItem('transshot-intro', '1'); } catch (e) {}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- 中文走系统字体（苹方 / 宋体 / 雅黑），网页字体只留三套拉丁字体，且不阻塞首屏渲染 -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@200;300;400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@200;300;400&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400&display=swap"></noscript>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<style>
+/* ---------- 主题：纸面（亮）/ 石墨（暗），只有一个强调色：朱红，即选区颜色 ---------- */
+:root{
+  --bg:#f3f1ec; --bg-2:#e9e6df; --surface:#fbfaf7; --surface-2:#ffffff;
+  --ink:#17150f; --ink-2:#4b4840; --ink-3:#8b867b;
+  --line:rgba(23,21,15,.10); --line-2:rgba(23,21,15,.20);
+  --accent:#d9412a; --accent-soft:rgba(217,65,42,.10); --on-accent:#fff;
+  --shot-shadow:0 1px 0 rgba(255,255,255,.7) inset,0 30px 80px -30px rgba(40,30,20,.35),0 8px 24px -12px rgba(40,30,20,.18);
+  --mask:rgba(23,21,15,.42);
+  --noise-op:.2;
+  --p-base:#2a2620; --p-accent:#d9412a; --p-bg:#f3f1ec;
+  --sans:"Inter Tight",-apple-system,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",system-ui,sans-serif;
+  --serif:"Instrument Serif","Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC","SimSun",Georgia,serif;
+  --serif-sc:"Songti SC","STSong","Noto Serif CJK SC","Source Han Serif SC","SimSun",serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --ease:cubic-bezier(.2,.7,.1,1);
+  --gutter:clamp(16px,5vw,72px);
+  --maxw:1280px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f0e0c; --bg-2:#171613; --surface:#1a1916; --surface-2:#211f1b;
+    --ink:#eeebe4; --ink-2:#a7a297; --ink-3:#6c675e;
+    --line:rgba(238,235,228,.08); --line-2:rgba(238,235,228,.16);
+    --accent:#ff5d3d; --accent-soft:rgba(255,93,61,.12); --on-accent:#140805;
+    --shot-shadow:0 0 0 1px rgba(255,255,255,.06),0 40px 100px -30px rgba(0,0,0,.8);
+    --mask:rgba(0,0,0,.55);
+    --noise-op:.32;
+    --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c; --shot-mask:rgba(15,14,12,.38); --shot-mask-hover:rgba(15,14,12,.12);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f0e0c; --bg-2:#171613; --surface:#1a1916; --surface-2:#211f1b;
+  --ink:#eeebe4; --ink-2:#a7a297; --ink-3:#6c675e;
+  --line:rgba(238,235,228,.08); --line-2:rgba(238,235,228,.16);
+  --accent:#ff5d3d; --accent-soft:rgba(255,93,61,.12); --on-accent:#140805;
+  --shot-shadow:0 0 0 1px rgba(255,255,255,.06),0 40px 100px -30px rgba(0,0,0,.8);
+  --mask:rgba(0,0,0,.55);
+  --noise-op:.32;
+  --p-base:#d8d2c6; --p-accent:#ff5d3d; --p-bg:#0f0e0c; --shot-mask:rgba(15,14,12,.38); --shot-mask-hover:rgba(15,14,12,.12);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:300;line-height:1.7;overflow-x:hidden;-webkit-font-smoothing:antialiased;letter-spacing:.01em;transition:background .5s,color .5s}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::selection{background:var(--accent);color:var(--on-accent)}
+img,svg{display:block}
+:focus-visible{outline:1px solid var(--accent);outline-offset:4px}
+
+/* ---------- 背景层 ---------- */
+#gl{position:fixed;inset:0;width:100%;height:100%;z-index:0;pointer-events:none}
+.light{position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:radial-gradient(50% 45% at 78% 22%,var(--accent-soft),transparent 70%);opacity:.7}
+.noise{position:fixed;inset:0;z-index:60;pointer-events:none;opacity:var(--noise-op);background-size:128px 128px}
+#gl{opacity:0;transition:opacity 1s var(--ease)}
+#gl.ready{opacity:1}
+main,header,footer{position:relative;z-index:2}
+
+/* ---------- 开场 ---------- */
+#intro{position:fixed;inset:0;z-index:80;display:flex;align-items:flex-end;justify-content:space-between;padding:var(--gutter);
+  background:color-mix(in srgb,var(--bg) 78%,transparent);transition:opacity .5s var(--ease),visibility .5s}
+#intro.done{opacity:0;visibility:hidden}
+.boot{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--ink-3);line-height:1.9}
+.boot span{display:block;opacity:0;transform:translateY(4px);animation:bootIn .25s var(--ease) forwards}
+.boot b{color:var(--ink);font-weight:400}
+.boot em{font-style:normal;color:var(--accent)}
+@keyframes bootIn{to{opacity:1;transform:none}}
+.boot-meter{width:min(240px,40vw);text-align:right;font-family:var(--mono);font-size:11px;color:var(--ink-2);letter-spacing:.1em}
+.boot-meter i{display:block;height:1px;background:var(--line-2);margin-top:10px;overflow:hidden;position:relative}
+.boot-meter i::after{content:"";position:absolute;inset:0;background:var(--accent);transform-origin:left;animation:meter .75s var(--ease) forwards;transform:scaleX(0)}
+.skip-intro #intro{display:none}
+@keyframes meter{to{transform:scaleX(1)}}
+
+/* ---------- 光标 ---------- */
+.cursor,.cursor-dot{position:fixed;left:0;top:0;z-index:90;pointer-events:none;border-radius:50%;transform:translate3d(-100px,-100px,0)}
+.cursor{width:34px;height:34px;margin:-17px 0 0 -17px;border:1px solid var(--line-2);transition:width .3s var(--ease),height .3s var(--ease),margin .3s var(--ease),background .3s,border-color .3s}
+.cursor-dot{width:4px;height:4px;margin:-2px 0 0 -2px;background:var(--accent)}
+.cursor.hover{width:64px;height:64px;margin:-32px 0 0 -32px;background:var(--accent-soft);border-color:var(--accent)}
+@media (pointer:coarse),(hover:none){.cursor,.cursor-dot{display:none}}
+
+/* ---------- 通用 ---------- */
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 var(--gutter)}
+section{padding:clamp(96px,16vh,180px) 0}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink-3);display:flex;align-items:center;gap:14px}
+.eyebrow::before{content:"";width:6px;height:6px;background:var(--accent);flex:0 0 6px}
+.title{font-family:var(--serif-sc);font-weight:300;font-size:clamp(32px,5vw,68px);line-height:1.18;letter-spacing:.02em;margin:24px 0 18px}
+.title em{font-style:normal;color:var(--accent)}
+.title .en{display:block;font-family:var(--sans);font-size:max(11px,.18em);letter-spacing:.42em;text-transform:uppercase;color:var(--ink-3);margin-top:20px;font-weight:300}
+.lede{color:var(--ink-2);font-size:clamp(15px,1.2vw,17px);max-width:560px}
+.reveal{opacity:0;transform:translate3d(0,28px,0);transition:opacity 1s var(--ease),transform 1.1s var(--ease);transition-delay:var(--d,0s)}
+.reveal.in{opacity:1;transform:none}
+.panel-s{background:var(--surface);border:1px solid var(--line);border-radius:16px;position:relative}
+kbd{font-family:var(--mono);font-size:.82em;padding:.16em .55em;border-radius:6px;border:1px solid var(--line-2);border-bottom-width:2px;background:var(--surface);color:var(--ink);white-space:nowrap}
+
+/* 按钮 */
+.btn{position:relative;display:inline-flex;align-items:center;gap:12px;height:54px;padding:0 28px;border-radius:999px;font-size:15px;font-weight:400;letter-spacing:.05em;transition:transform .35s var(--ease),background .35s,color .35s,border-color .35s;will-change:transform}
+.btn .lbl{display:inline-flex;align-items:center;gap:12px;transition:transform .35s var(--ease)}
+.btn-primary{background:var(--ink);color:var(--bg)}
+.btn-primary:hover{background:var(--accent);color:var(--on-accent)}
+.btn-ghost{border:1px solid var(--line-2);color:var(--ink)}
+.btn-ghost:hover{border-color:var(--ink)}
+.btn svg{width:16px;height:16px}
+
+/* ---------- 导航 ---------- */
+header.nav{position:fixed;top:0;left:0;right:0;z-index:50;transition:background .4s,border-color .4s,transform .5s var(--ease);border-bottom:1px solid transparent}
+header.nav.scrolled{background:color-mix(in srgb,var(--bg) 78%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom-color:var(--line)}
+header.nav.hide{transform:translateY(-100%)}
+.nav-in{display:flex;align-items:center;justify-content:space-between;height:72px;gap:16px}
+.brand{display:flex;align-items:center;gap:12px;font-weight:400;letter-spacing:.14em;font-size:13px}
+.brand-mark{width:26px;height:26px}
+.nav-links{display:flex;gap:34px;font-size:13px;color:var(--ink-2);letter-spacing:.08em}
+.nav-links a{position:relative;transition:color .3s}
+.nav-links a::after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--accent);transform:scaleX(0);transition:transform .4s var(--ease)}
+.nav-links a:hover{color:var(--ink)}.nav-links a:hover::after{transform:scaleX(1)}
+.nav-right{display:flex;align-items:center;gap:10px}
+.nav .btn{height:40px;padding:0 18px;font-size:13px}
+.gh{display:inline-flex;align-items:center;height:40px;border:1px solid var(--line-2);border-radius:999px;font-size:13px;overflow:hidden;transition:border-color .3s}
+.gh:hover{border-color:var(--ink)}
+.gh>span{display:inline-flex;align-items:center;gap:8px;padding:0 14px;height:100%}
+.gh svg{width:15px;height:15px}
+.gh .cnt{border-left:1px solid var(--line-2);font-family:var(--mono);font-size:12px;gap:6px;min-width:44px;justify-content:center}
+.gh .cnt svg{width:12px;height:12px;color:var(--accent)}
+.gh .cnt b{font-weight:400}
+.gh:not(.has-count) .cnt{display:none}
+@media (max-width:560px){.gh .lbl-gh{display:none}.gh>span:first-child{padding:0 10px}.nav-right .btn{display:none}}
+.theme-btn{width:40px;height:40px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;transition:border-color .3s}
+.theme-btn:hover{border-color:var(--ink)}
+.theme-btn svg{width:16px;height:16px}
+.theme-btn .moon{display:none}
+:root[data-theme="dark"] .theme-btn .sun{display:none}
+:root[data-theme="dark"] .theme-btn .moon{display:block}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .theme-btn .sun{display:none}
+  :root:not([data-theme="light"]) .theme-btn .moon{display:block}
+}
+@media (max-width:900px){.nav-links{display:none}}
+
+/* ---------- Hero ---------- */
+.hero{min-height:100svh;display:flex;align-items:center;padding:120px 0 80px;position:relative}
+.hero-grid{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center;width:100%}
+.hero h1{font-weight:200;font-size:clamp(46px,9vw,132px);line-height:.98;letter-spacing:-.02em}
+.hero h1 .line{display:block;overflow:hidden;padding-bottom:.08em}
+.hero h1 .line>span{display:inline-block;transform:translateY(110%);transition:transform 1.2s var(--ease);transition-delay:var(--d,0s)}
+.loaded .hero h1 .line>span{transform:none}
+.hero h1 .it{font-family:var(--serif);font-style:italic;font-weight:400;letter-spacing:-.01em}
+.hero h1 .it i{font-style:normal;color:var(--accent)}
+.hero .tag{margin:34px 0 8px;font-family:var(--serif-sc);font-size:clamp(20px,2vw,28px);font-weight:300;letter-spacing:.08em}
+.hero .tag-en{font-size:12px;letter-spacing:.42em;text-transform:uppercase;color:var(--ink-3)}
+.hero .lede{margin-top:22px}
+.hero-cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:40px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:22px;margin-top:46px;font-size:12px;color:var(--ink-3);letter-spacing:.08em}
+.hero-meta span{display:flex;align-items:center;gap:8px}
+.hero-meta span:first-child::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.hero .fade{opacity:0;transform:translateY(16px);transition:opacity 1s var(--ease),transform 1s var(--ease);transition-delay:var(--d,0s)}
+.loaded .hero .fade{opacity:1;transform:none}
+.hero-visual{position:relative;height:min(62vh,560px)}
+.reticle{position:absolute;left:50%;top:50%;width:var(--frame,72%);aspect-ratio:1;transform:translate(-50%,-50%);pointer-events:none}
+.reticle i{position:absolute;width:22px;height:22px;border:0 solid var(--ink-3)}
+.reticle i:nth-child(1){top:0;left:0;border-top-width:1px;border-left-width:1px}
+.reticle i:nth-child(2){top:0;right:0;border-top-width:1px;border-right-width:1px}
+.reticle i:nth-child(3){bottom:0;left:0;border-bottom-width:1px;border-left-width:1px}
+.reticle i:nth-child(4){bottom:0;right:0;border-bottom-width:1px;border-right-width:1px;border-color:var(--accent)}
+.hud{position:absolute;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--ink-3);line-height:1.8;white-space:nowrap}
+.hud b{color:var(--accent);font-weight:400}
+.hud.tl{bottom:calc(100% + 14px);left:0}.hud.br{top:calc(100% + 14px);right:0;text-align:right}
+.scroll-hint{position:absolute;left:50%;bottom:28px;transform:translateX(-50%);font-family:var(--mono);font-size:10px;letter-spacing:.3em;color:var(--ink-3);display:flex;flex-direction:column;align-items:center;gap:10px}
+.scroll-hint i{width:1px;height:42px;background:linear-gradient(var(--ink-2),transparent);animation:hint 2.2s var(--ease) infinite;transform-origin:top}
+@keyframes hint{0%{transform:scaleY(0)}50%{transform:scaleY(1)}100%{transform:scaleY(1);opacity:0}}
+@media (max-width:900px){
+  .hero-grid{grid-template-columns:1fr}
+  .hero-visual{position:absolute;inset:0;height:auto;opacity:.32;pointer-events:none;z-index:-1}
+  .hud,.scroll-hint{display:none}
+}
+
+/* ---------- 字幕卡 ---------- */
+.card-title{padding:clamp(80px,14vh,140px) 0;text-align:center;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.card-title p{font-family:var(--serif-sc);font-weight:300;font-size:clamp(22px,3.4vw,46px);letter-spacing:.3em;line-height:1.5;padding-left:.3em}
+.card-title small{display:block;margin-top:18px;font-family:var(--mono);font-size:11px;letter-spacing:.5em;color:var(--ink-3)}
+
+/* ---------- 价值主张 ---------- */
+.values{display:grid;grid-template-columns:repeat(3,1fr);margin-top:72px;border-top:1px solid var(--line)}
+.value{padding:44px 34px 40px;border-right:1px solid var(--line);position:relative}
+.value:first-child{padding-left:0}.value:last-child{border-right:0;padding-right:0}
+.value .no{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.2em}
+.value h3{font-family:var(--serif-sc);font-weight:400;font-size:24px;letter-spacing:.04em;margin:18px 0 4px}
+.value .en{font-size:11px;letter-spacing:.32em;color:var(--ink-3);text-transform:uppercase}
+.value p{color:var(--ink-2);font-size:15px;margin-top:16px}
+.value .viz{height:150px;margin:6px 0 26px;display:flex;align-items:center}
+.value::after{content:"";position:absolute;left:0;top:-1px;height:1px;width:0;background:var(--ink);transition:width 1.2s var(--ease)}
+.value.in::after{width:40%}
+@media (max-width:900px){.values{grid-template-columns:1fr}.value{border-right:0;border-bottom:1px solid var(--line);padding:40px 0}}
+.keys{display:flex;gap:10px;align-items:center}
+.keycap{width:58px;height:58px;border-radius:12px;border:1px solid var(--line-2);border-bottom-width:3px;display:grid;place-items:center;font-family:var(--mono);font-size:18px;color:var(--ink);background:var(--surface)}
+.keycap.press{animation:press 2.6s var(--ease) infinite}
+.keycap.press.k2{animation-delay:.12s}
+@keyframes press{0%,30%,100%{transform:none;border-bottom-width:3px}36%,52%{transform:translateY(2px);border-bottom-width:1px;border-color:var(--accent);color:var(--accent)}}
+.keys .plus{color:var(--ink-3)}
+.keys .arrow{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-left:8px;letter-spacing:.1em}
+.keys .arrow b{color:var(--ink);font-weight:400;animation:blink 2.6s infinite}
+@keyframes blink{0%,40%{opacity:.15}50%,90%{opacity:1}100%{opacity:.15}}
+.viz .l{stroke:var(--line-2)}.viz .k{stroke:var(--ink-2)}.viz .a{stroke:var(--accent)}
+.viz .t{fill:var(--ink-2)}.viz .t3{fill:var(--ink-3)}.viz .fa{fill:var(--accent)}.viz .fk{fill:var(--ink-2)}
+.dash{stroke-dasharray:4 6;animation:dash 1.6s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-20}}
+.pulse{animation:pulse 2.4s ease-in-out infinite;transform-origin:center;transform-box:fill-box}
+@keyframes pulse{0%,100%{opacity:.3;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}
+.bar{animation:eq 1.2s ease-in-out infinite;transform-origin:center bottom;transform-box:fill-box}
+@keyframes eq{0%,100%{transform:scaleY(.25)}50%{transform:scaleY(1)}}
+
+/* ---------- 真实界面 ---------- */
+.gallery{display:grid;grid-template-columns:300px 1fr;gap:clamp(30px,5vw,80px);margin-top:70px;align-items:start}
+.tabs{display:grid;border-top:1px solid var(--line)}
+.tab{display:grid;grid-template-columns:34px 1fr;gap:4px 10px;text-align:left;padding:20px 0;border-bottom:1px solid var(--line);color:var(--ink-3);transition:color .3s;position:relative}
+.tab .n{font-family:var(--mono);font-size:11px;padding-top:4px}
+.tab b{font-weight:400;font-size:16px;letter-spacing:.04em}
+.tab small{grid-column:2;font-size:13px;line-height:1.6;max-height:0;overflow:hidden;opacity:0;transition:max-height .5s var(--ease),opacity .4s}
+.tab::after{content:"";position:absolute;left:0;bottom:-1px;height:1px;width:0;background:var(--accent)}
+.tab[aria-selected="true"]{color:var(--ink)}
+.tab[aria-selected="true"] .n{color:var(--accent)}
+.tab[aria-selected="true"] small{max-height:80px;opacity:1;color:var(--ink-2)}
+.tab[aria-selected="true"]::after{width:100%;transition:width 6s linear}
+.tab:hover{color:var(--ink)}
+.viewer{position:relative;min-height:200px}
+.shot{position:relative;margin:0;transition:opacity .6s var(--ease),transform .8s var(--ease)}
+.shot:not(.on){position:absolute;inset:0 0 auto 0;opacity:0;transform:translateY(14px) scale(.985);pointer-events:none}
+.shot .frame{display:flex;justify-content:center;align-items:center;padding:clamp(18px,4vw,56px);border-radius:20px;background:var(--bg-2);border:1px solid var(--line)}
+.shot .pic{position:relative;display:block;border-radius:12px;box-shadow:var(--shot-shadow);overflow:hidden;max-width:100%}
+.shot .pic::after{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--shot-mask,transparent);transition:background .5s var(--ease);pointer-events:none}
+.shot .frame:hover .pic::after{background:var(--shot-mask-hover,transparent)}
+.shot img{display:block;max-width:100%;height:auto;max-height:62vh;width:auto}
+.shot figcaption{display:flex;justify-content:space-between;gap:20px;margin-top:16px;font-size:13px;color:var(--ink-3)}
+.shot figcaption span:last-child{font-family:var(--mono);font-size:11px;letter-spacing:.14em}
+@media (max-width:900px){
+  .gallery{grid-template-columns:1fr}
+  .tabs{display:flex;gap:8px;overflow-x:auto;border:0;padding-bottom:6px;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{display:flex;gap:8px;flex:0 0 auto;padding:8px 14px;border:1px solid var(--line-2);border-radius:999px}
+  .tab small{display:none}.tab b{font-size:13px}
+  .tab::after{display:none}
+  .tab[aria-selected="true"]{border-color:var(--ink)}
+}
+
+/* ---------- 功能叙事 ---------- */
+.story{display:grid;grid-template-columns:.9fr 1.1fr;gap:clamp(30px,6vw,90px);margin-top:60px}
+.steps{padding:10vh 0 30vh}
+.step{min-height:72vh;display:flex;flex-direction:column;justify-content:center;opacity:.22;transition:opacity .6s var(--ease)}
+.step.active{opacity:1}
+.step .act{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.28em}
+.step h3{font-family:var(--serif-sc);font-weight:300;font-size:clamp(26px,3.2vw,42px);line-height:1.3;margin:16px 0 6px;letter-spacing:.02em}
+.step .en{font-size:11px;letter-spacing:.34em;color:var(--ink-3);text-transform:uppercase}
+.step p{color:var(--ink-2);margin-top:20px;max-width:440px}
+.step ul{list-style:none;margin-top:22px;display:grid;gap:10px;font-size:14px;color:var(--ink-2)}
+.step li{display:flex;gap:12px;align-items:baseline}
+.step li::before{content:"";flex:0 0 10px;height:1px;background:var(--accent);transform:translateY(-4px)}
+.stage-wrap{position:sticky;top:12vh;height:76vh;display:flex;align-items:center}
+.stage{width:100%;aspect-ratio:16/11;max-height:76vh;overflow:hidden;border-radius:18px;position:relative;background:var(--bg-2);border:1px solid var(--line)}
+.menubar{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;font-family:var(--mono);font-size:10px;color:var(--ink-3);border-bottom:1px solid var(--line);background:var(--surface)}
+.menubar .dots{display:flex;gap:6px;align-items:center}
+.menubar .dots i{width:8px;height:8px;border-radius:50%;background:var(--line-2)}
+.doc{position:absolute;top:15%;left:6%;width:50%;padding:24px 26px 26px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line)}
+.doc .dt{font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.14em;margin-bottom:34px}
+.target{position:relative;display:block}
+.doc h4{font-family:var(--serif);font-weight:400;font-size:clamp(14px,1.5vw,20px);color:var(--ink);line-height:1.4}
+.doc .ln{height:6px;border-radius:3px;background:var(--line);margin-top:10px}
+/* 选区跟随标题本身定位，不再用写死的百分比 */
+.sel{position:absolute;inset:-10px -12px;border:1px solid var(--accent);box-shadow:0 0 0 9999px var(--mask);opacity:0;transform:scale(.92);transition:opacity .7s var(--ease),transform .9s var(--ease);border-radius:2px;z-index:2;pointer-events:none}
+.sel::before{content:attr(data-size);position:absolute;bottom:calc(100% + 6px);left:-1px;font-family:var(--mono);font-size:10px;color:var(--on-accent);background:var(--accent);padding:2px 6px;letter-spacing:.06em;white-space:nowrap}
+.sel i{position:absolute;width:7px;height:7px;background:var(--surface-2);border:1px solid var(--accent)}
+.sel i:nth-of-type(1){left:-4px;top:-4px}.sel i:nth-of-type(2){right:-4px;top:-4px}.sel i:nth-of-type(3){left:-4px;bottom:-4px}.sel i:nth-of-type(4){right:-4px;bottom:-4px}
+.sel .scan{position:absolute;left:0;right:0;height:2px;top:0;background:var(--accent);opacity:0}
+.hk{position:absolute;right:8%;top:18%;display:flex;gap:6px;align-items:center;opacity:0;transform:translateY(10px);transition:all .6s var(--ease);z-index:3}
+.hk .keycap{width:44px;height:44px;font-size:14px}
+.ocr{position:absolute;left:7%;bottom:9%;max-width:60%;padding:8px 12px;border-radius:8px;background:rgba(15,14,12,.82);font-family:var(--mono);font-size:10.5px;color:#e9e6df;line-height:1.8;opacity:0;transition:opacity .6s;z-index:3}
+.ocr b{color:var(--accent);font-weight:400}
+.result{position:absolute;right:4%;top:20%;width:34%;padding:14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--line-2);box-shadow:var(--shot-shadow);opacity:0;transform:translate3d(24px,0,0);transition:all .9s var(--ease);z-index:3}
+.result .ph{display:flex;justify-content:space-between;align-items:center;font-size:10px;font-family:var(--mono);color:var(--ink-3);letter-spacing:.08em;margin-bottom:10px}
+.result .box{background:var(--bg-2);border-radius:10px;padding:10px 12px;font-size:11px;line-height:1.55}
+.result .src{color:var(--ink-2)}
+.result .swap{text-align:center;font-size:10px;color:var(--ink-3);padding:8px 0}
+.result .dst{color:var(--ink);font-size:clamp(11px,1.05vw,14px);font-weight:400}
+.result .tools{display:flex;gap:8px;margin-top:8px;align-items:center;color:var(--ink-3)}
+.result .tools svg{width:12px;height:12px}
+.wave{display:flex;gap:3px;align-items:flex-end;height:14px;margin-left:auto;opacity:0;transition:opacity .4s}
+.wave span{width:2px;height:100%;border-radius:1px;background:var(--accent);transform:scaleY(.2);transform-origin:bottom}
+.stage .tip{position:absolute;right:4%;bottom:4%;font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--ink-3);z-index:4}
+.stage .tip b{color:var(--accent);font-weight:400}
+.stage[data-step="0"] .hk{opacity:1;transform:none}
+.stage[data-step="0"] .hk .keycap{animation:press 2s var(--ease) infinite}
+.stage[data-step="1"] .sel,.stage[data-step="2"] .sel,.stage[data-step="3"] .sel{opacity:1;transform:none}
+.stage[data-step="2"] .scan{opacity:.85;animation:scan 1.4s ease-in-out infinite alternate}
+@keyframes scan{to{top:calc(100% - 2px)}}
+.stage[data-step="2"] .ocr{opacity:1}
+.stage[data-step="3"] .result{opacity:1;transform:none}
+.stage[data-step="3"] .wave{opacity:1}
+.stage[data-step="3"] .wave span{animation:eq 1s ease-in-out infinite}
+.stage[data-step="1"] .tip,.stage[data-step="2"] .tip,.stage[data-step="3"] .tip{color:#cfcabf}
+@media (max-width:900px){
+  .story{grid-template-columns:1fr}
+  .stage-wrap{top:72px;height:auto;z-index:3;order:-1;padding:8px 0;background:var(--bg)}
+  .stage{aspect-ratio:16/12}
+  .steps{padding:0 0 10vh}
+  .step{min-height:70vh}
+  .doc{width:52%;padding:14px;left:4%}
+  .result{width:36%;right:2.5%;top:22%;padding:10px}
+  .result .src{display:none}.result .swap{display:none}
+  .ocr{width:80%}
+}
+
+/* ---------- 技术 ---------- */
+.pipeline{margin-top:70px;padding:36px clamp(18px,3vw,40px);display:grid;grid-template-columns:repeat(5,1fr)}
+.node{position:relative;padding:40px 18px 20px 0}
+.node:not(:last-child)::after{content:"";position:absolute;top:20px;left:12px;width:calc(100% - 16px);height:1px;background:repeating-linear-gradient(90deg,var(--line-2) 0 4px,transparent 4px 9px);background-size:18px 1px;animation:flow 1s linear infinite}
+@keyframes flow{to{background-position:18px 0}}
+.node .nk{font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.2em}
+.node h4{font-weight:400;font-size:16px;margin:10px 0 8px;letter-spacing:.04em}
+.node p{font-size:12.5px;color:var(--ink-3);line-height:1.65;font-family:var(--mono)}
+.node .dot{position:absolute;top:16px;left:0;width:9px;height:9px;border-radius:50%;background:var(--surface);border:1px solid var(--ink-2)}
+.node:nth-child(4) .dot{background:var(--accent);border-color:var(--accent)}
+.node:nth-child(4) .nk{color:var(--accent)}
+@media (max-width:900px){
+  .pipeline{grid-template-columns:1fr;padding:24px}
+  .node{padding:18px 0 18px 26px;border-left:1px dashed var(--line-2)}
+  .node:not(:last-child)::after{display:none}
+  .node .dot{left:-5px;top:24px}
+}
+.pillars{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-top:22px}
+.pillar{padding:28px 24px}
+.pillar svg{width:24px;height:24px;color:var(--ink)}
+.pillar h4{font-weight:400;font-size:17px;margin:18px 0 2px;letter-spacing:.04em}
+.pillar .en{font-size:10px;letter-spacing:.3em;color:var(--ink-3);text-transform:uppercase}
+.pillar p{font-size:14px;color:var(--ink-2);margin-top:12px}
+@media (max-width:1000px){.pillars{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){.pillars{grid-template-columns:1fr}}
+.code{margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.code pre{padding:24px 26px;font-family:var(--mono);font-size:12.5px;line-height:1.85;color:var(--ink-2);overflow:auto;white-space:pre}
+.code .c{color:var(--ink-3)}.code .k{color:var(--accent)}.code .s{color:var(--ink)}.code .n{color:var(--ink)}
+.code .cap{display:block;font-size:10px;letter-spacing:.24em;color:var(--ink-3);margin-bottom:14px}
+@media (max-width:900px){.code{grid-template-columns:1fr}}
+
+/* ---------- 场景 ---------- */
+.scenes{margin-top:70px}
+.scene{display:grid;grid-template-columns:120px 1fr 1.1fr;gap:40px;padding:56px 0;border-top:1px solid var(--line);align-items:start}
+.scene:last-child{border-bottom:1px solid var(--line)}
+.scene .idx{font-family:var(--serif);font-style:italic;font-size:64px;line-height:.9;color:var(--ink-3);transition:color .4s}
+.scene:hover .idx{color:var(--accent)}
+.scene h3{font-family:var(--serif-sc);font-weight:300;font-size:clamp(21px,2.3vw,28px);line-height:1.45;letter-spacing:.02em}
+.scene .who{font-size:12px;color:var(--ink-3);letter-spacing:.14em;margin-top:12px}
+.scene p{color:var(--ink-2);font-size:15px}
+.scene .flow{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.scene .flow span{font-family:var(--mono);font-size:11px;padding:6px 10px;border:1px solid var(--line-2);border-radius:999px;color:var(--ink-2)}
+.scene .flow span.hi{border-color:var(--accent);color:var(--accent)}
+@media (max-width:900px){.scene{grid-template-columns:1fr;gap:18px;padding:40px 0}.scene .idx{font-size:44px}}
+
+/* ---------- 定价 ---------- */
+.pricing{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:70px;align-items:stretch}
+.plan{padding:36px 30px 32px;display:flex;flex-direction:column;transition:transform .5s var(--ease)}
+.plan:hover{transform:translateY(-6px)}
+.plan .pn{font-size:14px;letter-spacing:.2em;color:var(--ink)}
+.plan .pe{font-size:10px;letter-spacing:.3em;color:var(--ink-3);text-transform:uppercase;margin-top:2px}
+.plan .price{display:flex;align-items:baseline;gap:8px;margin:28px 0 6px}
+.plan .price b{font-family:var(--serif);font-weight:400;font-size:64px;line-height:1}
+.plan .price span{font-size:13px;color:var(--ink-3)}
+.plan .pd{font-size:14px;color:var(--ink-2);min-height:48px}
+.plan ul{list-style:none;margin:26px 0 30px;display:grid;gap:12px;font-size:14px;color:var(--ink-2);flex:1}
+.plan li{display:flex;gap:12px}
+.plan li svg{flex:0 0 16px;width:16px;height:16px;color:var(--ink);margin-top:4px}
+.plan li.off{color:var(--ink-3)}.plan li.off svg{color:var(--ink-3)}
+.plan .btn{justify-content:center;width:100%}
+.plan.featured{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.plan.featured .pn{color:var(--bg)}
+.plan.featured .pd,.plan.featured ul{color:color-mix(in srgb,var(--bg) 72%,var(--ink))}
+.plan.featured .pe,.plan.featured .price span{color:color-mix(in srgb,var(--bg) 50%,var(--ink))}
+.plan.featured li svg{color:var(--accent)}
+.plan.featured .btn-primary{background:var(--accent);color:var(--on-accent)}
+.plan.featured .btn-primary:hover{background:var(--bg);color:var(--ink)}
+.plan.featured::after{content:"推荐 · RECOMMENDED";position:absolute;top:-12px;left:30px;font-family:var(--mono);font-size:10px;letter-spacing:.2em;padding:5px 12px;border-radius:999px;background:var(--accent);color:var(--on-accent)}
+.price-note{margin-top:26px;font-size:13px;color:var(--ink-3);text-align:center}
+@media (max-width:960px){.pricing{grid-template-columns:1fr}.plan.featured{order:-1}}
+
+/* ---------- 信任 ---------- */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);margin-top:70px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.metric{padding:40px 24px;border-right:1px solid var(--line)}
+.metric:first-child{padding-left:0}.metric:last-child{border-right:0}
+.metric b{display:block;font-family:var(--serif);font-weight:400;font-size:clamp(48px,5.8vw,84px);line-height:1}
+.metric b sup{font-family:var(--sans);font-size:.26em;color:var(--accent);margin-left:6px;vertical-align:top;position:relative;top:.5em;font-weight:300}
+.metric span{display:block;margin-top:14px;font-size:13px;color:var(--ink-2)}
+.metric small{display:block;font-size:10px;color:var(--ink-3);letter-spacing:.24em;text-transform:uppercase;margin-top:2px}
+@media (max-width:900px){.metrics{grid-template-columns:1fr 1fr}.metric{padding:32px 16px}.metric:nth-child(odd){padding-left:0}.metric:nth-child(2){border-right:0}.metric:nth-child(-n+2){border-bottom:1px solid var(--line)}}
+.marquee{margin-top:60px;overflow:hidden;-webkit-mask:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.marquee .cap{text-align:center;font-family:var(--mono);font-size:10px;letter-spacing:.3em;color:var(--ink-3);margin-bottom:26px}
+.track{display:flex;gap:70px;width:max-content;animation:marq 38s linear infinite}
+.track span{font-family:var(--serif);font-size:clamp(22px,2.4vw,32px);color:var(--ink-3);white-space:nowrap;transition:color .3s}
+.track span:hover{color:var(--ink)}
+@keyframes marq{to{transform:translateX(-50%)}}
+.quotes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:60px}
+.quote{padding:30px 28px}
+.quote p{font-size:15.5px;color:var(--ink);line-height:1.85}
+.quote p::before{content:"“";display:block;font-family:var(--serif);font-size:48px;line-height:.6;color:var(--accent);margin-bottom:14px}
+.quote .by{margin-top:22px;font-size:12px;color:var(--ink-3);letter-spacing:.1em}
+.quote .by b{color:var(--ink-2);font-weight:400}
+.quotes-note{margin-top:18px;font-size:12px;color:var(--ink-3)}
+@media (max-width:960px){.quotes{grid-template-columns:1fr}}
+
+/* ---------- FAQ ---------- */
+.faq-grid{display:grid;grid-template-columns:.8fr 1.2fr;gap:clamp(30px,6vw,90px)}
+.faq{border-top:1px solid var(--line)}
+.qa{border-bottom:1px solid var(--line)}
+.qa button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:20px;text-align:left;padding:28px 0;font-size:clamp(16px,1.4vw,19px);font-weight:300;letter-spacing:.02em}
+.qa button .pm{flex:0 0 22px;height:22px;position:relative}
+.qa button .pm::before,.qa button .pm::after{content:"";position:absolute;left:50%;top:50%;width:14px;height:1px;background:var(--ink-2);transform:translate(-50%,-50%);transition:transform .45s var(--ease),background .3s}
+.qa button .pm::after{transform:translate(-50%,-50%) rotate(90deg)}
+.qa.open button .pm::after{transform:translate(-50%,-50%) rotate(0)}
+.qa.open button .pm::before{background:var(--accent)}
+.qa .ans{display:grid;grid-template-rows:0fr;transition:grid-template-rows .55s var(--ease)}
+.qa.open .ans{grid-template-rows:1fr}
+.qa .ans>div{overflow:hidden}
+.qa .ans p{padding:0 40px 28px 0;color:var(--ink-2);font-size:15px}
+@media (max-width:900px){.faq-grid{grid-template-columns:1fr}}
+
+/* ---------- 最终 CTA ---------- */
+.final{text-align:center;padding:clamp(120px,22vh,240px) 0;position:relative;overflow:hidden}
+.final h2{font-family:var(--serif-sc);font-weight:300;font-size:clamp(36px,6.6vw,96px);line-height:1.15;letter-spacing:.02em}
+.final h2 em{font-style:normal;color:var(--accent)}
+.final p{color:var(--ink-2);margin:26px auto 0;max-width:520px}
+.final .hero-cta{justify-content:center}
+.final .marq-sel{position:absolute;left:50%;top:50%;width:min(860px,88vw);height:68%;transform:translate(-50%,-50%);pointer-events:none;border:1px dashed var(--line-2)}
+.final .marq-sel::before{content:"1920 × 1080";position:absolute;bottom:calc(100% + 8px);left:0;font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--ink-3)}
+.final .marq-sel i{position:absolute;width:9px;height:9px;border:1px solid var(--accent);background:var(--bg)}
+.final .marq-sel i:nth-child(1){left:-5px;top:-5px}.final .marq-sel i:nth-child(2){right:-5px;top:-5px}.final .marq-sel i:nth-child(3){left:-5px;bottom:-5px}.final .marq-sel i:nth-child(4){right:-5px;bottom:-5px}
+
+/* ---------- Footer ---------- */
+footer{border-top:1px solid var(--line);padding:70px 0 40px;font-size:13px;color:var(--ink-3)}
+.foot{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:40px}
+.foot h5{font-weight:400;font-size:11px;letter-spacing:.28em;color:var(--ink-2);margin-bottom:18px;text-transform:uppercase}
+.foot ul{list-style:none;display:grid;gap:10px}
+.foot a:hover{color:var(--ink)}
+.foot .about{max-width:320px;line-height:1.8;margin-top:16px}
+.social{display:flex;gap:10px;margin-top:22px}
+.social a{width:38px;height:38px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;transition:border-color .3s,color .3s}
+.social a:hover{border-color:var(--ink);color:var(--ink)}
+.social svg{width:16px;height:16px}
+.legal{margin-top:60px;padding-top:26px;border-top:1px solid var(--line);display:flex;flex-wrap:wrap;justify-content:space-between;gap:14px;font-size:12px}
+.legal a{text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--line-2)}
+#privacy{margin-top:40px;padding:24px 26px;font-size:13px;line-height:1.85;color:var(--ink-2)}
+#privacy h5{margin-bottom:10px}
+@media (max-width:900px){.foot{grid-template-columns:1fr 1fr}.foot>div:first-child{grid-column:1/-1}}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<canvas id="gl" aria-hidden="true"></canvas>
+<div class="light" aria-hidden="true"></div>
+<div class="noise" aria-hidden="true"></div>
+<div class="cursor" aria-hidden="true"></div>
+<div class="cursor-dot" aria-hidden="true"></div>
+
+<div id="intro" aria-hidden="true">
+  <div class="boot">
+    <span style="animation-delay:.05s">$ cargo build --release</span>
+    <span style="animation-delay:.14s">&nbsp;&nbsp;Compiling <b>xcap</b> · frozen frame buffer</span>
+    <span style="animation-delay:.26s">&nbsp;&nbsp;Compiling <b>ocr</b> · vision ≤ 2048px · jpeg</span>
+    <span style="animation-delay:.38s">&nbsp;&nbsp;Compiling <b>translation</b> · openai-compatible</span>
+    <span style="animation-delay:.50s">&nbsp;&nbsp;Compiling <b>audio</b> · rodio / cpal</span>
+    <span style="animation-delay:.62s">&nbsp;&nbsp;&nbsp;Finished — <em>DH-TransShot</em> ready</span>
+  </div>
+  <div class="boot-meter">BOOT SEQUENCE<i></i></div>
+</div>
+
+<header class="nav" id="nav">
+  <div class="wrap nav-in">
+    <a href="#top" class="brand" data-hover>
+      <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M3 10V3h7M22 3h7v7M10 29H3v-7" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M29 22v7h-7" stroke="var(--accent)" stroke-width="1.6" style="stroke:var(--accent)"/>
+        <path d="M10 11h12M16 11v11" stroke="currentColor" stroke-width="1.6"/>
+      </svg>
+      DH-TRANSSHOT
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#interface" data-hover>界面</a>
+      <a href="#features" data-hover>功能</a>
+      <a href="#tech" data-hover>技术</a>
+      <a href="#pricing" data-hover>定价</a>
+      <a href="#faq" data-hover>FAQ</a>
+    </nav>
+    <div class="nav-right">
+      <a class="gh" id="ghStar" href="https://github.com/Danyhug/DH-TransShot" target="_blank" rel="noopener" aria-label="在 GitHub 上 Star DH-TransShot" data-hover>
+        <span><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.6 0 0 3.6 0 8c0 3.5 2.3 6.5 5.5 7.6.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8.6-.2 1.3-.3 2-.3s1.4.1 2 .3c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.7-3.6 3.9.3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4C13.7 14.5 16 11.5 16 8c0-4.4-3.6-8-8-8Z"/></svg><span class="lbl-gh">Star</span></span>
+        <span class="cnt"><svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="m8 1.2 2.1 4.3 4.7.7-3.4 3.3.8 4.7L8 12l-4.2 2.2.8-4.7L1.2 6.2l4.7-.7L8 1.2Z"/></svg><b id="starCount"></b></span>
+      </a>
+      <button class="theme-btn" id="themeBtn" aria-label="切换亮色 / 暗色主题" data-hover>
+        <svg class="sun" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M3 13l1.1-1.1M11.9 4.1 13 3" stroke="currentColor" stroke-width="1.2"/></svg>
+        <svg class="moon" viewBox="0 0 16 16" fill="none"><path d="M13.5 9.8A5.8 5.8 0 0 1 6.2 2.5 5.8 5.8 0 1 0 13.5 9.8Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+      </button>
+      <a class="btn btn-ghost magnetic" href="https://github.com/Danyhug/DH-TransShot/releases/latest" data-hover><span class="lbl">免费下载</span></a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============ Hero ============ -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow fade" style="--d:.1s">Screenshot × Translation · macOS / Windows</div>
+      <h1 style="margin-top:28px">
+        <span class="line"><span style="--d:.05s">DH-Trans</span></span>
+        <span class="line"><span class="it" style="--d:.18s">Shot<i>.</i></span></span>
+      </h1>
+      <p class="tag fade" style="--d:.35s">框住它，就读懂它。</p>
+      <p class="tag-en fade" style="--d:.42s">Frame it. Read it. Hear it.</p>
+      <p class="lede fade" style="--d:.5s">一个常驻托盘的小窗口。按下 <kbd>⌥S</kbd> 框选屏幕任意一块，视觉模型读出里面的文字，翻译好再摆到你眼前；按 <kbd>⌥A</kbd> 截图标注直接进剪贴板。翻译、OCR、朗读都接你自己选的模型。</p>
+      <div class="hero-cta fade" style="--d:.62s">
+        <a class="btn btn-primary magnetic" href="https://github.com/Danyhug/DH-TransShot/releases/latest" data-hover>
+          <span class="lbl">免费下载 · Download
+            <svg viewBox="0 0 16 16" fill="none"><path d="M8 2v9m0 0 4-4m-4 4L4 7M2.5 14h11" stroke="currentColor" stroke-width="1.4"/></svg></span>
+        </a>
+        <a class="btn btn-ghost magnetic" href="#interface" data-hover><span class="lbl">看看界面
+          <svg viewBox="0 0 16 16" fill="none"><path d="M3 8h10m0 0-4-4m4 4-4 4" stroke="currentColor" stroke-width="1.4"/></svg></span></a>
+      </div>
+      <div class="hero-meta fade" style="--d:.75s">
+        <span>MIT 开源</span>
+        <span>Rust + Tauri v2</span>
+        <span>任意 OpenAI 兼容接口</span>
+      </div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="reticle"><i></i><i></i><i></i><i></i>
+        <div class="hud tl">REGION · <b>LIVE</b><br>X 0412 · Y 0288 · SCALE 2.0</div>
+        <div class="hud br">OCR → TRANSLATE → TTS<br><b id="hudLang">EN → 中文</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-hint" aria-hidden="true">SCROLL<i></i></div>
+</section>
+
+<div class="card-title reveal">
+  <p>看不懂的，框起来。</p>
+  <small>ANYTHING ON SCREEN, IN YOUR LANGUAGE</small>
+</div>
+
+<!-- ============ 价值主张 ============ -->
+<section id="values">
+  <div class="wrap">
+    <div class="eyebrow reveal">Why TransShot</div>
+    <h2 class="title reveal" style="--d:.08s">少一次切换，多一分<em>专注</em><span class="en">Three promises</span></h2>
+    <p class="lede reveal" style="--d:.16s">复制、打开翻译网页、粘贴、再切回来——这一串动作打断的不只是手，还有思路。TransShot 把它压缩成一个快捷键。</p>
+
+    <div class="values">
+      <article class="value reveal">
+        <div class="no">01</div>
+        <div class="viz" aria-hidden="true">
+          <div class="keys"><div class="keycap press">⌥</div><span class="plus">+</span><div class="keycap press k2">S</div><span class="arrow">→ <b>译文</b></span></div>
+        </div>
+        <h3>一键直达</h3>
+        <div class="en">One keystroke</div>
+        <p>三个全局快捷键覆盖三种来源：屏幕区域、选中文本、剪贴板。主窗口失焦即隐藏，不占桌面，也不抢焦点。</p>
+      </article>
+      <article class="value reveal" style="--d:.1s">
+        <div class="no">02</div>
+        <div class="viz" aria-hidden="true">
+          <svg width="230" height="130" viewBox="0 0 230 130" fill="none">
+            <rect x="8" y="49" width="44" height="32" rx="6" class="k"/>
+            <text x="30" y="69" class="t" font-size="10" text-anchor="middle" font-family="JetBrains Mono">APP</text>
+            <path d="M52 65 C 100 65, 110 20, 166 20" class="l dash"/>
+            <path d="M52 65 C 100 65, 110 65, 166 65" class="a dash" style="animation-delay:-.4s"/>
+            <path d="M52 65 C 100 65, 110 110, 166 110" class="l dash" style="animation-delay:-.8s"/>
+            <g font-family="JetBrains Mono" font-size="9.5">
+              <circle cx="174" cy="20" r="3.5" class="fk"/><text x="186" y="23" class="t3">翻译</text>
+              <circle cx="174" cy="65" r="3.5" class="fa pulse"/><text x="186" y="68" class="t">OCR</text>
+              <circle cx="174" cy="110" r="3.5" class="fk"/><text x="186" y="113" class="t3">TTS</text>
+            </g>
+          </svg>
+        </div>
+        <h3>模型随你</h3>
+        <div class="en">Bring your own model</div>
+        <p>翻译、OCR、朗读三条链路各自挂提供商：OpenAI、DeepSeek、SiliconFlow、本地 Ollama 都行。没填的字段自动回退到全局配置。</p>
+      </article>
+      <article class="value reveal" style="--d:.2s">
+        <div class="no">03</div>
+        <div class="viz" aria-hidden="true">
+          <svg width="230" height="130" viewBox="0 0 230 130" fill="none">
+            <rect x="6" y="30" width="96" height="70" rx="6" class="l"/>
+            <text x="54" y="60" class="t3" font-size="9" text-anchor="middle" font-family="JetBrains Mono">3840×2160</text>
+            <text x="54" y="76" class="t3" font-size="9" text-anchor="middle" font-family="JetBrains Mono">RETINA</text>
+            <path d="M110 65h24" class="k dash"/>
+            <path d="M130 60l6 5-6 5" class="k"/>
+            <rect x="146" y="44" width="56" height="42" rx="5" class="a"/>
+            <text x="174" y="62" class="t" font-size="9" text-anchor="middle" font-family="JetBrains Mono">≤2048</text>
+            <text x="174" y="76" class="t" font-size="9" text-anchor="middle" font-family="JetBrains Mono">JPEG</text>
+            <g transform="translate(155 104)"><rect class="bar fk" x="0" width="3" height="14"/><rect class="bar fk" x="7" width="3" height="14" style="animation-delay:-.3s"/><rect class="bar fa" x="14" width="3" height="14" style="animation-delay:-.6s"/><rect class="bar fk" x="21" width="3" height="14" style="animation-delay:-.9s"/><rect class="bar fk" x="28" width="3" height="14" style="animation-delay:-.15s"/></g>
+          </svg>
+        </div>
+        <h3>原生，且轻</h3>
+        <div class="en">Native &amp; lean</div>
+        <p>Rust 后端只把你框住的那一块、缩到 2048px 以内再编码上传；朗读由系统音频直接播放，窗口隐藏也照样出声。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 真实界面 ============ -->
+<section id="interface">
+  <div class="wrap">
+    <div class="eyebrow reveal">Interface · 实机截图</div>
+    <h2 class="title reveal" style="--d:.08s">它长这样，<em>就这么简单</em><span class="en">Real screenshots, nothing mocked</span></h2>
+    <p class="lede reveal" style="--d:.16s">下面每一张都是 TransShot 本身的截图（浅色主题），应用会跟随系统自动切换深浅色。</p>
+
+    <div class="gallery reveal">
+      <div class="tabs" role="tablist" aria-label="界面截图">
+        <button class="tab" role="tab" aria-selected="true" data-i="0"><span class="n">01</span><b>主窗口</b><small>窗口置顶、语言互换，原文与译文各自朗读和复制。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="1"><span class="n">02</span><b>服务配置</b><small>全局凭据一处填写，翻译 / OCR / TTS 可分别覆盖。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="2"><span class="n">03</span><b>TTS 多提供商</b><small>每个提供商独立地址、模型与 JSON 参数，常用参数一键插入。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="3"><span class="n">04</span><b>朗读行为</b><small>翻译后自动朗读原文或译文，并给自动朗读设长度上限。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="4"><span class="n">05</span><b>快捷键</b><small>三个全局快捷键随录随用，保存即生效。</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-i="5"><span class="n">06</span><b>调试日志</b><small>吸附在主窗口右侧，前后端日志实时对照。</small></button>
+      </div>
+      <div class="viewer">
+        <figure class="shot on"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/main.webp"><img src="assets/main.png" width="800" height="840" alt="TransShot 主窗口：上方原文、下方译文，标题栏有截图、区域翻译、剪贴板翻译、日志与设置按钮" loading="lazy" style="max-height:min(62vh,560px)" decoding="async"></picture></span></div><figcaption><span>主窗口 · 英文 → 中文简体</span><span>01 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-service.webp"><img src="assets/settings-service.png" width="1440" height="1080" alt="设置窗口的服务页：全局 API 地址与密钥、地址填写规则、翻译 OCR TTS 服务配置" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 服务</span><span>02 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-tts.webp"><img src="assets/settings-tts.png" width="1440" height="1080" alt="TTS 提供商配置：名称、模型、API 地址与密钥，以及 voice、speed 等自定义参数快捷插入" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · TTS 提供商</span><span>03 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-speech.webp"><img src="assets/settings-speech.png" width="1440" height="1080" alt="朗读设置：自动朗读原文、译文与长度上限" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 朗读</span><span>04 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/settings-hotkey.webp"><img src="assets/settings-hotkey.png" width="1440" height="1080" alt="快捷键设置：区域截图、区域翻译、翻译选中文本" loading="lazy" decoding="async"></picture></span></div><figcaption><span>设置 · 快捷键</span><span>05 / 06</span></figcaption></figure>
+        <figure class="shot"><div class="frame"><span class="pic"><picture><source type="image/webp" srcset="assets/debug.webp"><img src="assets/debug.png" width="1540" height="846" alt="主窗口与右侧吸附的调试日志窗口，显示 TTS 流式播放日志" loading="lazy" decoding="async"></picture></span></div><figcaption><span>主窗口 + 调试日志</span><span>06 / 06</span></figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 功能叙事 ============ -->
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow reveal">The sequence · 四幕</div>
+    <h2 class="title reveal" style="--d:.08s">从按下，到<em>听懂</em><span class="en">Press · Frame · Read · Speak</span></h2>
+
+    <div class="story">
+      <div class="steps">
+        <div class="step" data-step="0">
+          <div class="act">ACT I · 唤起</div>
+          <h3>按下 <kbd>⌥S</kbd>，屏幕瞬间定格</h3>
+          <div class="en">Freeze the frame</div>
+          <p>不是先框再截。TransShot 在你按键的那一刻就把所有显示器拍下来，覆盖层显示的是这张冻结画面——滚动的视频字幕、一闪而过的弹窗，都能稳稳框住。</p>
+          <ul><li>多显示器各自按原生分辨率截取</li><li>托盘菜单同样可触发，快捷键可在设置里改</li></ul>
+        </div>
+        <div class="step" data-step="1">
+          <div class="act">ACT II · 框选</div>
+          <h3>拖一下，或者点一下整个窗口</h3>
+          <div class="en">Frame what matters</div>
+          <p>鼠标悬停在某个窗口上会自动吸附出它的边界，一次点击选中整窗。截图模式下还能接着标注：矩形、箭头、画笔、马赛克、文字。</p>
+          <ul><li>按 <kbd>C</kbd> 复制光标处颜色 HEX</li><li><kbd>1</kbd>–<kbd>5</kbd> 切换标注工具，<kbd>⌘Z</kbd> 撤销</li></ul>
+        </div>
+        <div class="step" data-step="2">
+          <div class="act">ACT III · 识读</div>
+          <h3>视觉模型读出每一个字</h3>
+          <div class="en">Vision OCR</div>
+          <p>只有选区被送去识别，最长边限制在约 2048px，无透明通道时编码为 JPEG。解码、缩放、重编码都放在后台线程，界面不会卡一下。</p>
+          <ul><li>Prompt 只要文字，不要解释</li><li>任何支持图像输入的 OpenAI 兼容模型</li></ul>
+        </div>
+        <div class="step" data-step="3">
+          <div class="act">ACT IV · 译出</div>
+          <h3>译文就位，顺便念给你听</h3>
+          <div class="en">Translate &amp; speak</div>
+          <p>自动检测源语言，15 种目标语言任选。原文与译文各有朗读和复制按钮，也可以设置翻译后自动朗读，并给自动朗读设长度上限。</p>
+          <ul><li>标准 audio/speech 与 chat+audio 双协议</li><li>流式边收边播，重复文本直接命中缓存</li></ul>
+        </div>
+      </div>
+
+      <div class="stage-wrap">
+        <div class="stage" id="stage" data-step="0" aria-hidden="true">
+          <div class="menubar"><span class="dots"><i></i><i></i><i></i>&nbsp;&nbsp;paper.pdf — Preview</span><span>Thu 21:48</span></div>
+          <div class="doc">
+            <div class="dt">§ 3.2 · SYSTEMS NOTE</div>
+            <div class="target">
+              <h4>Latency is not a feature. Every frame you wait is a frame you stop thinking about the problem.</h4>
+              <div class="sel" id="sel" data-size="688 × 214"><i></i><i></i><i></i><i></i><div class="scan"></div></div>
+            </div>
+            <div class="ln" style="width:92%;margin-top:18px"></div><div class="ln" style="width:84%"></div><div class="ln" style="width:88%"></div><div class="ln" style="width:56%"></div>
+          </div>
+          <div class="ocr"><b>OCR</b> · <span id="ocrSize">688×214</span> → jpeg 41KB · 0.9s<br>"Latency is not a feature. Every frame…"</div>
+          <div class="hk"><div class="keycap">⌥</div><div class="keycap">S</div></div>
+          <div class="result">
+            <div class="ph"><span>自动检测 ↔ 中文简体</span><svg width="10" height="10" viewBox="0 0 16 16" fill="none"><path d="M6 2h4l-.5 4 2.5 2.5H4L6.5 6 6 2ZM8 8.5V14" stroke="currentColor" stroke-width="1.3"/></svg></div>
+            <div class="box src">Latency is not a feature. Every frame you wait is a frame you stop thinking about the problem.</div>
+            <div class="swap">↓</div>
+            <div class="box dst">延迟不是功能。你多等的每一帧，都是你不再思考问题的一帧。
+              <div class="tools">
+                <svg viewBox="0 0 16 16" fill="none"><path d="M3 6v4h3l4 3V3L6 6H3Z" stroke="currentColor"/></svg>
+                <svg viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="8" height="8" rx="1.5" stroke="currentColor"/><path d="M3 11V4a1 1 0 0 1 1-1h7" stroke="currentColor"/></svg>
+                <div class="wave"><span style="animation-delay:-.1s"></span><span style="animation-delay:-.5s"></span><span style="animation-delay:-.3s"></span><span style="animation-delay:-.7s"></span><span style="animation-delay:-.2s"></span><span style="animation-delay:-.6s"></span></div>
+              </div>
+            </div>
+          </div>
+          <div class="tip" id="stageTip">STEP <b>01</b> / 04 · FREEZE</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 技术 ============ -->
+<section id="tech">
+  <div class="wrap">
+    <div class="eyebrow reveal">Under the hood</div>
+    <h2 class="title reveal" style="--d:.08s">克制的工程，可靠的<em>每一帧</em><span class="en">Architecture</span></h2>
+    <p class="lede reveal" style="--d:.16s">前端 React 19 负责交互，Rust + Tokio 负责一切重活。下面是一次区域翻译真正走过的路径。</p>
+
+    <div class="pipeline panel-s reveal">
+      <div class="node"><span class="dot"></span><div class="nk">01 · TRIGGER</div><h4>快捷键 / 托盘</h4><p>emit hotkey-action<br>统一由 App 路由</p></div>
+      <div class="node"><span class="dot"></span><div class="nk">02 · FREEZE</div><h4>冻结截图</h4><p>xcap 全屏捕获<br>每屏一个覆盖层</p></div>
+      <div class="node"><span class="dot"></span><div class="nk">03 · CROP</div><h4>物理像素裁切</h4><p>逻辑 ↔ 物理换算<br>spawn_blocking</p></div>
+      <div class="node"><span class="dot"></span><div class="nk">04 · INFER</div><h4>OCR → 翻译</h4><p>≤2048px · JPEG<br>共享 reqwest 连接</p></div>
+      <div class="node"><span class="dot"></span><div class="nk">05 · SPEAK</div><h4>本地播放</h4><p>PCM → rodio/cpal<br>不经过 WebView</p></div>
+    </div>
+
+    <div class="pillars">
+      <div class="pillar panel-s reveal">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6l-8-3Z" stroke="currentColor" stroke-width="1.2"/><path d="m8.5 12 2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.2"/></svg>
+        <h4>可靠</h4><div class="en">Reliability</div>
+        <p>所有窗口先隐藏让出一帧再销毁，绕开 macOS WebKit 在关闭活跃 webview 时的偶发崩溃。</p>
+      </div>
+      <div class="pillar panel-s reveal" style="--d:.08s">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M13 3 5 13h6l-1 8 8-10h-6l1-8Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+        <h4>性能</h4><div class="en">Performance</div>
+        <p>只传选区、限制尺寸、优先 JPEG；CPU 密集操作进 blocking 线程池，主线程只管响应。</p>
+      </div>
+      <div class="pillar panel-s reveal" style="--d:.16s">
+        <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="10" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M8 10V7a4 4 0 0 1 8 0v3" stroke="currentColor" stroke-width="1.2"/></svg>
+        <h4>安全</h4><div class="en">Privacy</div>
+        <p>没有我们的服务器。截图和文本只发往你配置的接口；日志不记录 API Key、原文全文或 base64。</p>
+      </div>
+      <div class="pillar panel-s reveal" style="--d:.24s">
+        <svg viewBox="0 0 24 24" fill="none"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" stroke="currentColor" stroke-width="1.2"/></svg>
+        <h4>API 与生态</h4><div class="en">Open protocol</div>
+        <p>端点自适应拼接：填根地址补 /v1，填完整端点原样使用，结尾加 # 则逐字请求。每个提供商可用 JSON 覆盖请求体。</p>
+      </div>
+    </div>
+
+    <div class="code">
+      <pre class="panel-s reveal"><span class="cap">SETTINGS · OCR PROVIDER · EXTRA</span><span class="c">// 只覆盖你想改的字段，其余回退到全局</span>
+{
+  <span class="n">"max_tokens"</span>: <span class="k">1024</span>,
+  <span class="n">"temperature"</span>: <span class="k">0</span>
+}</pre>
+      <pre class="panel-s reveal" style="--d:.08s"><span class="cap">BASE URL · 自适应拼接</span><span class="s">https://api.example.com</span>           <span class="c">→ /v1/chat/completions</span>
+<span class="s">https://api.example.com/v4</span>        <span class="c">→ /v4/chat/completions</span>
+<span class="s">https://host/custom/endpoint</span>      <span class="c">→ 原样使用</span>
+<span class="s">https://host/raw<span class="k">#</span></span>                 <span class="c">→ 完全按原文请求</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 场景 ============ -->
+<section id="scenes">
+  <div class="wrap">
+    <div class="eyebrow reveal">Stories</div>
+    <h2 class="title reveal" style="--d:.08s">它出现在你卡住的<em>那一秒</em><span class="en">Real moments</span></h2>
+
+    <div class="scenes">
+      <article class="scene reveal">
+        <div class="idx">i.</div>
+        <div><h3>凌晨两点，一段只有截图的日文报错</h3><div class="who">后端开发 · 排查第三方 SDK</div></div>
+        <div>
+          <p>群里发来的报错是张图，复制不了。按 <kbd>⌥S</kbd> 框住堆栈那几行，译文直接出现在小窗里，原文也在——技术名词保留原样，一眼对上日志。</p>
+          <div class="flow"><span>⌥S</span><span>框选堆栈</span><span class="hi">OCR + 翻译</span><span>复制原文去搜</span></div>
+        </div>
+      </article>
+      <article class="scene reveal">
+        <div class="idx">ii.</div>
+        <div><h3>读论文时，图注和公式旁的说明</h3><div class="who">研究生 · 英文文献精读</div></div>
+        <div>
+          <p>PDF 里的图注是嵌在图片里的。框住它，读完译文再点朗读，边听边看图。正文段落则直接选中按 <kbd>⌥Q</kbd>，连框选都省了。</p>
+          <div class="flow"><span>⌥Q 选中文本</span><span>⌥S 图内文字</span><span class="hi">自动朗读</span></div>
+        </div>
+      </article>
+      <article class="scene reveal">
+        <div class="idx">iii.</div>
+        <div><h3>给海外同事指出 UI 的问题</h3><div class="who">产品设计师 · 跨时区协作</div></div>
+        <div>
+          <p><kbd>⌥A</kbd> 截下界面，箭头指向问题、马赛克盖住用户信息、写一行字说明，回车进剪贴板直接粘到 Slack。需要留档就点下载存成图片。</p>
+          <div class="flow"><span>⌥A</span><span>箭头 · 马赛克 · 文字</span><span class="hi">回车即复制</span></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 定价 ============ -->
+<section id="pricing">
+  <div class="wrap">
+    <div class="eyebrow reveal">Pricing</div>
+    <h2 class="title reveal" style="--d:.08s">软件<em>永远免费</em><span class="en">You only pay your model provider — or no one</span></h2>
+    <p class="lede reveal" style="--d:.16s">TransShot 是 MIT 开源软件，不卖订阅。三档的区别只在于你让它连向哪里。</p>
+
+    <div class="pricing">
+      <div class="plan panel-s reveal">
+        <div class="pn">本地离线</div><div class="pe">Local</div>
+        <div class="price"><b>¥0</b><span>/ 永久</span></div>
+        <p class="pd">接本机 Ollama 等兼容服务，数据不出电脑。</p>
+        <ul>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>完整截图与标注</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>本地视觉模型 OCR 与翻译</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>零网络依赖</li>
+          <li class="off"><svg viewBox="0 0 16 16" fill="none"><path d="M4 8h8" stroke="currentColor" stroke-width="1.3"/></svg>速度与质量取决于本机算力</li>
+        </ul>
+        <a class="btn btn-ghost magnetic" href="https://github.com/Danyhug/DH-TransShot/releases/latest" data-hover><span class="lbl">下载</span></a>
+      </div>
+      <div class="plan panel-s featured reveal" style="--d:.08s">
+        <div class="pn">云端模型</div><div class="pe">Bring your key</div>
+        <div class="price"><b>¥0</b><span>+ 服务商按量计费</span></div>
+        <p class="pd">填一个 API 地址与 Key 即可，默认指向 SiliconFlow。</p>
+        <ul>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>翻译 / OCR / TTS 全部开箱即用</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>15 种语言，自动检测源语言</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>流式朗读与音频缓存</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>费用直接付给你选的服务商</li>
+        </ul>
+        <a class="btn btn-primary magnetic" href="https://github.com/Danyhug/DH-TransShot/releases/latest" data-hover><span class="lbl">开始使用</span></a>
+      </div>
+      <div class="plan panel-s reveal" style="--d:.16s">
+        <div class="pn">混合编排</div><div class="pe">Multi-provider</div>
+        <div class="price"><b>¥0</b><span>/ 按需组合</span></div>
+        <p class="pd">每条链路挂不同服务商，各取所长。</p>
+        <ul>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>OCR 用视觉模型，翻译用专用模型</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>TTS 支持 chat+audio 协议</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>每个提供商独立 JSON 参数</li>
+          <li><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3.5 3.5L13 5" stroke="currentColor" stroke-width="1.3"/></svg>源码可改，MIT 授权</li>
+        </ul>
+        <a class="btn btn-ghost magnetic" href="https://github.com/Danyhug/DH-TransShot" data-hover><span class="lbl">查看源码</span></a>
+      </div>
+    </div>
+    <p class="price-note reveal">模型调用的价格以各服务商官网为准，TransShot 不经手任何费用。</p>
+  </div>
+</section>
+
+<!-- ============ 信任 ============ -->
+<section id="trust">
+  <div class="wrap">
+    <div class="eyebrow reveal">By the numbers</div>
+    <h2 class="title reveal" style="--d:.08s">小工具，<em>不将就</em><span class="en">Built to stay out of your way</span></h2>
+
+    <div class="metrics">
+      <div class="metric reveal"><b><span class="count" data-to="15">0</span><sup>种</sup></b><span>目标语言，自动检测源语言</span><small>Languages</small></div>
+      <div class="metric reveal" style="--d:.08s"><b><span class="count" data-to="2048">0</span><sup>px</sup></b><span>OCR 输入最长边上限</span><small>Vision budget</small></div>
+      <div class="metric reveal" style="--d:.16s"><b><span class="count" data-to="5">0</span><sup>种</sup></b><span>标注工具，含马赛克</span><small>Annotations</small></div>
+      <div class="metric reveal" style="--d:.24s"><b><span class="count" data-to="3">0</span><sup>个</sup></b><span>全局快捷键，保存即生效</span><small>Hotkeys</small></div>
+    </div>
+
+    <div class="marquee reveal" aria-label="兼容的服务与技术栈">
+      <div class="cap">COMPATIBLE WITH · BUILT ON</div>
+      <div class="track">
+        <span>OpenAI</span><span>DeepSeek</span><span>SiliconFlow</span><span>Ollama</span><span>Xiaomi MiMo</span><span>Rust</span><span>Tauri v2</span><span>React 19</span><span>Tokio</span>
+        <span aria-hidden="true">OpenAI</span><span aria-hidden="true">DeepSeek</span><span aria-hidden="true">SiliconFlow</span><span aria-hidden="true">Ollama</span><span aria-hidden="true">Xiaomi MiMo</span><span aria-hidden="true">Rust</span><span aria-hidden="true">Tauri v2</span><span aria-hidden="true">React 19</span><span aria-hidden="true">Tokio</span>
+      </div>
+    </div>
+
+    <div class="quotes">
+      <figure class="quote panel-s reveal"><p>以前看到图片里的外文要先找个 OCR 网站，现在框一下就完了。最喜欢的是它不抢焦点，翻完小窗自己就藏起来。</p><figcaption class="by"><b>开发者</b> · 日常读英文文档</figcaption></figure>
+      <figure class="quote panel-s reveal" style="--d:.08s"><p>OCR 用一个视觉模型、翻译用另一个专做翻译的模型，各配各的 Key，这种自由度在同类工具里很少见。</p><figcaption class="by"><b>AI 工程师</b> · 多模型混用</figcaption></figure>
+      <figure class="quote panel-s reveal" style="--d:.16s"><p>截图标注那套快捷键很顺手，1 到 5 切工具，马赛克打完回车就进剪贴板，比系统截图少好几步。</p><figcaption class="by"><b>产品设计师</b> · 跨团队反馈</figcaption></figure>
+    </div>
+    <p class="quotes-note reveal">以上为典型使用场景的描述，欢迎在 GitHub Issues 分享你的真实体验。</p>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq">
+  <div class="wrap faq-grid">
+    <div>
+      <div class="eyebrow reveal">FAQ</div>
+      <h2 class="title reveal" style="--d:.08s">你可能<em>想问</em><span class="en">Questions</span></h2>
+      <p class="lede reveal" style="--d:.16s">没找到答案？到 GitHub Issues 提问，或者直接读源码——它就在那里。</p>
+    </div>
+    <div class="faq reveal">
+      <div class="qa open"><button aria-expanded="true">真的免费吗？有没有隐藏收费？<span class="pm"></span></button><div class="ans"><div><p>软件本身以 MIT 协议开源，没有订阅、没有会员。你需要的只是一个模型服务：用云端服务商就按它们的价格付费，用本地 Ollama 就完全不花钱。</p></div></div></div>
+      <div class="qa"><button aria-expanded="false">我的截图会被上传到哪里？<span class="pm"></span></button><div class="ans"><div><p>只会发往你在设置里填写的 API 地址，而且只发框选的那一块，不是整屏。TransShot 没有自己的服务器，也不收集使用数据。</p></div></div></div>
+      <div class="qa"><button aria-expanded="false">支持哪些平台？macOS 需要什么权限？<span class="pm"></span></button><div class="ans"><div><p>支持 macOS（Apple Silicon，.dmg）和 Windows（.msi）。macOS 首次使用需在「隐私与安全性」中授予「屏幕录制」；翻译选中文本（⌥Q）还需要「辅助功能」权限，首次按下时应用会主动弹出请求。</p></div></div></div>
+      <div class="qa"><button aria-expanded="false">可以用哪些模型？<span class="pm"></span></button><div class="ans"><div><p>任何 OpenAI 兼容接口：OpenAI、DeepSeek、SiliconFlow、Ollama、小米 MiMo 等。OCR 需要支持图像输入的视觉模型；默认配置分别是 Hunyuan-MT-7B（翻译）、Qwen3.5-4B（OCR）、CosyVoice2-0.5B（朗读）。</p></div></div></div>
+      <div class="qa"><button aria-expanded="false">快捷键和其他软件冲突怎么办？<span class="pm"></span></button><div class="ans"><div><p>在「设置 → 快捷键」重新录入即可，保存后立即生效，无需重启。修饰键支持 Alt / Option / Ctrl / Shift / Cmd，主键支持字母、数字、F1–F24 与方向键。设置窗口打开期间全局快捷键会暂时挂起，方便录入。</p></div></div></div>
+      <div class="qa"><button aria-expanded="false">朗读为什么在窗口隐藏后依然有声音？<span class="pm"></span></button><div class="ans"><div><p>因为音频不在网页里播放。合成好的 PCM 由 Rust 直接送进系统输出设备，避开了 WebView 在后台时音频上下文空转、完全无声的问题。</p></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 最终 CTA ============ -->
+<section class="final">
+  <div class="marq-sel" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+  <div class="wrap">
+    <div class="eyebrow reveal" style="justify-content:center">Fin · 开始</div>
+    <h2 class="reveal" style="margin-top:26px;--d:.08s">下一次看不懂，<br>按一下<em>就好</em>。</h2>
+    <p class="reveal" style="--d:.16s">Next time, just press <kbd>⌥S</kbd>. 免费、开源，三十秒装好。</p>
+    <div class="hero-cta reveal" style="--d:.24s">
+      <a class="btn btn-primary magnetic" href="https://github.com/Danyhug/DH-TransShot/releases/latest" data-hover><span class="lbl">下载 macOS / Windows 版</span></a>
+      <a class="btn btn-ghost magnetic" href="https://github.com/Danyhug/DH-TransShot" data-hover><span class="lbl">Star on GitHub</span></a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <a href="#top" class="brand" data-hover>
+          <svg class="brand-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M3 10V3h7M22 3h7v7M10 29H3v-7" stroke="currentColor" stroke-width="1.6"/><path d="M29 22v7h-7" style="stroke:var(--accent)" stroke-width="1.6"/><path d="M10 11h12M16 11v11" stroke="currentColor" stroke-width="1.6"/></svg>
+          DH-TRANSSHOT
+        </a>
+        <p class="about">截屏 + 翻译二合一桌面工具。框住它，就读懂它。</p>
+        <div class="social">
+          <a href="https://github.com/Danyhug/DH-TransShot" aria-label="GitHub" data-hover><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8c0 3.5 2.3 6.5 5.5 7.6.4.1.5-.2.5-.4v-1.4c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.2-.9-1.2-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.3 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4 0-.9.3-1.6.8-2.1-.1-.2-.4-1 .1-2.1 0 0 .7-.2 2.2.8.6-.2 1.3-.3 2-.3s1.4.1 2 .3c1.5-1 2.2-.8 2.2-.8.4 1.1.2 1.9.1 2.1.5.6.8 1.3.8 2.1 0 3.1-1.9 3.7-3.6 3.9.3.3.6.8.6 1.5v2.2c0 .2.1.5.6.4C13.7 14.5 16 11.5 16 8c0-4.4-3.6-8-8-8Z"/></svg></a>
+          <a href="https://github.com/Danyhug/DH-TransShot/issues" aria-label="Issues" data-hover><svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.3" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg></a>
+          <a href="https://github.com/Danyhug/DH-TransShot/releases" aria-label="Releases" data-hover><svg viewBox="0 0 16 16" fill="none"><path d="M2 8.5V3a1 1 0 0 1 1-1h5.5L14 7.5 8.5 13 2 8.5Z" stroke="currentColor" stroke-width="1.3"/><circle cx="5.5" cy="5.5" r="1" fill="currentColor"/></svg></a>
+        </div>
+      </div>
+      <div><h5>产品</h5><ul><li><a href="#interface">界面</a></li><li><a href="#features">功能</a></li><li><a href="#pricing">定价</a></li><li><a href="https://github.com/Danyhug/DH-TransShot/releases">更新日志</a></li></ul></div>
+      <div><h5>资源</h5><ul><li><a href="https://github.com/Danyhug/DH-TransShot#readme">使用文档</a></li><li><a href="https://github.com/Danyhug/DH-TransShot/tree/main/docs">架构文档</a></li><li><a href="https://github.com/Danyhug/DH-TransShot/issues">问题反馈</a></li><li><a href="#faq">FAQ</a></li></ul></div>
+      <div><h5>法律</h5><ul><li><a href="#privacy">隐私说明</a></li><li><a href="https://github.com/Danyhug/DH-TransShot/blob/main/LICENSE">MIT 许可证</a></li></ul></div>
+    </div>
+
+    <div id="privacy" class="panel-s">
+      <h5>隐私说明 · Privacy</h5>
+      TransShot 不运营任何服务器，不包含统计或遥测。截图与文本仅在你主动触发时，发送至你在设置中填写的 API 地址；API Key 保存在本机配置文件中。数据在第三方服务商处如何处理，以对应服务商的隐私政策为准。
+    </div>
+
+    <div class="legal">
+      <span>© 2026 Danyhug · Released under the MIT License</span>
+      <span>备案信息：开源项目，托管于 GitHub，暂无 ICP 备案</span>
+      <span><a href="#privacy">隐私条款</a> · <a href="https://github.com/Danyhug/DH-TransShot/blob/main/LICENSE">使用许可</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fine = matchMedia('(pointer: fine)').matches;
+  const darkMQ = matchMedia('(prefers-color-scheme: dark)');
+  const root = document.documentElement;
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  /* ---------- 主题切换 ---------- */
+  const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : darkMQ.matches;
+  const themeListeners = [];
+  const emitTheme = () => themeListeners.forEach(fn => fn());
+  $('#themeBtn').addEventListener('click', () => {
+    const next = isDark() ? 'light' : 'dark';
+    root.dataset.theme = next;
+    try { localStorage.setItem('transshot-theme', next); } catch (e) {}
+    emitTheme();
+  });
+  darkMQ.addEventListener('change', () => { if (!root.dataset.theme) emitTheme(); });
+
+  /* ---------- GitHub Star 数：本地缓存 1 小时，避免触发未登录 API 的限流 ---------- */
+  (async () => {
+    const KEY = 'transshot-stars', TTL = 3600e3, gh = $('#ghStar');
+    const render = n => {
+      $('#starCount').textContent = n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : n;
+      gh.classList.add('has-count');
+      gh.setAttribute('aria-label', '在 GitHub 上 Star DH-TransShot，当前 ' + n + ' 个 Star');
+    };
+    let cached = null;
+    try { cached = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+    if (cached && typeof cached.n === 'number') render(cached.n);
+    if (cached && Date.now() - cached.t < TTL) return;
+    try {
+      const r = await fetch('https://api.github.com/repos/Danyhug/DH-TransShot', { headers: { Accept: 'application/vnd.github+json' } });
+      if (!r.ok) return;
+      const n = (await r.json()).stargazers_count;
+      if (typeof n !== 'number') return;
+      render(n);
+      try { localStorage.setItem(KEY, JSON.stringify({ n, t: Date.now() })); } catch (e) {}
+    } catch (e) {}
+  })();
+
+  /* ---------- 开场 ---------- */
+  const skipIntro = root.classList.contains('skip-intro');
+  setTimeout(() => { $('#intro').classList.add('done'); document.body.classList.add('loaded'); }, reduce || skipIntro ? 0 : 800);
+
+  /* ---------- 噪点贴图：128px 画布生成一次，替代全屏 SVG 滤镜 ---------- */
+  (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const x = c.getContext('2d'), img = x.createImageData(128, 128);
+    for (let i = 0; i < img.data.length; i += 4) { const v = Math.random() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 22; }
+    x.putImageData(img, 0, 0);
+    $('.noise').style.backgroundImage = 'url(' + c.toDataURL() + ')';
+  })();
+
+  /* ---------- 滚动显现 ---------- */
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }), { threshold: .12, rootMargin: '0px 0px -6% 0px' });
+  $$('.reveal').forEach(el => io.observe(el));
+
+  /* ---------- 导航 ---------- */
+  const nav = $('#nav'); let lastY = 0;
+  addEventListener('scroll', () => {
+    const y = scrollY;
+    nav.classList.toggle('scrolled', y > 40);
+    nav.classList.toggle('hide', y > 500 && y > lastY + 4);
+    if (y < lastY - 4 || y < 500) nav.classList.remove('hide');
+    lastY = y;
+  }, { passive: true });
+
+  /* ---------- 界面截图轮播 ---------- */
+  const tabs = $$('.tab'), shots = $$('.shot');
+  let cur = 0, timer = null, galleryVisible = false;
+  const show = i => {
+    cur = i;
+    tabs.forEach((t, k) => t.setAttribute('aria-selected', k === i));
+    shots.forEach((s, k) => s.classList.toggle('on', k === i));
+    const t = tabs[i]; if (t.parentElement.scrollWidth > t.parentElement.clientWidth) t.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  };
+  const schedule = () => { clearTimeout(timer); if (!reduce && galleryVisible) timer = setTimeout(() => { show((cur + 1) % tabs.length); schedule(); }, 6000); };
+  tabs.forEach((t, i) => t.addEventListener('click', () => { show(i); schedule(); }));
+  new IntersectionObserver(([e]) => { galleryVisible = e.isIntersecting; schedule(); }, { threshold: .3 }).observe($('.gallery'));
+
+  /* ---------- 功能叙事 ---------- */
+  const stage = $('#stage'), tip = $('#stageTip'), sel = $('#sel');
+  const names = ['FREEZE', 'FRAME', 'READ', 'SPEAK'];
+  const steps = $$('.step');
+  // 选区尺寸标签按标题实际渲染尺寸（@2x 物理像素）显示
+  const updateSize = () => {
+    const r = sel.getBoundingClientRect(), s = Math.round(r.width * 2) + ' × ' + Math.round(r.height * 2);
+    sel.dataset.size = s; $('#ocrSize').textContent = s.replace(/ /g, '');
+  };
+  updateSize(); addEventListener('resize', updateSize);
+  const stepIO = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    const n = +e.target.dataset.step;
+    steps.forEach(s => s.classList.toggle('active', s === e.target));
+    stage.dataset.step = n;
+    tip.innerHTML = 'STEP <b>0' + (n + 1) + '</b> / 04 · ' + names[n];
+    updateSize();
+  }), { rootMargin: '-45% 0px -45% 0px' });
+  steps.forEach(s => stepIO.observe(s));
+  steps[0].classList.add('active');
+
+  /* ---------- 数字滚动 ---------- */
+  const countIO = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    const el = e.target, to = +el.dataset.to, dur = reduce ? 1 : 1600, t0 = performance.now();
+    const tick = now => {
+      const p = Math.min(1, (now - t0) / dur), v = 1 - Math.pow(1 - p, 4);
+      el.textContent = Math.round(to * v).toLocaleString('en-US');
+      if (p < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick); countIO.unobserve(el);
+  }), { threshold: .6 });
+  $$('.count').forEach(el => countIO.observe(el));
+
+  /* ---------- FAQ ---------- */
+  $$('.qa button').forEach(b => b.addEventListener('click', () => {
+    const qa = b.parentElement, open = !qa.classList.contains('open');
+    qa.classList.toggle('open', open); b.setAttribute('aria-expanded', open);
+  }));
+
+  /* ---------- Hero 语言轮播 ---------- */
+  const langs = ['EN → 中文', 'JA → 中文', 'KO → EN', 'DE → 中文', 'FR → 日本語'];
+  let li = 0; const hudLang = $('#hudLang');
+  if (!reduce) setInterval(() => { li = (li + 1) % langs.length; hudLang.textContent = langs[li]; }, 2200);
+
+  /* ---------- 光标跟随 + 磁吸按钮 ---------- */
+  const mouse = { x: innerWidth / 2, y: innerHeight / 2, nx: 0, ny: 0 };
+  addEventListener('pointermove', e => {
+    mouse.x = e.clientX; mouse.y = e.clientY;
+    mouse.nx = e.clientX / innerWidth * 2 - 1; mouse.ny = e.clientY / innerHeight * 2 - 1;
+  }, { passive: true });
+
+  if (fine && !reduce) {
+    const ring = $('.cursor'), dot = $('.cursor-dot'); let rx = mouse.x, ry = mouse.y;
+    const loop = () => {
+      rx += (mouse.x - rx) * .18; ry += (mouse.y - ry) * .18;
+      ring.style.transform = `translate3d(${rx}px,${ry}px,0)`;
+      dot.style.transform = `translate3d(${mouse.x}px,${mouse.y}px,0)`;
+      requestAnimationFrame(loop);
+    };
+    loop();
+    $$('[data-hover], a, button').forEach(el => {
+      el.addEventListener('pointerenter', () => ring.classList.add('hover'));
+      el.addEventListener('pointerleave', () => ring.classList.remove('hover'));
+    });
+    $$('.magnetic').forEach(el => {
+      const lbl = $('.lbl', el);
+      el.addEventListener('pointermove', e => {
+        const r = el.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+        el.style.transform = `translate(${dx * .25}px,${dy * .35}px)`;
+        if (lbl) lbl.style.transform = `translate(${dx * .12}px,${dy * .15}px)`;
+      });
+      el.addEventListener('pointerleave', () => { el.style.transform = ''; if (lbl) lbl.style.transform = ''; });
+    });
+  }
+
+  /* ---------- 粒子：汇聚成取景框 Logo，之后呼吸 ---------- */
+  // three.js 约 600KB，等页面 load 后空闲时再加载，不占首屏带宽和主线程
+  const loadThree = () => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+    sc.async = true; sc.crossOrigin = 'anonymous';
+    sc.onload = initParticles;
+    document.head.appendChild(sc);
+  };
+  const idle = window.requestIdleCallback || (fn => setTimeout(fn, 200));
+  if (document.readyState === 'complete') idle(loadThree, { timeout: 1500 });
+  else addEventListener('load', () => idle(loadThree, { timeout: 1500 }), { once: true });
+
+  function initParticles() {
+  if (!window.THREE) return;
+  const canvas = $('#gl');
+  let renderer;
+  try { renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true, powerPreference: 'high-performance' }); }
+  catch (e) { return; }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(50, 1, .1, 100);
+  camera.position.z = 9;
+
+  const spr = document.createElement('canvas'); spr.width = spr.height = 64;
+  const sg = spr.getContext('2d'), grd = sg.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(.35, 'rgba(255,255,255,.7)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  sg.fillStyle = grd; sg.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(spr);
+
+  // 从离屏画布采样 Logo：四角取景框 + T；右下角那一角为强调色
+  const S = 220, oc = document.createElement('canvas'); oc.width = oc.height = S;
+  const g = oc.getContext('2d');
+  g.strokeStyle = '#fff'; g.lineWidth = 9; g.lineCap = 'square';
+  const m = 16, L = 54;
+  g.beginPath();
+  g.moveTo(m, m + L); g.lineTo(m, m); g.lineTo(m + L, m);
+  g.moveTo(S - m - L, m); g.lineTo(S - m, m); g.lineTo(S - m, m + L);
+  g.moveTo(S - m, S - m - L); g.lineTo(S - m, S - m); g.lineTo(S - m - L, S - m);
+  g.moveTo(m + L, S - m); g.lineTo(m, S - m); g.lineTo(m, S - m - L);
+  g.moveTo(68, 74); g.lineTo(152, 74); g.moveTo(110, 74); g.lineTo(110, 156);
+  g.stroke();
+  const data = g.getImageData(0, 0, S, S).data, pts = [];
+  for (let y = 0; y < S; y += 3) for (let x = 0; x < S; x += 3) if (data[(y * S + x) * 4 + 3] > 128) pts.push([x, y]);
+
+  const mobile = innerWidth < 900;
+  const N = Math.min(pts.length, mobile ? 900 : 1600), AMB = mobile ? 400 : 900, TOTAL = N + AMB;
+  const pos = new Float32Array(TOTAL * 3), start = new Float32Array(TOTAL * 3), target = new Float32Array(TOTAL * 3);
+  const col = new Float32Array(TOTAL * 3), seed = new Float32Array(TOTAL);
+  const kind = new Uint8Array(TOTAL), level = new Float32Array(TOTAL); // kind: 0 墨色 / 1 强调色
+  const scale = 4.2 / S;
+  for (let i = 0; i < TOTAL; i++) {
+    const r = 6 + Math.random() * 10, th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+    start[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    start[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th);
+    start[i * 3 + 2] = r * Math.cos(ph) - 4;
+    seed[i] = Math.random() * 100;
+    if (i < N) {
+      const p = pts[Math.floor(i * pts.length / N)];
+      target[i * 3] = (p[0] - S / 2) * scale + (Math.random() - .5) * .04;
+      target[i * 3 + 1] = -(p[1] - S / 2) * scale + (Math.random() - .5) * .04;
+      target[i * 3 + 2] = (Math.random() - .5) * .25;
+      kind[i] = (p[0] > S - m - L - 6 && p[1] > S - m - L - 6) ? 1 : 0;
+      level[i] = .75 + Math.random() * .25;
+    } else {
+      target[i * 3] = (Math.random() - .5) * 26;
+      target[i * 3 + 1] = (Math.random() - .5) * 16;
+      target[i * 3 + 2] = -2 - Math.random() * 14;
+      kind[i] = Math.random() < .05 ? 1 : 0;
+      level[i] = .18 + Math.random() * .3;
+    }
+  }
+  pos.set(reduce ? target : start);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({ size: mobile ? .07 : .08, map: tex, vertexColors: true, transparent: true, depthWrite: false });
+  const points = new THREE.Points(geo, mat);
+  const group = new THREE.Group(); group.add(points); scene.add(group);
+
+  // 颜色取自 CSS 变量：亮色用正常混合的墨点，暗色用加法混合的光点
+  const applyTheme = () => {
+    const cs = getComputedStyle(root);
+    const base = new THREE.Color(cs.getPropertyValue('--p-base').trim());
+    const acc = new THREE.Color(cs.getPropertyValue('--p-accent').trim());
+    const bg = new THREE.Color(cs.getPropertyValue('--p-bg').trim());
+    const tmp = new THREE.Color();
+    for (let i = 0; i < TOTAL; i++) {
+      tmp.copy(bg).lerp(kind[i] ? acc : base, level[i]);
+      col[i * 3] = tmp.r; col[i * 3 + 1] = tmp.g; col[i * 3 + 2] = tmp.b;
+    }
+    geo.attributes.color.needsUpdate = true;
+    mat.blending = isDark() ? THREE.AdditiveBlending : THREE.NormalBlending;
+    mat.needsUpdate = true;
+  };
+  applyTheme(); themeListeners.push(applyTheme);
+
+  // 把 .hero-visual 的屏幕中心与尺寸换算到 z=0 平面，让粒子 Logo 与取景框同心
+  const hv = $('.hero-visual'), LOGO_SPAN = 4.2 * (S - 2 * m + 9) / S, LOGO_IN_FRAME = .8;
+  let baseScale = 1;
+  const place = () => {
+    const w = innerWidth, h = innerHeight, r = hv.getBoundingClientRect();
+    const visH = 2 * Math.tan(camera.fov * Math.PI / 360) * camera.position.z, k = visH / h;
+    const framePx = Math.min(r.width, r.height) * (w >= 900 ? .78 : .7);
+    hv.style.setProperty('--frame', framePx + 'px');
+    group.position.x = (r.left + r.width / 2 - w / 2) * k;
+    group.position.y = -(r.top + r.height / 2 - h / 2) * k;
+    baseScale = framePx * LOGO_IN_FRAME * k / LOGO_SPAN;
+  };
+  const resize = () => {
+    renderer.setSize(innerWidth, innerHeight, false);
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  };
+  resize(); addEventListener('resize', resize);
+
+  const t0 = performance.now(), ASSEMBLE = 1150;
+  const ease = t => 1 - Math.pow(1 - t, 3);
+  let visible = true;
+  document.addEventListener('visibilitychange', () => { visible = !document.hidden; if (visible) requestAnimationFrame(frame); });
+
+  function frame(now) {
+    if (!visible) return;
+    const t = (now - t0) / 1000;
+    const p = reduce ? 1 : Math.min(1, (now - t0) / ASSEMBLE);
+    const sp = Math.min(1, scrollY / innerHeight);
+    const breathe = reduce ? 0 : 1;
+    for (let i = 0; i < TOTAL; i++) {
+      const k = i * 3, s = seed[i];
+      const e = ease(Math.min(1, Math.max(0, p * 1.25 - (s % 1) * .25)));
+      const amp = i < N ? .02 + sp * .9 : .25;
+      const nx = Math.sin(t * .6 + s) * amp * breathe, ny = Math.cos(t * .5 + s * 1.3) * amp * breathe, nz = Math.sin(t * .4 + s * .7) * amp * breathe;
+      const dz = i < N ? sp * (s % 3) : 0;
+      pos[k] = start[k] + (target[k] - start[k]) * e + nx;
+      pos[k + 1] = start[k + 1] + (target[k + 1] - start[k + 1]) * e + ny;
+      pos[k + 2] = start[k + 2] + (target[k + 2] - start[k + 2]) * e + nz + dz;
+    }
+    geo.attributes.position.needsUpdate = true;
+    place();
+    group.scale.setScalar(baseScale * (1 + Math.sin(t * 1.4) * .012 * breathe));
+    group.rotation.y += ((mouse.nx * .2) - group.rotation.y) * .05;
+    group.rotation.x += ((mouse.ny * .12) - group.rotation.x) * .05;
+    mat.opacity = (innerWidth < 900 ? .4 : 1) * (1 - sp * .6);
+    // 离开 Hero 后 Logo 已散开，只剩背景星点，降到约 30fps
+    if (sp < 1 || (frameNo++ & 1)) renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  let frameNo = 0;
+  requestAnimationFrame(frame);
+  canvas.classList.add('ready');
+  }
+})();
+</script>
+</body>
+</html>
