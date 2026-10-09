@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#211f1b"/>
+      <stop offset="1" stop-color="#0f0e0c"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS 图标网格：824×824 圆角方块，四周留 100px -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity=".07"/>
+  <!-- 与官网导航栏的取景框 Logo 同构：viewBox 32 的路径放大 20 倍，居中 -->
+  <g transform="translate(192 192) scale(20)" fill="none" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M3 10V3h7M22 3h7v7M10 29H3v-7" stroke="#eeebe4"/>
+    <path d="M29 22v7h-7" stroke="#ff5d3d"/>
+    <path d="M10 11h12M16 11v11" stroke="#eeebe4"/>
+  </g>
+</svg>
