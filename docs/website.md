@@ -60,6 +60,7 @@ Hero 粒子是页面内联脚本直接调用 WebGL 绘制的（一个着色器�
 
 App 图标、官网 favicon 与导航栏 Logo 是同一个图形：四角取景框 + T，右下角那一角用强调色朱红。源文件是仓库根目录的 `icon.svg`（1024×1024，macOS 图标网格：824×824 圆角方块、四周留 100px）。
 
-- **App 图标**：在仓库根目录运行 `pnpm tauri icon icon.svg`，重新生成 `src-tauri/icons/` 下所有平台的图标。托盘也直接使用其中的 `32x32.png`
+- **App 图标**：在仓库根目录运行 `pnpm tauri icon icon.svg`，重新生成 `src-tauri/icons/` 下所有平台的图标
+- **托盘图标**：**不**复用 App 图标（图形只占画布 50%，进 macOS 菜单栏只剩 10pt，太小）。独立源文件是 `src-tauri/icons/tray-macos.svg`（模板图，无底板）和 `tray-windows.svg`（带深色底板），栅格化方式见 [backend/tray.md](backend/tray.md#核心逻辑)
 - **官网**：`website/favicon.svg` 是 `icon.svg` 的副本，`favicon-32.png` 复制自 `src-tauri/icons/32x32.png`；`apple-touch-icon.png` 是去掉留白和圆角的满版版本
 - 根目录的 `icon.png` 是 `icon.svg` 渲染出的 1024px PNG，供不支持 SVG 的场景使用

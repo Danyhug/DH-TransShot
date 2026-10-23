@@ -27,10 +27,18 @@
 | `sep` | ───────── | 分隔线（disabled） |
 | `quit` | Quit | `app.exit(0)` 退出应用 |
 
-**图标加载优先级：**
-1. `icons/32x32.png`（文件系统路径）
-2. `app.default_window_icon()`（Tauri 内置默认图标）
-3. `include_bytes!("../icons/32x32.png")`（编译时嵌入的图标）
+**图标：**
+
+图标用 `include_bytes!` 在编译期嵌入二进制，不再读运行时路径。以前首选 `Image::from_path("icons/32x32.png")`，但打包成 `.app` 后进程的工作目录是 `/`，相对路径读不到，只能落到 `default_window_icon()` 或 `include_bytes!` 兜底 —— 开发时和打包后拿到的可能不是同一张图。
+
+| 平台 | 文件 | 说明 |
+|------|------|------|
+| macOS | `icons/tray-macos.png` | 模板图（template image）：纯色 + alpha、无底板，配合 `icon_as_template(true)` 由系统按菜单栏明暗自动反色 |
+| Windows / Linux | `icons/tray-windows.png` | 没有模板图机制，保留 App 图标的深色圆角底板，保证亮/暗任务栏都看得清 |
+
+两个文件的源 SVG 是同目录下的 `tray-macos.svg` / `tray-windows.svg`，用 `pnpm tauri icon <svg> -o <tmp> -p 256` 栅格化成 256×256 PNG 后复制过来。
+
+**为什么不用 App 图标 `32x32.png`：** macOS 的 `tray-icon` crate 会把托盘图强制缩放到 **18pt 高**（保持宽高比）。App 图标受 macOS 图标网格约束，图形只占画布的 50%（1024 画布 / 824 圆角方块 / 520 图形），进菜单栏后图形只剩约 **10pt**，实机就是「托盘图标太小」。专用托盘图把图形铺到画布的 88%，同样 18pt 下图形约 **16pt**，与系统图标（Wi‑Fi、控制中心）一致。
 
 **行为：**
 - 左键点击托盘图标直接显示菜单（`show_menu_on_left_click(true)`）
@@ -47,4 +55,6 @@
 - 新增菜单项需使用 `MenuItem::with_id()` 创建，并在 `Menu::with_items()` 中注册
 - 菜单事件通过 `on_menu_event` 闭包处理，新增 action 需在 match 中添加分支
 - 前端需同步监听新增的 action payload
-- 托盘图标路径 `icons/32x32.png` 为相对路径，开发和打包环境下行为可能不同
+- 托盘图标一律用 `include_bytes!` 嵌入，**不要改回运行时读文件路径**（打包后工作目录是 `/`）
+- 改托盘图案要同步更新 `icons/tray-macos.svg` / `tray-windows.svg` 和对应的 PNG；托盘图**不要直接复用 App 图标**，理由见上
+- macOS 的托盘图必须是模板图（纯色 + alpha），`icon_as_template(true)` 不能去掉，否则深色菜单栏下会看不清
