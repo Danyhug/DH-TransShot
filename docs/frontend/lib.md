@@ -25,6 +25,7 @@
 | `closeWindowDeferred(label)` | `label: string` | `Promise<void>` | `close_window_deferred` |
 | `captureRegion(monitorIndex, x, y, width, height)` | 5 个 number | `Promise<string>` | `capture_region` |
 | `getFrozenScreenshot(monitorIndex)` | `monitorIndex: number` | `Promise<ScreenshotInitEvent>` | `get_frozen_screenshot` |
+| `getFrozenScreenshotImage(monitorIndex)` | `monitorIndex: number` | `Promise<ArrayBuffer>` | `get_frozen_screenshot_image` |
 | `captureAndOcr(monitorIndex, x, y, width, height, language)` | 5 个 number + string | `Promise<string>` | `capture_and_ocr` |
 | `translateText(text, sourceLang, targetLang)` | 3 个 string | `Promise<string>` | `translate_text` |
 | `getSettings()` | — | `Promise<Settings>` | `get_settings` |

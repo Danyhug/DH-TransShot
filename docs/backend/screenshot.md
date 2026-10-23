@@ -30,6 +30,7 @@
 - 非 macOS：返回空 `Vec`（后续可用 Windows `EnumWindows` 扩展）
 - 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
 - **必须在覆盖层窗口创建前调用**，否则会包含覆盖层自身
+- 与 `capture_monitors()` 互不依赖（两者都只读 WindowServer），调用方应让它们并行执行
 
 **`capture_monitors(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>>`**
 - 逐显示器捕获截图，每个显示器返回一张独立的 base64 PNG
@@ -38,6 +39,7 @@
   - 每张图像为该显示器的原生分辨率（2x Retina 显示器返回 2x 图像）
   - 避免了混合 DPI 时单张合成图像的非均匀缩放问题
   - 多显示器并行截图（`std::thread::spawn`），缩短总截图耗时
+  - 每个显示器会分别记录 `CGWindowListCreateImage` 耗时和「转 RGBA + PNG 编码」耗时，用于区分系统截图与本地编码各占多少
 - 非 macOS：通过 `xcap::Monitor::all()` 逐个捕获
 - 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
 
@@ -59,7 +61,7 @@
 - 调用方必须通过 `tokio::task::spawn_blocking` 包装
 
 **`image_to_base64(img: &RgbaImage) -> anyhow::Result<String>`**（内部函数）
-- 使用 `Cursor<Vec<u8>>` 进行内存中 PNG 编码
+- 内存中 PNG 编码：`PngEncoder::new_with_quality(Fast, Up)`（见下文「修改指南」，别用默认档）
 - 编码为 base64 标准格式
 
 **`image_to_jpeg_base64(img: &DynamicImage) -> anyhow::Result<String>`**（内部函数）
@@ -100,6 +102,7 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 - `capture_monitors()` 传入的坐标为逻辑坐标（`Tauri PhysicalPosition / scale_factor`）
 - base64 编解码使用 `base64::engine::general_purpose::STANDARD`，不带 URL safe
 - 区域裁切输出为 JPEG（`capture_region_from_full` 和 `capture_region_bytes`），整屏捕获输出为 PNG（`capture_monitors`）
+- 整屏 PNG 用 `PngEncoder` 的 `Fast + Up`，**不要改回 `write_to(.., ImageFormat::Png)` 的默认档**：默认档按行试完 5 种滤波再走 deflate，内容偏照片/视频时 2560×1664 要 610ms（Fast+Up 约 24ms），而它正好卡在覆盖层出现的关键路径上
 - 窗口列表数据通过 `AppState.frozen_window_rects`（`serde_json::Value`）传递，避免 config 模块对 screenshot 模块的类型依赖
 
 ## macOS 屏幕录制权限

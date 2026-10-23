@@ -23,14 +23,15 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 **`start_region_select(app, state, mode) -> Result<(), String>`**
 - 关闭所有已有的 `screenshot-overlay-*` 覆盖层窗口（走 `window_lifecycle` 的让帧销毁，见下）
 - 关闭 settings 和 debug-log 子窗口（避免遮挡覆盖层；同样走让帧销毁）
-- 采集窗口矩形列表（`list_window_rects()`），存入 `AppState.frozen_window_rects`
 - 收集所有显示器信息（`MonitorInfo`：名称、物理坐标、物理尺寸、scale_factor）
-- 计算每个显示器的逻辑矩形，调用 `capture_monitors()` 逐显示器截图
+- **并行**采集窗口矩形列表（`list_window_rects()`）和逐显示器冻结截图（`capture_monitors()`）：两者都只依赖 WindowServer、互不依赖，串行执行会白等一次往返
+- 窗口矩形存入 `AppState.frozen_window_rects`
 - 将逐显示器截图（`Vec<String>`）存入 `AppState.frozen_screenshots`
 - 将显示器信息列表存入 `AppState.frozen_monitors`
 - 为每个显示器创建一个覆盖层窗口（label: `screenshot-overlay-0`, `screenshot-overlay-1`, ...）：
   - 位置和尺寸对应该显示器
   - 无边框、置顶、跳过任务栏、初始隐藏（前端加载完成后显示）
+- 各阶段（销毁旧窗口、窗口列表、截图+编码、建窗、命令总耗时）都会打带 `耗时=` 的 info 日志，排查「按下快捷键到覆盖层出现」的延迟时直接看这些行
 - 主覆盖层（overlay-0）关闭时根据 mode 决定行为：
   - `screenshot` 模式：不做额外操作
   - `ocr_translate` 模式：show + focus 主窗口
@@ -40,7 +41,13 @@ Tauri 命令层，作为前后端 RPC 接口，将前端的 `invoke()` 调用路
 
 **`get_frozen_screenshot(state, monitor_index) -> Result<serde_json::Value, String>`**
 - 参数 `monitor_index` 指定要获取哪个显示器的截图
-- 返回 JSON 对象含：`image`（该显示器的 base64 PNG）、`mode`、`window_rects`、`monitors`（显示器信息列表）
+- 返回 JSON 对象含：`mode`、`window_rects`、`monitors`（显示器信息列表）
+- **不含图片**：图片由 `get_frozen_screenshot_image` 以二进制单独返回。一张 2560×1664 的 Retina 截图 base64 后约 14MB，塞进 JSON 要多付序列化 + 解析两遍
+
+**`get_frozen_screenshot_image(state, monitor_index) -> Result<tauri::ipc::Response, String>`**
+- 返回该显示器冻结截图的 PNG **原始字节**（`Response` 的 Raw body），前端 `invoke` 直接拿到 `ArrayBuffer`
+- 省掉 base64 的 33% 膨胀、JSON 转义/解析，以及前端 `atob` + 逐字节 `charCodeAt` 循环
+- base64 → 字节的解码在 `spawn_blocking` 里做
 
 **`capture_region(state, monitor_index, x, y, width, height) -> Result<String, String>`**
 - 从 `AppState.frozen_screenshots[monitor_index]` 取出该显示器的冻结截图

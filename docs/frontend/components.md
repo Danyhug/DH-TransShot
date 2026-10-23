@@ -118,6 +118,11 @@
 5. screenshot 模式：选区完成后进入标注阶段（前端裁切选区图片）
 6. ocr_translate 模式：选区完成后直接 emit `"region-selected"` 关闭覆盖层
 
+**启动顺序（性能敏感）：**
+- `show()` 只依赖冻结图解码完成，因此顺序是「拿到 base64 → 解码 → setState → `show()` + `setFocus()`」；窗口初始为 `visible(false)`，全程不会闪现
+- **取色 canvas 延迟创建**：整屏尺寸 + `willReadFrequently: true` 的 canvas 走软件光栅，5K 图整张 `drawImage` 要几十到几百 ms。它只用于取色，所以推到窗口显示之后（`setTimeout(0)`）或第一次取色时才建，不能挡在 `show()` 之前
+- mount 到可见、IPC 取数、解码、`show()` 各段耗时都会打进 `appLog`（`[Overlay]` 前缀），排查延迟时看 `挂载到可见=` 那一行
+
 **交互流程（标注阶段 — 仅 screenshot 模式）：**
 1. 从冻结截图中前端裁切选区区域，创建裁切后的 Image 元素
 2. Canvas 渲染：背景图 + 已有标注 + 当前绘制中的图形

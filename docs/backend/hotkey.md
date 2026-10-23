@@ -34,10 +34,13 @@ static HOTKEY_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 ### `dispatch_hotkey_action`
 
-后台等待 Alt/Option 释放后 emit `hotkey-action`。等待修饰键释放可以避免截图窗口切换焦点或模拟复制时把仍按下的 Alt 带入后续操作。
+在后台线程 emit `hotkey-action`。**只有「翻译选中文本」（`clipboard_translate`）会先等 Alt/Option 释放**：它要模拟 Cmd/Ctrl+C，Alt 还按着的话目标应用收到的是 Cmd+Alt+C（Chrome 会打开开发者工具、也读不到选中文本）。
 
+- 截图 / 区域翻译不等修饰键：它们只是冻结屏幕再弹窗，Alt 按着没有副作用，而等待会吃掉用户松开 Alt 的自然延迟（实测 ~110ms），直接压在「按下快捷键 → 覆盖层出现」的关键路径上
 - macOS：轮询 `CGEventSourceFlagsState`，最多约 500ms
 - Windows：轮询 `GetAsyncKeyState`（Alt/Shift/Win），最多约 500ms，见 `win_input.rs`
+
+> handler 里还会调用 `mark_hotkey_triggered()` 记录按下时刻，`start_region_select` 会据此打出「距按下快捷键=」的耗时日志，用来衡量整条链路的真实延迟。
 
 ### Windows：屏蔽 Alt 菜单激活
 
@@ -92,6 +95,6 @@ handler 收到 `Pressed` 时，如果 Alt/Win 仍按着，就立即调用 `win_i
 ## 维护约束
 
 - 不要在 handler 内执行 IO 或窗口操作；保持快速返回
-- 保持 `Pressed` 触发，修饰键释放由 `dispatch_hotkey_action` 处理
+- 保持 `Pressed` 触发；需要等修饰键的动作在 `needs_modifier_release_wait()` 里显式列出，默认不等
 - 不要在每次触发或截图覆盖层关闭后刷新注册
 - 新增动作时同步修改 `HotkeyConfig`、`apply_hotkeys`、前端类型和设置界面
