@@ -83,7 +83,6 @@ export interface MonitorInfo {
 }
 
 export interface ScreenshotInitEvent {
-  image: string;
   mode: string;
   window_rects: WindowRect[];
   monitors: MonitorInfo[];

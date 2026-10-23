@@ -41,6 +41,7 @@ pub fn run() {
             commands::screenshot::start_region_select,
             commands::screenshot::capture_region,
             commands::screenshot::get_frozen_screenshot,
+            commands::screenshot::get_frozen_screenshot_image,
             commands::ocr::capture_and_ocr,
             commands::translation::translate_text,
             commands::translation::get_default_translation_prompt,

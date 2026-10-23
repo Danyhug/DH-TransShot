@@ -1,7 +1,12 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { closeWindowDeferred, getFrozenScreenshot, saveFile } from "../../lib/invoke";
+import {
+  closeWindowDeferred,
+  getFrozenScreenshot,
+  getFrozenScreenshotImage,
+  saveFile,
+} from "../../lib/invoke";
 import { save } from "@tauri-apps/plugin-dialog";
 import { appLog } from "../../stores/logStore";
 import type { WindowRect, MonitorInfo } from "../../types";
@@ -179,6 +184,7 @@ export function ScreenshotOverlay() {
   const blobUrlRef = useRef<string | null>(null);
   const screenshotCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const screenshotCanvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const screenshotImageElRef = useRef<HTMLImageElement | null>(null);
   const hoverColorRef = useRef<typeof hoverColor>(null);
   const screenshotImageSizeRef = useRef<{ width: number; height: number } | null>(null);
 
@@ -256,8 +262,42 @@ export function ScreenshotOverlay() {
     if (!s || s.type !== "text") setSelectedTextIndex(null);
   }, [shapes, selectedTextIndex]);
 
+  /**
+   * 取色用的整屏 canvas。
+   *
+   * `willReadFrequently: true` 会让 canvas 走软件光栅，把 5120x3328 的冻结图整张
+   * drawImage 进去要几十到几百 ms。它只服务于取色，所以不放在覆盖层出现之前，
+   * 改成第一次取色时（或窗口已经显示后）才建。
+   */
+  const ensureColorSampleCanvas = useCallback((): CanvasRenderingContext2D | null => {
+    if (screenshotCanvasCtxRef.current) return screenshotCanvasCtxRef.current;
+
+    const image = screenshotImageElRef.current;
+    if (!image) return null;
+
+    const startedAt = performance.now();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      appLog.warn("[Overlay] 取色 canvas context 创建失败");
+      return null;
+    }
+
+    context.drawImage(image, 0, 0);
+    screenshotCanvasRef.current = canvas;
+    screenshotCanvasCtxRef.current = context;
+    appLog.info(
+      "[Overlay] 取色 canvas 就绪, " + image.naturalWidth + "x" + image.naturalHeight +
+      ", 耗时=" + Math.round(performance.now() - startedAt) + "ms"
+    );
+    return context;
+  }, []);
+
   // --- Load frozen screenshot on mount ---
   useEffect(() => {
+    const mountedAt = performance.now();
     appLog.info("[Overlay] 截图覆盖层已挂载，获取冻结截图...");
 
     let cancelled = false;
@@ -271,8 +311,13 @@ export function ScreenshotOverlay() {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (cancelled) return;
         try {
-          const data = await getFrozenScreenshot(myMonitorIndex);
+          // 元数据和图片并行取：图片是二进制 ArrayBuffer，不走 base64/JSON
+          const [data, imageBytes] = await Promise.all([
+            getFrozenScreenshot(myMonitorIndex),
+            getFrozenScreenshotImage(myMonitorIndex),
+          ]);
           if (cancelled) return;
+          const fetchedAt = performance.now();
 
           const monitors: MonitorInfo[] = data.monitors ?? [];
           const myMonitor = monitors[myMonitorIndex] ?? null;
@@ -281,17 +326,13 @@ export function ScreenshotOverlay() {
             "[Overlay] 冻结截图获取成功, attempt=" + attempt +
             ", monitor_index=" + myMonitorIndex +
             ", mode=" + data.mode +
-            ", image size=" + data.image.length +
+            ", image bytes=" + imageBytes.byteLength +
             ", window_rects=" + (data.window_rects?.length ?? 0) +
-            ", monitor=" + (myMonitor?.name ?? "unknown")
+            ", monitor=" + (myMonitor?.name ?? "unknown") +
+            ", 挂载到拿到数据=" + Math.round(fetchedAt - mountedAt) + "ms"
           );
 
-          const binaryStr = atob(data.image);
-          const bytes = new Uint8Array(binaryStr.length);
-          for (let i = 0; i < binaryStr.length; i++) {
-            bytes[i] = binaryStr.charCodeAt(i);
-          }
-          const blob = new Blob([bytes], { type: "image/png" });
+          const blob = new Blob([imageBytes], { type: "image/png" });
           const url = URL.createObjectURL(blob);
 
           const imgEl = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -300,19 +341,15 @@ export function ScreenshotOverlay() {
             img.onerror = () => reject(new Error("Image decode failed"));
             img.src = url;
           });
+          const decodedAt = performance.now();
 
-          const sampleCanvas = document.createElement("canvas");
-          sampleCanvas.width = imgEl.naturalWidth;
-          sampleCanvas.height = imgEl.naturalHeight;
-          const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
-          if (sampleCtx) {
-            sampleCtx.drawImage(imgEl, 0, 0);
-            screenshotCanvasRef.current = sampleCanvas;
-            screenshotCanvasCtxRef.current = sampleCtx;
-            screenshotImageSizeRef.current = { width: imgEl.naturalWidth, height: imgEl.naturalHeight };
-          } else {
-            appLog.warn("[Overlay] 取色 canvas context 创建失败");
-          }
+          // 取色 canvas 是整屏像素 + willReadFrequently（软件光栅），建一次要几十到几百 ms。
+          // 这里只记住解码好的图片，真正的 canvas 推到窗口显示之后（或第一次取色时）再建。
+          screenshotImageElRef.current = imgEl;
+          screenshotImageSizeRef.current = {
+            width: imgEl.naturalWidth,
+            height: imgEl.naturalHeight,
+          };
 
           if (cancelled) {
             URL.revokeObjectURL(url);
@@ -335,7 +372,18 @@ export function ScreenshotOverlay() {
           const currentWin = getCurrentWindow();
           await currentWin.show();
           await currentWin.setFocus();
-          appLog.info("[Overlay] 覆盖层窗口已显示, label=" + label);
+          const shownAt = performance.now();
+          appLog.info(
+            "[Overlay] 覆盖层窗口已显示, label=" + label +
+            ", 解码=" + Math.round(decodedAt - fetchedAt) + "ms" +
+            ", show=" + Math.round(shownAt - decodedAt) + "ms" +
+            ", 挂载到可见=" + Math.round(shownAt - mountedAt) + "ms"
+          );
+
+          // 让首帧先出去，再补建取色 canvas，避免它挡住覆盖层出现
+          setTimeout(() => {
+            if (!cancelled) ensureColorSampleCanvas();
+          }, 0);
           return;
         } catch (e) {
           appLog.warn(
@@ -378,6 +426,7 @@ export function ScreenshotOverlay() {
       }
       screenshotCanvasRef.current = null;
       screenshotCanvasCtxRef.current = null;
+      screenshotImageElRef.current = null;
       screenshotImageSizeRef.current = null;
     };
   }, []);
@@ -440,8 +489,8 @@ export function ScreenshotOverlay() {
   }, [getMonitorScale]);
 
   const getColorAtPoint = useCallback((localX: number, localY: number): string | null => {
+    const ctx = ensureColorSampleCanvas();
     const canvas = screenshotCanvasRef.current;
-    const ctx = screenshotCanvasCtxRef.current;
     if (!canvas || !ctx) return null;
 
     const { scaleX, scaleY } = getImageScale();
@@ -450,7 +499,7 @@ export function ScreenshotOverlay() {
 
     const [r, g, b] = ctx.getImageData(imageX, imageY, 1, 1).data;
     return "#" + [r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("").toUpperCase();
-  }, [getImageScale]);
+  }, [ensureColorSampleCanvas, getImageScale]);
 
   const updateHoverColor = useCallback((sampleX: number, sampleY: number, displayX = sampleX, displayY = sampleY) => {
     const hex = getColorAtPoint(sampleX, sampleY);

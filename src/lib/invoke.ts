@@ -30,6 +30,16 @@ export async function getFrozenScreenshot(monitorIndex: number): Promise<Screens
   return invoke("get_frozen_screenshot", { monitorIndex });
 }
 
+/**
+ * 冻结截图的 PNG 原始字节。
+ *
+ * 图片走 `tauri::ipc::Response` 的二进制返回，前端直接拿到 `ArrayBuffer`，不经过
+ * base64：省掉 33% 的膨胀、JSON 序列化/解析和 `atob` + 逐字节转换的循环。
+ */
+export async function getFrozenScreenshotImage(monitorIndex: number): Promise<ArrayBuffer> {
+  return invoke<ArrayBuffer>("get_frozen_screenshot_image", { monitorIndex });
+}
+
 export async function captureAndOcr(
   monitorIndex: number,
   x: number,

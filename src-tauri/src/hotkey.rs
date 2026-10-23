@@ -20,9 +20,16 @@ fn hotkey_operation_lock() -> &'static Mutex<()> {
     HOTKEY_OPERATION_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-/// Wait for Alt/Option to be released before changing focus or posting input.
-/// This avoids carrying the modifier into the screenshot overlay or selected
-/// text fallback. Registration itself remains unchanged after the action.
+/// 只有「翻译选中文本」需要等修饰键松开再派发。
+///
+/// 它要模拟 Cmd/Ctrl+C：Alt 还按着的话，目标应用收到的是 Cmd+Alt+C（Chrome 会打开
+/// 开发者工具、也读不到选中文本）。截图 / 区域翻译只是冻结屏幕再弹窗，Alt 按着没有
+/// 任何副作用；而这段等待实打实吃掉用户松开 Alt 的自然延迟（本机实测 110ms 左右），
+/// 正好压在「按下快捷键 → 覆盖层出现」的关键路径上。
+fn needs_modifier_release_wait(action: &str) -> bool {
+    action == "clipboard_translate"
+}
+
 fn dispatch_hotkey_action(app: AppHandle, action: String) {
     if HOTKEYS_SUSPENDED.load(Ordering::Acquire) {
         info!("[Hotkey] 触发跳过：hotkeys 已挂起（设置面板录入中）");
@@ -30,12 +37,22 @@ fn dispatch_hotkey_action(app: AppHandle, action: String) {
     }
 
     std::thread::spawn(move || {
-        wait_for_modifier_release();
+        if needs_modifier_release_wait(&action) {
+            let wait_started_at = std::time::Instant::now();
+            wait_for_modifier_release();
+            // 最坏 500ms（见 `wait_for_modifier_release`），长了就是「按下没反应」的来源
+            let waited_ms = wait_started_at.elapsed().as_millis();
+            if waited_ms > 60 {
+                warn!("[Hotkey] 等修饰键释放耗时={}ms", waited_ms);
+            }
+        }
         let _ = app.emit("hotkey-action", action);
     });
 }
 
 /// Block (up to ~500ms) until the Alt/Option modifier is released.
+///
+/// 轮询间隔 10ms：25ms 的话最坏多等 25ms，而这条路径（模拟复制）本来就在等用户松手。
 #[cfg(target_os = "macos")]
 fn wait_for_modifier_release() {
     // kCGEventFlagMaskAlternate
@@ -44,12 +61,12 @@ fn wait_for_modifier_release() {
         fn CGEventSourceFlagsState(state_id: u32) -> u64;
     }
 
-    for _ in 0..20 {
+    for _ in 0..50 {
         let flags = unsafe { CGEventSourceFlagsState(1) };
         if flags & FLAG_ALT == 0 {
             return;
         }
-        std::thread::sleep(std::time::Duration::from_millis(25));
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -111,6 +128,8 @@ fn apply_hotkeys(app: &AppHandle, cfg: &HotkeyConfig) {
             // Must run while Alt is still held, before the user releases it.
             #[cfg(target_os = "windows")]
             crate::win_input::mask_modifier_menu();
+            // 计时锚点：之后「等 Alt 松开 + 主窗口处理事件 + invoke」都算在这段里
+            crate::commands::screenshot::mark_hotkey_triggered();
             info!("[Hotkey] 触发: {:?} -> {}", shortcut, action);
             dispatch_hotkey_action(app.clone(), action.clone());
         }) {

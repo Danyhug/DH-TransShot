@@ -5,7 +5,50 @@ use crate::window_lifecycle::{
     close_many_deferred, close_overlays_deferred, TEARDOWN_SETTLE_DELAY,
 };
 use log::{error, info};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+
+/// 「按下快捷键 → 覆盖层出现」这条链路的计时锚点。
+///
+/// 日志时间戳只有秒级精度，跨进程（热键线程 / 主窗口 JS / 覆盖层 JS）根本对不齐，
+/// 所以每一段都用本进程的 `Instant` 计时。锚点之间空出来的部分就是没打点的开销：
+/// 热键派发 + 等 Alt 松开 + 主窗口事件 → invoke、以及建窗 → 覆盖层页面加载完成。
+static HOTKEY_TRIGGERED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static OVERLAY_CREATED_AT: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+
+fn hotkey_triggered_slot() -> &'static Mutex<Option<Instant>> {
+    HOTKEY_TRIGGERED_AT.get_or_init(|| Mutex::new(None))
+}
+
+fn overlay_created_slot() -> &'static Mutex<Option<Instant>> {
+    OVERLAY_CREATED_AT.get_or_init(|| Mutex::new(None))
+}
+
+/// 热键回调里调用，记录「用户按下快捷键」的时刻。
+pub fn mark_hotkey_triggered() {
+    if let Ok(mut slot) = hotkey_triggered_slot().lock() {
+        *slot = Some(Instant::now());
+    }
+}
+
+/// 距按下快捷键过去了多少 ms；没有锚点（比如从托盘菜单或标题栏按钮触发）时为 None。
+fn since_hotkey_ms() -> Option<u128> {
+    let triggered_at = hotkey_triggered_slot().lock().ok()?.as_ref().copied()?;
+    Some(triggered_at.elapsed().as_millis())
+}
+
+fn mark_overlay_created() {
+    if let Ok(mut slot) = overlay_created_slot().lock() {
+        *slot = Some(Instant::now());
+    }
+}
+
+/// 距覆盖层窗口创建过去了多少 ms。这段时间是 webview 创建 + 页面加载 + React 挂载。
+fn since_overlay_created_ms() -> Option<u128> {
+    let created_at = overlay_created_slot().lock().ok()?.as_ref().copied()?;
+    Some(created_at.elapsed().as_millis())
+}
 
 /// Close all existing screenshot overlay windows (labels matching "screenshot-overlay-*").
 ///
@@ -35,7 +78,12 @@ pub async fn start_region_select(
     state: State<'_, AppState>,
     mode: String,
 ) -> Result<(), String> {
-    info!("[Screenshot] start_region_select, mode={}", mode);
+    let request_started_at = std::time::Instant::now();
+    info!(
+        "[Screenshot] start_region_select, mode={}, 距按下快捷键={}ms",
+        mode,
+        since_hotkey_ms().map_or("n/a(非热键触发)".to_string(), |ms| ms.to_string())
+    );
 
     // Guard: close any existing overlay windows
     let has_existing = app
@@ -45,7 +93,12 @@ pub async fn start_region_select(
     if has_existing {
         info!("[Screenshot] 覆盖层窗口已存在，先关闭旧窗口");
         // 自带让帧等待，销毁完成后才继续建新窗口
+        let close_started_at = std::time::Instant::now();
         close_overlays_deferred(&app, None).await;
+        info!(
+            "[Screenshot] 旧覆盖层已销毁, 耗时={}ms",
+            close_started_at.elapsed().as_millis()
+        );
     }
 
     // 0. Close settings and debug-log windows (they would obscure the overlay)
@@ -58,33 +111,15 @@ pub async fn start_region_select(
             "[Screenshot] 关闭 settings / debug-log 窗口, count={}",
             stale_windows.len()
         );
+        let close_started_at = std::time::Instant::now();
         close_many_deferred(stale_windows).await;
+        info!(
+            "[Screenshot] settings / debug-log 已销毁, 耗时={}ms",
+            close_started_at.elapsed().as_millis()
+        );
     }
 
-    // 1. Brief delay before capture
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // 2. Collect window rects BEFORE creating the overlay window
-    info!("[Screenshot] 采集窗口列表...");
-    let window_rects = tokio::task::spawn_blocking(crate::screenshot::list_window_rects)
-        .await
-        .map_err(|e| e.to_string())?;
-    info!(
-        "[Screenshot] 窗口列表采集完成, count={}",
-        window_rects.len()
-    );
-
-    {
-        let rects_json =
-            serde_json::to_value(&window_rects).unwrap_or(serde_json::Value::Array(vec![]));
-        let mut guard = state
-            .frozen_window_rects
-            .lock()
-            .map_err(|e| e.to_string())?;
-        *guard = rects_json;
-    }
-
-    // 3. Collect all monitors info
+    // 1. Collect all monitors info
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("No monitors found".to_string());
@@ -122,12 +157,39 @@ pub async fn start_region_select(
         );
     }
 
-    // 4. Capture each monitor individually (native resolution per monitor)
+    // 2. Collect window rects and freeze the screens in parallel: both need a
+    // WindowServer round trip and neither depends on the other. Neither may run
+    // after the overlay windows exist.
+    let window_rects_started_at = std::time::Instant::now();
+    let window_rects_task = tokio::task::spawn_blocking(crate::screenshot::list_window_rects);
+
     info!("[Screenshot] 开始逐显示器截图...");
+    let capture_started_at = std::time::Instant::now();
     let capture_result =
-        tokio::task::spawn_blocking(move || crate::screenshot::capture_monitors(&logical_rects))
-            .await
+        tokio::task::spawn_blocking(move || crate::screenshot::capture_monitors(&logical_rects));
+
+    let window_rects = window_rects_task.await.map_err(|e| e.to_string())?;
+    info!(
+        "[Screenshot] 窗口列表采集完成, count={}, 耗时={}ms",
+        window_rects.len(),
+        window_rects_started_at.elapsed().as_millis()
+    );
+
+    {
+        let rects_json =
+            serde_json::to_value(&window_rects).unwrap_or(serde_json::Value::Array(vec![]));
+        let mut guard = state
+            .frozen_window_rects
+            .lock()
             .map_err(|e| e.to_string())?;
+        *guard = rects_json;
+    }
+
+    let capture_result = capture_result.await.map_err(|e| e.to_string())?;
+    info!(
+        "[Screenshot] 逐显示器截图 + PNG 编码完成, 耗时={}ms",
+        capture_started_at.elapsed().as_millis()
+    );
 
     let screenshots = match capture_result {
         Ok(data) => {
@@ -159,7 +221,8 @@ pub async fn start_region_select(
         *guard = monitor_infos.clone();
     }
 
-    // 5. Create overlay windows for each monitor
+    // 3. Create overlay windows for each monitor
+    let window_creation_started_at = std::time::Instant::now();
     for (i, mon) in monitors.iter().enumerate() {
         let label = format!("screenshot-overlay-{}", i);
         let pos = mon.position();
@@ -201,30 +264,31 @@ pub async fn start_region_select(
     }
 
     info!(
-        "[Screenshot] 所有覆盖层窗口已创建, count={}",
-        monitors.len()
+        "[Screenshot] 所有覆盖层窗口已创建, count={}, 建窗耗时={}ms, 命令总耗时={}ms",
+        monitors.len(),
+        window_creation_started_at.elapsed().as_millis(),
+        request_started_at.elapsed().as_millis()
     );
+    mark_overlay_created();
 
     Ok(())
 }
 
-/// Get the frozen screenshot data for a specific monitor's overlay window.
+/// Get the frozen screenshot metadata for a specific monitor's overlay window.
+///
+/// 图片本身不走这里：它由 `get_frozen_screenshot_image` 以二进制返回。以前把
+/// base64 塞进这个 JSON，一张 2560x1664 的 Retina 截图就是 14MB 字符串，serde 要
+/// 序列化一遍、IPC 要传一遍、前端再 `JSON.parse` 一遍，全是纯浪费。
 #[tauri::command]
 pub async fn get_frozen_screenshot(
     state: State<'_, AppState>,
     monitor_index: usize,
 ) -> Result<serde_json::Value, String> {
     info!(
-        "[Screenshot] get_frozen_screenshot 请求, monitor_index={}",
-        monitor_index
+        "[Screenshot] get_frozen_screenshot 请求, monitor_index={}, 距建窗={}ms",
+        monitor_index,
+        since_overlay_created_ms().map_or("n/a".to_string(), |ms| ms.to_string())
     );
-    let image = {
-        let guard = state.frozen_screenshots.lock().map_err(|e| e.to_string())?;
-        guard
-            .get(monitor_index)
-            .cloned()
-            .ok_or_else(|| format!("No frozen screenshot for monitor {}", monitor_index))?
-    };
     let mode = {
         let guard = state.frozen_mode.lock().map_err(|e| e.to_string())?;
         guard.clone()
@@ -241,14 +305,54 @@ pub async fn get_frozen_screenshot(
         guard.clone()
     };
 
-    info!("[Screenshot] get_frozen_screenshot 返回, monitor_index={}, mode={}, image size={}, monitors={}", monitor_index, mode, image.len(), monitors.len());
+    info!(
+        "[Screenshot] get_frozen_screenshot 返回, monitor_index={}, mode={}, monitors={}",
+        monitor_index,
+        mode,
+        monitors.len()
+    );
 
     Ok(serde_json::json!({
-        "image": image,
         "mode": mode,
         "window_rects": window_rects,
         "monitors": monitors,
     }))
+}
+
+/// Get the frozen screenshot PNG for a monitor as raw bytes.
+///
+/// 返回 `tauri::ipc::Response` 的 Raw body，前端直接拿到 `ArrayBuffer`：省掉 base64
+/// 的 33% 膨胀、JSON 转义/解析，以及前端 `atob` + 逐字节 `charCodeAt` 循环。
+#[tauri::command]
+pub async fn get_frozen_screenshot_image(
+    state: State<'_, AppState>,
+    monitor_index: usize,
+) -> Result<tauri::ipc::Response, String> {
+    let base64 = {
+        let guard = state.frozen_screenshots.lock().map_err(|e| e.to_string())?;
+        guard
+            .get(monitor_index)
+            .cloned()
+            .ok_or_else(|| format!("No frozen screenshot for monitor {}", monitor_index))?
+    };
+
+    let started_at = std::time::Instant::now();
+    let bytes = tokio::task::spawn_blocking(move || {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(base64)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    info!(
+        "[Screenshot] get_frozen_screenshot_image, monitor_index={}, bytes={}, 解码耗时={}ms",
+        monitor_index,
+        bytes.len(),
+        started_at.elapsed().as_millis()
+    );
+
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Capture a region from a specific monitor's frozen screenshot.

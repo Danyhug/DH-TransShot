@@ -206,13 +206,25 @@ fn capture_monitors_macos(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<V
                     size: CGSize { width: lw, height: lh },
                 };
                 unsafe {
+                    let capture_started_at = std::time::Instant::now();
                     let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
                     if cg_image.is_null() {
                         anyhow::bail!("CGWindowListCreateImage returned null for monitor {} - check screen recording permission", i);
                     }
+                    info!(
+                        "[Capture] 显示器[{}] CGWindowListCreateImage 耗时={}ms",
+                        i,
+                        capture_started_at.elapsed().as_millis()
+                    );
+                    let encode_started_at = std::time::Instant::now();
                     let base64 = cgimage_to_base64(cg_image)?;
                     CFRelease(cg_image);
-                    info!("[Capture] 显示器[{}] 截图完成, base64 size={}", i, base64.len());
+                    info!(
+                        "[Capture] 显示器[{}] 转 RGBA + PNG 编码耗时={}ms, base64 size={}",
+                        i,
+                        encode_started_at.elapsed().as_millis(),
+                        base64.len()
+                    );
                     Ok(base64)
                 }
             })
@@ -375,10 +387,24 @@ pub fn capture_region_from_full(
     image_to_jpeg_base64(&cropped)
 }
 
+/// 冻结整屏截图 → base64 PNG。
+///
+/// 用 `Fast + Up` 而不是 `write_to(.., Png)` 的默认档（Balanced + Adaptive）：默认档
+/// 会为每一行试完 5 种滤波再走 deflate，屏幕内容偏「照片/视频/渐变」时慢得多
+/// （2560x1664 实测 610ms vs 24ms），而这条路径正好卡在「按下快捷键 → 覆盖层出现」
+/// 的关键路径上。覆盖层只是要一帧可辨认、像素值精确的画面，不在乎文件小 1%。
 fn image_to_base64(img: &image::RgbaImage) -> anyhow::Result<String> {
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, ImageFormat::Png)?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(buf.into_inner()))
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+
+    let mut buf = Vec::new();
+    PngEncoder::new_with_quality(&mut buf, CompressionType::Fast, FilterType::Up).write_image(
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(buf))
 }
 
 fn image_to_jpeg_base64(img: &image::DynamicImage) -> anyhow::Result<String> {
