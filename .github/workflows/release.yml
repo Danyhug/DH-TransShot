@@ -51,7 +51,9 @@ jobs:
           node-version: 24
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        # 钉到具体版本而不是 @v6：维护者发布 v6.1.0 时忘了移动 v6 浮动标签，
+        # v6 至今还停在 v6.1.0 之前的那个提交上（缺 pnpm v12 支持等改动）
+        uses: pnpm/action-setup@v6.1.0
         with:
           # 与本地开发一致：pnpm 10 才会读取 package.json 的 pnpm.onlyBuiltDependencies
           # （pnpm 9 会无视它，把所有依赖的 postinstall 都跑一遍）
