@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    macOS 菜单栏托盘图标（模板图 / template image）。
+
+    只有 alpha 通道有意义：系统会按菜单栏明暗把这里涂成黑或白，所以图形必须是纯色，
+    不能带强调色。也因为没有底板，同样的 18pt 高度里能放下的图形比 App 图标大得多
+    （App 图标受 macOS 图标网格约束，图形只占画布的 50%，进菜单栏后只剩 9pt）。
+  -->
+  <g transform="translate(8 8) scale(31.5)" fill="none" stroke="#000" stroke-width="2.6" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M3 10V3h7M22 3h7v7M10 29H3v-7" />
+    <path d="M29 22v7h-7" />
+    <path d="M10 11h12M16 11v11" />
+  </g>
+</svg>
