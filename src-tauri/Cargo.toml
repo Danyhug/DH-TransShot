@@ -32,7 +32,7 @@ tauri-plugin-dialog = "2.7.3"
 # 用 wav / mp3 / flac / vorbis 这几个「伞形」特性而不是底层的 symphonia-*：
 # 例如 wav = symphonia-wav（RIFF 容器）+ symphonia-pcm（PCM 编解码），
 # 只开容器不开编解码的话解码会直接 UnrecognizedFormat（缓存里的 WAV 重播不出来）
-rodio = { version = "0.22.2", default-features = false, features = ["playback", "wav", "mp3", "flac", "vorbis"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "mp3", "flac", "vorbis"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xcap = "0.9"
