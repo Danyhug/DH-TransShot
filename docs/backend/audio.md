@@ -82,6 +82,30 @@
 连上蓝牙耳机 / 拔掉外接音箱时不会自动跟随，复用就会播到已经不用的设备上去。开设备的开销被合成请求的
 1s+ 网络往返吸收，听感上不增加起播延迟。
 
+### 打开设备：为什么不用 `open_default_sink()`
+
+`open_default_device()` 走的是 `from_default_device()?.open_sink_or_fallback()`，不直接用
+`DeviceSinkBuilder::open_default_sink()`，原因是后者的两条路径在 macOS 上都靠不住（#7）：
+
+1. rodio 0.23 的 `from_device()` 会把 `BufferSize::Default` 改写成「50ms 对应的固定帧数」
+   （`nearest_multiple_of_two(44100 / 20)` = 2048）。CoreAudio 会拿这个值和设备的
+   `kAudioDevicePropertyBufferFrameSizeRange` 比对，超出范围就拒绝——蓝牙耳机常见范围是
+   `14..=1024`，于是 `open_stream()` 直接失败，报 `Error opening the stream with the OS`
+2. `open_default_sink()` 自带的兜底在枚举设备时要求 `desc.driver()` 存在且不等于 `"null"`，
+   而 macOS 的 `Device::description()` 从不填 driver（`DeviceDescriptionBuilder` 默认 `None`），
+   过滤后一个设备都不剩，兜底分支根本不会执行
+
+`open_sink_or_fallback()` 的第二段会把 `buffer_size` 交还给操作系统（`BufferSize::Default`），
+换同一设备的其它受支持配置重来，所以蓝牙耳机能正常打开。再退一步的 `open_default_sink()`
+只当「默认设备彻底打不开时试试别的设备」用，它的 driver 过滤在 Windows / Linux 上是有效的。
+
+兜底选定的是设备的**受支持配置**，采样率 / 声道可能和设备默认值不同（如 48000Hz / 2ch）；
+`Mixer::add()` 会用 `UniformSourceIterator` 把 24kHz 单声道的分块重采样过去，播放本身不受影响。
+
+失败时保留**默认设备**那一次的错误，并带 `打开音频输出设备失败` 的 context：命令层用 `{:#}`
+打印，能看到完整链路（`... : Buffer size 2048 is not in the supported range 14..=1024`），
+而不是只有一句 `Error opening the stream with the OS`。
+
 ### 锁中毒
 
 `lock()` 助手在 `PoisonError` 时照常取出数据。音频状态全是「当前播的是哪一段」这种可重建的信息，
@@ -114,6 +138,8 @@
 ## 修改指南
 
 - 改采样率/声道要同步 `tts::stream_sample_rate()` / `stream_channels()`（`begin()` 的入参来自那里）
+- 打开设备**不要退回** `DeviceSinkBuilder::open_default_sink()`：蓝牙设备的缓冲区上限小于它强制的
+  50ms 固定帧数，会直接报 `Error opening the stream with the OS`，见「打开设备」一节
 - 新增音频格式时改 `Cargo.toml` 的 rodio 特性，**用伞形特性**（`wav`/`mp3`/…），别只开 `symphonia-*` 容器
 - 抢占语义（generation）改动时同步命令层的「等播完」循环：那里靠 `is_current()` 退出
 - 真机用例默认 `#[ignore]`（CI 无音频设备），本地验证跑
