@@ -24,7 +24,7 @@ use std::time::Duration;
 use anyhow::Context;
 use log::info;
 use rodio::buffer::SamplesBuffer;
-use rodio::{Decoder, DeviceSinkBuilder, Player, Sample};
+use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Sample};
 
 /// 锁中毒后照常拿数据：音频状态全是「当前播的是哪一段」这种可重建的信息，
 /// 为它把整个朗读功能 panic 掉不值当。
@@ -56,6 +56,32 @@ impl Drop for DeviceHandle {
     }
 }
 
+/// 打开系统默认输出设备。
+///
+/// 不能直接用 [`DeviceSinkBuilder::open_default_sink()`]：rodio 0.23 的 `from_device()` 会把
+/// `BufferSize::Default` 改写成 50ms 对应的固定帧数（44100Hz → 2048），而蓝牙耳机的帧数上限
+/// 常见只有 1024（CoreAudio 的 `kAudioDevicePropertyBufferFrameSizeRange` 不认这个值，cpal 直接
+/// 返回 `UnsupportedConfig`）。`open_default_sink()` 自带的兜底又要求 `desc.driver()` 存在且不是
+/// `"null"`，可 macOS 的 `description()` 根本不填 driver，兜底永远不会执行，最终只剩一句
+/// `Error opening the stream with the OS`。
+///
+/// 所以这里自己走两段：先让 rodio 用设备默认配置试（失败后它会把 `buffer_size` 交还给操作系统，
+/// 换成同一设备的其它受支持配置重来），仍不行再退到枚举其它输出设备——`open_default_sink()` 的
+/// driver 过滤在 Windows / Linux 上是有效的，留着当最后一道保险。
+fn open_default_device() -> anyhow::Result<MixerDeviceSink> {
+    let default_device_result = DeviceSinkBuilder::from_default_device()
+        .and_then(|builder| builder.open_sink_or_fallback());
+
+    match default_device_result {
+        Ok(device) => Ok(device),
+        // 记录默认设备这一次的失败原因：它才是用户实际想用的那只设备，枚举出来的设备
+        // 打开失败与否对排查没有帮助
+        Err(default_device_error) => DeviceSinkBuilder::open_default_sink()
+            .map_err(|_| default_device_error)
+            .context("打开音频输出设备失败"),
+    }
+}
+
 /// 打开默认输出设备，返回「可跨线程使用的播放队列」和「设备句柄」。
 ///
 /// 每次朗读都重新打开而不是全程复用一个设备：cpal 的输出流绑定的是**打开时**的那个设备，
@@ -69,10 +95,10 @@ fn open_device() -> anyhow::Result<(Arc<Player>, DeviceHandle)> {
     std::thread::Builder::new()
         .name("dh-tts-audio".into())
         .spawn(move || {
-            let mut device = match DeviceSinkBuilder::open_default_sink() {
+            let mut device = match open_default_device() {
                 Ok(device) => device,
-                Err(e) => {
-                    let _ = ready_tx.send(Err(anyhow::anyhow!("打开音频输出设备失败: {e}")));
+                Err(error) => {
+                    let _ = ready_tx.send(Err(error));
                     return;
                 }
             };
