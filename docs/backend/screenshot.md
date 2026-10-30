@@ -40,6 +40,9 @@ Apple 从 macOS 15 起把 `CGWindowListCreateImage` 标成 obsoleted（SDK：
 - `SCDisplay` 和 Tauri 的显示器顺序不保证一致，用 `CGGetActiveDisplayList` + `CGDisplayBounds`
   反查 `CGDirectDisplayID`，再按 `displayID` 找对应的 `SCDisplay`
 - 抓的是**整块显示器**，尺寸就是原生像素尺寸，和原来 CG 的结果一致，下游裁切逻辑不用改
+- ⚠️ 单位换算：`SCDisplay.width/height` 是 **points**，而 `SCStreamConfiguration.width/height`
+  是 **pixels**。必须乘 `SCContentFilter.pointPixelScale`（macOS 14+）才是原生像素尺寸，
+  直接照抄会让 scale=2 的屏按 1x 输出（3024×1964 → 1512×982，丢 3/4 像素，截图发糊，见 #8）
 - `SCStreamConfiguration.showsCursor = false`，与 `CGWindowListCreateImage` 的行为对齐
 - CGImage 在回调返回后会被释放，所以回调里先 `CFRetain` 再带出去，由调用方 `CFRelease`
 - 回调里的 Objective-C 对象（`SCShareableContent` / `SCDisplay` / `SCContentFilter`）**不要跨线程传递**，
