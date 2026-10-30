@@ -2,7 +2,8 @@
 
 ## 概述
 
-封装屏幕截图功能，提供逐显示器捕获、区域裁切和窗口矩形列表采集，输出 base64 编码的 PNG 图片。macOS 使用 Core Graphics FFI 直接调用系统 API。
+封装屏幕截图功能，提供逐显示器捕获、区域裁切和窗口矩形列表采集，输出 base64 编码的 PNG 图片。
+macOS 的抓屏走 **ScreenCaptureKit**（失败时回退 Core Graphics），窗口矩形列表仍走 `CGWindowListCopyWindowInfo`。
 
 ## 文件清单
 
@@ -10,6 +11,44 @@
 |------|------|
 | `src-tauri/src/screenshot/mod.rs` | 模块声明，公开导出 `capture_monitors`、`capture_region_from_full`、`capture_region_bytes`、`list_window_rects`，以及覆盖层 label 前缀常量 `OVERLAY_LABEL_PREFIX` |
 | `src-tauri/src/screenshot/capture.rs` | 截图逻辑实现 + 窗口矩形列表采集 |
+| `src-tauri/src/screenshot/sck.rs` | macOS 抓屏：ScreenCaptureKit 单帧截图（objc2 动态调用），含屏幕录制权限预检 |
+
+## 为什么 macOS 用 ScreenCaptureKit
+
+这里踩过一个很典型的坑：**系统弹窗、部分页面截不上，而且看起来像是「覆盖层层级不够」**（v1.1.7 之前的实现）。
+实际原因在抓屏 API 本身——老的 `CGWindowListCreateImage` 合成的不是屏幕像素，而是「**允许共享的窗口**」：
+
+- SDK 的 `CGWindowSharingType` 说明：`kCGWindowSharingNone` 的窗口**不参与合成**
+- 系统弹窗 / 授权框 / 登录面板基本都属于 macOS 刻意保护的 UI
+- 硬件解码视频、Metal / IOSurface 图层没有落在窗口后备存储里，合成结果是黑的
+- 只覆盖**当前 Space**，别的 Space / 全屏 App 里的窗口进不来
+
+覆盖层显示的是**建窗之前**拍好的冻结图（见 [architecture.md](../architecture.md) 的事件流），
+所以把覆盖层提到多高的 window level 都补不回缺失的像素——缺的是那张图本身。
+
+ScreenCaptureKit 拿的是 WindowServer **合成后的显示帧缓冲**，屏幕上看得见的内容它都能拿到；
+Apple 从 macOS 15 起把 `CGWindowListCreateImage` 标成 obsoleted（SDK：
+`SCREEN_CAPTURE_OBSOLETE(10.5, 14.0, 15.0)`）并明确要求迁到 SCK。
+
+仍然拿不到的只剩 macOS 自己过滤掉的安全 UI（登录窗口、TCC 授权框、安全输入框）。这是系统级限制，
+没有公开 API 能绕过，不要试图用私有 API 硬撬。
+
+### 实现要点
+
+- 运行时按类名查找（`SCShareableContent` / `SCScreenshotManager`），找不到就静默回退老的 CG 路径，
+  所以最低系统版本不受影响（单帧截图 `SCScreenshotManager` 需要 macOS 14+）
+- `SCDisplay` 和 Tauri 的显示器顺序不保证一致，用 `CGGetActiveDisplayList` + `CGDisplayBounds`
+  反查 `CGDirectDisplayID`，再按 `displayID` 找对应的 `SCDisplay`
+- 抓的是**整块显示器**，尺寸就是原生像素尺寸，和原来 CG 的结果一致，下游裁切逻辑不用改
+- `SCStreamConfiguration.showsCursor = false`，与 `CGWindowListCreateImage` 的行为对齐
+- CGImage 在回调返回后会被释放，所以回调里先 `CFRetain` 再带出去，由调用方 `CFRelease`
+- 回调里的 Objective-C 对象（`SCShareableContent` / `SCDisplay` / `SCContentFilter`）**不要跨线程传递**，
+  整条链都在回调内完成
+- 截图前做一次 `CGPreflightScreenCaptureAccess()` 预检：缺权限时老 CG 路径会**静默只返回桌面**，
+  现在会 `CGRequestScreenCaptureAccess()` 请求授权并打一条 warn
+- `SCShareableContent` 首次查询要和 WindowServer 握手（200~300ms），启动时在后台 `sck::warm_up()` 预热。
+  **预热只在已有屏幕录制权限时执行**：没权限就去查会当场弹授权框，会打扰不用截图的用户
+- 过滤器与配置对象在回调里 `CFRelease`：它们要活到截图完成之后，在调用处立即释放是悬垂引用
 
 ## 核心逻辑
 
@@ -35,11 +74,13 @@
 **`capture_monitors(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<Vec<String>>`**
 - 逐显示器捕获截图，每个显示器返回一张独立的 base64 PNG
 - 参数为每个显示器的逻辑坐标 `(x, y, width, height)`
-- macOS：通过 `CGWindowListCreateImage` FFI，使用每个显示器的逻辑矩形截取
+- macOS：优先 `sck::capture_display()`（ScreenCaptureKit 单帧截图），失败才回退 `CGWindowListCreateImage`
+  - SCK 拿的是显示器合成后的帧缓冲，系统弹窗 / 硬件合成内容都能进来，见上文「为什么 macOS 用 ScreenCaptureKit」
+  - 回退路径用每个显示器的逻辑矩形 + `CGWindowListCreateImage(rect, kCGWindowListOptionOnScreenOnly, …)`
   - 每张图像为该显示器的原生分辨率（2x Retina 显示器返回 2x 图像）
   - 避免了混合 DPI 时单张合成图像的非均匀缩放问题
   - 多显示器并行截图（`std::thread::spawn`），缩短总截图耗时
-  - 每个显示器会分别记录 `CGWindowListCreateImage` 耗时和「转 RGBA + PNG 编码」耗时，用于区分系统截图与本地编码各占多少
+  - 每个显示器会分别记录抓屏耗时和「转 RGBA + PNG 编码」耗时，用于区分系统截图与本地编码各占多少
 - 非 macOS：通过 `xcap::Monitor::all()` 逐个捕获
 - 这是阻塞操作，调用方通过 `tokio::task::spawn_blocking` 包装
 
@@ -84,8 +125,8 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 
 ## 依赖关系
 
-- **外部依赖**：`image`（图像处理）、`base64`（编码）、`core-foundation`（macOS CF 类型）、`xcap`（非 macOS 截图）
-- **系统框架**：`CoreGraphics.framework`（macOS 截图 + 窗口列表）
+- **外部依赖**：`image`（图像处理）、`base64`（编码）、`objc2` + `block2`（macOS 调 SCK）、`xcap`（非 macOS 截图）
+- **系统框架**：`ScreenCaptureKit`（macOS 抓屏，运行时按类名查找）、`CoreGraphics.framework`（窗口列表 / 显示器枚举 / CG 回退路径）、`CoreFoundation`（CFRetain / CFRelease）
 - **被依赖**：`commands/screenshot.rs` 调用 `capture_monitors()`、`capture_region_from_full()`、`list_window_rects()`
 
 ## 覆盖层窗口的创建与销毁
@@ -97,6 +138,9 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 ## 修改指南
 
 - `capture_monitors()`、`list_window_rects()` 和 `capture_region_from_full()` 都是**阻塞调用**，必须通过 `spawn_blocking` 在异步上下文中调用
+- macOS 抓屏不要退回只用 `CGWindowListCreateImage`：它合成的是「允许共享的窗口」，系统弹窗与硬件合成内容会缺，
+  而且是 macOS 15 起就 obsoleted 的 API。要改就改 `sck.rs`，但保持 CG 回退路径可用
+- 判断 SCK 是否可用统一用 `sck::is_available()`（按类名查找），不要写死系统版本号
 - 每个显示器的截图为该显示器的**原生分辨率**（如 2x Retina 返回 2× 物理像素图像）
 - `list_window_rects()` 返回的是**逻辑坐标**（points），与前端 CSS 坐标一致
 - `capture_monitors()` 传入的坐标为逻辑坐标（`Tauri PhysicalPosition / scale_factor`）
@@ -108,3 +152,8 @@ CGWindowListCopyWindowInfo → 过滤/解析 → Vec<WindowRect> → JSON → �
 ## macOS 屏幕录制权限
 
 截图功能依赖 macOS 屏幕录制权限。该权限绑定到应用的代码签名，使用 ad-hoc 签名会导致每次编译后权限失效。解决方案见 [architecture.md - macOS 代码签名](../architecture.md#macos-代码签名开发环境)。
+
+权限缺失时**不会报错**，而是表现为「截图只有桌面壁纸」——`CGWindowListCreateImage` 与 ScreenCaptureKit
+都会返回一张内容几乎为空的有效图像。所以 `capture_monitors_macos()` 在抓屏前会做一次
+`CGPreflightScreenCaptureAccess()` 预检，缺权限时调 `CGRequestScreenCaptureAccess()` 请求授权，
+并在日志里打一条 warn（前缀 `[Capture]`）。排查「截图缺内容」时先看这条日志。

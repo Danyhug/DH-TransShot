@@ -12,7 +12,7 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 | 前端框架 | React 19 + TypeScript |
 | 样式 | Tailwind CSS v4 + CSS 变量主题 |
 | 状态管理 | Zustand（前端）/ Mutex\<T\>（后端） |
-| 截图 | xcap crate |
+| 截图 | macOS：ScreenCaptureKit（`objc2`，回退 Core Graphics）；Windows：xcap crate |
 | OCR | 视觉大模型（OpenAI 兼容 API） |
 | 翻译 | OpenAI 兼容 Chat Completions API |
 | 构建 | Vite 多入口 + Cargo |
@@ -135,7 +135,7 @@ DH-TransShot 是截屏+翻译二合一桌面工具，采用 Tauri v2 多窗口�
 
 ## DPI 处理
 
-xcap 使用**物理像素**，前端使用**逻辑像素**。
+xcap / ScreenCaptureKit 返回**物理像素**，前端使用**逻辑像素**。
 
 - 覆盖层窗口：后端获取 `monitor.scale_factor()`，用物理尺寸除以缩放因子计算逻辑尺寸创建窗口
 - 选区坐标：前端 `ScreenshotOverlay` 在 emit 时按冻结截图实际像素尺寸与覆盖层 CSS 尺寸比例转为物理像素
