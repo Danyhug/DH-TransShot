@@ -8,7 +8,38 @@ DH-TransShot：截屏 + 翻译二合一桌面工具（macOS / Windows）。后�
 
 `AGENT.md` 是指向本文件的符号链接。
 
+## 本地验证约束（重要）
+
+**默认不在本机跑构建、调试和测试**，也不要为了验证改动去安装或更新依赖。
+本项目的 Rust 依赖 + `target/` 极占磁盘（一次完整构建就是 800MB 量级），用户明确要求避免。
+
+不要主动执行：
+
+| 命令 | 原因 |
+|---|---|
+| `pnpm tauri dev` / `pnpm tauri build` | 起完整构建、膨胀 `target/`；dev 还要真实权限授权、会占住终端 |
+| `cargo build` / `cargo run` / `cargo test` / `cargo check` | 都会写 `target/`，首次编译动辄十几分钟 |
+| `cargo add` / 改 `Cargo.toml` 后构建验证 | 会下载新 crate 到 registry 再编译，磁盘涨得最快 |
+| `pnpm install` | 前端依赖同理 |
+
+允许的静态核查（不产生构建产物、不下载依赖）：
+
+- 读代码与 `docs/*.md`，交叉核对调用点、类型与回归影响面
+- 读 `~/.cargo/registry/src/` 里**已经缓存**的 crate 源码，核对 API 签名与实际语义；
+  版本必须先跟 `Cargo.lock` 对齐，不要按记忆或文档臆断
+- `rustfmt --check <file>`：只解析 AST，不解析依赖，可以放心用来验语法与格式
+- `pnpm exec tsc --noEmit`：纯前端类型检查，不下载依赖、产物极小
+- `git` / `rg` / 读日志文件（如 `~/Library/Logs/com.danyhug.dh-transshot/`）
+
+需要真机验证时，**不要自己起进程**，而是把「复现步骤 + 观察点 + 预期日志」写清楚交给用户，
+由用户在打包版或自己开的 `pnpm tauri dev` 里确认。判断结论要标注是「静态推断」还是「实测确认」，
+不要把没跑过的当成已验证。
+
+只有用户**明确要求**时才执行构建类命令。
+
 ## 常用命令
+
+> 下列命令由用户在自己需要时执行；按上文「本地验证约束」，agent 不要主动跑。
 
 ```bash
 pnpm tauri dev                  # 开发模式运行（后端日志输出到此终端）
