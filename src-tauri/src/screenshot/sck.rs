@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use block2::RcBlock;
+use log::info;
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 
@@ -255,10 +256,29 @@ unsafe fn request_frame(
     if configuration.is_null() {
         return Err("创建 SCStreamConfiguration 失败".to_string());
     }
-    let pixel_width: isize = msg_send![display, width];
-    let pixel_height: isize = msg_send![display, height];
+
+    // 单位换算：`SCDisplay.width/height` 是 **points**（SDK：SCShareableContent.h），
+    // 而 `SCStreamConfiguration.width/height` 是 **pixels**（SCStream.h）。
+    // 直接照抄会让 scale=2 的 Retina 屏按 1x 输出（3024x1964 → 1512x982），截出来糊成一片。
+    // `SCContentFilter.pointPixelScale`（macOS 14+，与 SCScreenshotManager 同版本）就是这两者的比值。
+    let point_width: isize = msg_send![display, width];
+    let point_height: isize = msg_send![display, height];
+    let point_pixel_scale: f32 = msg_send![filter, pointPixelScale];
+    let point_pixel_scale = if point_pixel_scale.is_finite() && point_pixel_scale > 0.0 {
+        f64::from(point_pixel_scale)
+    } else {
+        // 拿不到就退回 1x：宁可糊也别把尺寸算成 0 或负数
+        1.0
+    };
+    let pixel_width = ((point_width.max(1) as f64) * point_pixel_scale).round() as usize;
+    let pixel_height = ((point_height.max(1) as f64) * point_pixel_scale).round() as usize;
     let _: () = msg_send![configuration, setWidth: pixel_width];
     let _: () = msg_send![configuration, setHeight: pixel_height];
+    info!(
+        "[Capture] ScreenCaptureKit 输出尺寸 {}x{} (points {}x{} × {})",
+        pixel_width, pixel_height, point_width, point_height, point_pixel_scale
+    );
+
     // 与 CGWindowListCreateImage 的默认行为对齐：鼠标指针不进图。
     // 用 objc2 的 Bool 而不是 Rust bool——ObjC 的 BOOL 在 x86_64 上是 signed char、
     // 在 arm64 上是 bool，编码不一致会在 msg_send 的校验里炸掉
