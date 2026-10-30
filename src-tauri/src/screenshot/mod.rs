@@ -1,5 +1,8 @@
 pub mod capture;
 
+#[cfg(target_os = "macos")]
+pub mod sck;
+
 pub use capture::{
     capture_monitors, capture_region_bytes, capture_region_from_full, list_window_rects,
 };

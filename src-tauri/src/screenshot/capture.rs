@@ -1,7 +1,7 @@
 use base64::Engine;
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat};
-use log::info;
+use log::{info, warn};
 use std::io::Cursor;
 
 /// A visible window rectangle in logical (points) coordinates.
@@ -195,27 +195,55 @@ fn capture_monitors_macos(monitors: &[(f64, f64, f64, f64)]) -> anyhow::Result<V
     }
 
     // Capture all monitors in parallel — CGImage capture + BGRA→RGBA + PNG encode
+    // 权限缺失时 CG 路径会静默只返回桌面；先查一次，缺了就请求授权（系统只弹一次）
+    if !crate::screenshot::sck::ensure_screen_recording_permission() {
+        warn!("[Capture] 没有屏幕录制权限，截图可能只剩桌面；已向系统请求授权");
+    }
+
     let handles: Vec<_> = monitors
         .iter()
         .enumerate()
         .map(|(i, &(lx, ly, lw, lh))| {
             std::thread::spawn(move || {
                 info!("[Capture] macOS 截取显示器[{}]: logical=({},{},{}x{})", i, lx, ly, lw, lh);
-                let rect = CGRect {
-                    origin: CGPoint { x: lx, y: ly },
-                    size: CGSize { width: lw, height: lh },
+                let capture_started_at = std::time::Instant::now();
+
+                let capture_with_core_graphics = || unsafe {
+                    let rect = CGRect {
+                        origin: CGPoint { x: lx, y: ly },
+                        size: CGSize { width: lw, height: lh },
+                    };
+                    CGWindowListCreateImage(rect, 1, 0, 0)
                 };
-                unsafe {
-                    let capture_started_at = std::time::Instant::now();
-                    let cg_image = CGWindowListCreateImage(rect, 1, 0, 0);
-                    if cg_image.is_null() {
-                        anyhow::bail!("CGWindowListCreateImage returned null for monitor {} - check screen recording permission", i);
+
+                // 优先 ScreenCaptureKit：它拿的是 WindowServer 合成后的显示帧缓冲，
+                // 系统弹窗、硬件合成画面都在里面；失败（老系统 / 无权限 / SCK 异常）才回退
+                let cg_image = if crate::screenshot::sck::is_available() {
+                    match crate::screenshot::sck::capture_display((lx, ly, lw, lh)) {
+                        Ok(cg_image) => {
+                            info!(
+                                "[Capture] 显示器[{}] ScreenCaptureKit 耗时={}ms",
+                                i,
+                                capture_started_at.elapsed().as_millis()
+                            );
+                            cg_image
+                        }
+                        Err(error) => {
+                            warn!(
+                                "[Capture] 显示器[{}] ScreenCaptureKit 失败（{:#}），回退 CGWindowListCreateImage",
+                                i, error
+                            );
+                            capture_with_core_graphics()
+                        }
                     }
-                    info!(
-                        "[Capture] 显示器[{}] CGWindowListCreateImage 耗时={}ms",
-                        i,
-                        capture_started_at.elapsed().as_millis()
-                    );
+                } else {
+                    capture_with_core_graphics()
+                };
+
+                unsafe {
+                    if cg_image.is_null() {
+                        anyhow::bail!("截屏失败：monitor {} 没拿到图像（检查屏幕录制权限）", i);
+                    }
                     let encode_started_at = std::time::Instant::now();
                     let base64 = cgimage_to_base64(cg_image)?;
                     CFRelease(cg_image);

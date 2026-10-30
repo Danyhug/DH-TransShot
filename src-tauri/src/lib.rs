@@ -86,6 +86,20 @@ pub fn run() {
             hotkey::setup_hotkeys(app)?;
             info!("[Setup] 全局快捷键注册完成");
 
+            // ScreenCaptureKit 首次查询要和 WindowServer 握手（200~300ms），放在后台预热，
+            // 免得第一次截图时卡在「按下快捷键 → 覆盖层出现」的关键路径上
+            #[cfg(target_os = "macos")]
+            {
+                std::thread::spawn(|| {
+                    let started_at = std::time::Instant::now();
+                    screenshot::sck::warm_up();
+                    info!(
+                        "[Setup] ScreenCaptureKit 预热完成, 耗时={}ms",
+                        started_at.elapsed().as_millis()
+                    );
+                });
+            }
+
             // Register overlay close listeners once at app level (not per screenshot session)
             let app_handle = app.handle().clone();
             app.listen("close-all-overlays", move |_| {
